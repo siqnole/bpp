@@ -88,6 +88,11 @@ namespace server_economy_operations {
     std::optional<int64_t> update_server_bank(Database* db, uint64_t guild_id, uint64_t user_id, int64_t amount);
     TransactionResult transfer_server_money(Database* db, uint64_t guild_id, uint64_t from_user, uint64_t to_user, int64_t amount);
     
+    // Guild giveaway balance operations (funded by tax)
+    bool ensure_guild_balance_exists(Database* db, uint64_t guild_id);
+    int64_t get_guild_giveaway_balance(Database* db, uint64_t guild_id);
+    bool add_to_guild_balance(Database* db, uint64_t guild_id, int64_t amount);
+    
     // Unified operations that check economy mode and route accordingly
     bool ensure_user_exists_unified(Database* db, uint64_t user_id, std::optional<uint64_t> guild_id);
     int64_t get_wallet_unified(Database* db, uint64_t user_id, std::optional<uint64_t> guild_id);

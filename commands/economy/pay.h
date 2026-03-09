@@ -91,6 +91,10 @@ inline Command* create_pay_command(Database* db) {
             if (tax_rate > 0 && tax < 1) tax = 1;
             int64_t received = amount - tax;
             
+            // Split tax: half destroyed, half goes to guild giveaway balance
+            int64_t tax_to_guild = tax / 2;
+            int64_t tax_destroyed = tax - tax_to_guild;
+            
             // Perform transfer using unified operations
             auto sender_result = update_wallet_unified(db, event.msg.author.id, guild_id, -amount);
             if (!sender_result) {
@@ -99,6 +103,11 @@ inline Command* create_pay_command(Database* db) {
             }
             auto recipient_result = update_wallet_unified(db, recipient_id, guild_id, received);
             if (recipient_result) {
+                // Add half of tax to guild giveaway balance
+                if (tax_to_guild > 0 && guild_id) {
+                    add_to_guild_balance(db, *guild_id, tax_to_guild);
+                }
+                
                 // Log payment to history
                 int64_t sender_balance = get_wallet_unified(db, event.msg.author.id, guild_id);
                 int64_t recipient_balance = get_wallet_unified(db, recipient_id, guild_id);
@@ -108,7 +117,14 @@ inline Command* create_pay_command(Database* db) {
                 bronx::db::history_operations::log_payment(db, event.msg.author.id, sender_log, -amount, sender_balance);
                 bronx::db::history_operations::log_payment(db, recipient_id, recipient_log, received, recipient_balance);
                 
-                std::string tax_display = tax > 0 ? ("\n💸 " + std::to_string((int)tax_rate) + "% tax: $" + format_number(tax) + " destroyed") : "";
+                std::string tax_display = "";
+                if (tax > 0) {
+                    tax_display = "\n💸 " + std::to_string((int)tax_rate) + "% tax: $" + format_number(tax);
+                    tax_display += "\n🗑️ $" + format_number(tax_destroyed) + " destroyed";
+                    if (tax_to_guild > 0) {
+                        tax_display += "\n🏦 $" + format_number(tax_to_guild) + " added to server giveaway balance";
+                    }
+                }
                 auto embed = bronx::success("transferred $" + format_number(received) + 
                     " to " + event.msg.mentions.begin()->first.format_username() + tax_display);
                 bronx::add_invoker_footer(embed, event.msg.author);
@@ -208,6 +224,10 @@ inline Command* create_pay_command(Database* db) {
             if (tax_rate > 0 && tax < 1) tax = 1;
             int64_t received = amount - tax;
             
+            // Split tax: half destroyed, half goes to guild giveaway balance
+            int64_t tax_to_guild = tax / 2;
+            int64_t tax_destroyed = tax - tax_to_guild;
+            
             // Perform transfer using unified operations
             uint64_t sender_id = event.command.get_issuing_user().id;
             auto sender_result = update_wallet_unified(db, sender_id, guild_id, -amount);
@@ -217,6 +237,11 @@ inline Command* create_pay_command(Database* db) {
             }
             auto recipient_result = update_wallet_unified(db, recipient_id, guild_id, received);
             if (recipient_result) {
+                // Add half of tax to guild giveaway balance
+                if (tax_to_guild > 0 && guild_id) {
+                    add_to_guild_balance(db, *guild_id, tax_to_guild);
+                }
+                
                 int64_t sender_balance = get_wallet_unified(db, sender_id, guild_id);
                 int64_t recipient_balance = get_wallet_unified(db, recipient_id, guild_id);
                 std::string tax_str = tax > 0 ? (" (tax: $" + format_number(tax) + ")") : "";
@@ -225,7 +250,14 @@ inline Command* create_pay_command(Database* db) {
                 bronx::db::history_operations::log_payment(db, sender_id, sender_log, -amount, sender_balance);
                 bronx::db::history_operations::log_payment(db, recipient_id, recipient_log, received, recipient_balance);
                 
-                std::string tax_display = tax > 0 ? ("\n💸 " + std::to_string((int)tax_rate) + "% tax: $" + format_number(tax) + " destroyed") : "";
+                std::string tax_display = "";
+                if (tax > 0) {
+                    tax_display = "\n💸 " + std::to_string((int)tax_rate) + "% tax: $" + format_number(tax);
+                    tax_display += "\n🗑️ $" + format_number(tax_destroyed) + " destroyed";
+                    if (tax_to_guild > 0) {
+                        tax_display += "\n🏦 $" + format_number(tax_to_guild) + " added to server giveaway balance";
+                    }
+                }
                 auto embed = bronx::success("transferred $" + format_number(received) + 
                     " to " + recipient.format_username() + tax_display);
                 bronx::add_invoker_footer(embed, event.command.get_issuing_user());

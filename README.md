@@ -34,9 +34,9 @@ Download pre-built binaries from [DPP releases](https://github.com/brainboxdotcc
 
 ## Setup
 
-1. Create a Discord bot at [Discord Developer Portal](https://discord.com/developers/applications)
+1. Create a Discord bot at [Discord's Developer Portal](https://discord.com/developers/applications)
 2. Copy the bot token
-3. Open `main.cpp` and replace `YOUR_BOT_TOKEN_HERE` with your actual bot token
+3. Open `main.cpp` and replace `token_here` with your actual bot token
 4. Enable the "Message Content Intent" in the bot settings
 
 ## Building
@@ -47,35 +47,12 @@ cd build
 cmake ..
 make
 ```
-
-## Running
-
-```bash
-./discord-bot
-```
-
-By default the bot will stop if it encounters a crash (segfault) or any
-other error.  For development or deployment you can use the provided
-wrapper script that will automatically relaunch it.
-
-```bash
-# make the supervisor executable once:
-chmod +x run_discord_bot.sh
-# start the bot through the script; arguments are forwarded
-./run_discord_bot.sh --config /path/to/config.json
-```
-
-The script lives alongside the binary and loops forever, restarting
-`discord-bot` with a one‑second delay whenever it exits with a non‑zero
-status.  Feel free to hook it up to a systemd service, cron job, or
-container entrypoint if you need a more persistent setup.
-
 ### Systemd unit
 
 A sample `discord-bot.service` file is included at the project root.  It
 simply invokes the wrapper script so that systemd will bring the process
-back up automatically on failure.  Edit the paths and configuration to suit
-your installation:
+back up automatically on failure. ***Edit the paths and configuration to suit
+your installation:***
 
 ```ini
 [Unit]
