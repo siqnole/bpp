@@ -42,6 +42,12 @@ static MYSQL* make_new_connection() {
     my_bool reconnect = 1;
     mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
 
+    // Enable SSL for remote database connections (e.g. Aiven)
+    if (g_config.host != "localhost" && g_config.host != "127.0.0.1") {
+        my_bool ssl_enforce = 1;
+        mysql_options(mysql, MYSQL_OPT_SSL_ENFORCE, &ssl_enforce);
+    }
+
     if (g_verbose_logging) {
         std::cerr << "  connecting to host '" << g_config.host
                   << "' port " << g_config.port << "\n";

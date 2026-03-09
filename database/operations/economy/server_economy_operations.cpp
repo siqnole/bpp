@@ -548,6 +548,136 @@ TransactionResult transfer_server_money(Database* db, uint64_t guild_id, uint64_
     return TransactionResult::Success;
 }
 
+// Guild giveaway balance operations (funded by tax)
+
+bool ensure_guild_balance_exists(Database* db, uint64_t guild_id) {
+    auto conn = db->get_pool()->acquire();
+    
+    const char* query = "INSERT IGNORE INTO guild_balances (guild_id, balance, total_donated, total_given) VALUES (?, 0, 0, 0)";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        db->log_error("ensure_guild_balance_exists prepare");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bind[1];
+    memset(bind, 0, sizeof(bind));
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&guild_id;
+    bind[0].is_unsigned = 1;
+    
+    if (mysql_stmt_bind_param(stmt, bind) != 0) {
+        db->log_error("ensure_guild_balance_exists bind");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return false;
+    }
+    
+    bool success = mysql_stmt_execute(stmt) == 0;
+    mysql_stmt_close(stmt);
+    db->get_pool()->release(conn);
+    return success;
+}
+
+int64_t get_guild_giveaway_balance(Database* db, uint64_t guild_id) {
+    ensure_guild_balance_exists(db, guild_id);
+    
+    auto conn = db->get_pool()->acquire();
+    
+    const char* query = "SELECT balance FROM guild_balances WHERE guild_id = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        db->log_error("get_guild_giveaway_balance prepare");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return 0;
+    }
+    
+    MYSQL_BIND bind_param[1];
+    memset(bind_param, 0, sizeof(bind_param));
+    bind_param[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind_param[0].buffer = (char*)&guild_id;
+    bind_param[0].is_unsigned = 1;
+    
+    if (mysql_stmt_bind_param(stmt, bind_param) != 0) {
+        db->log_error("get_guild_giveaway_balance bind param");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return 0;
+    }
+    
+    if (mysql_stmt_execute(stmt) != 0) {
+        db->log_error("get_guild_giveaway_balance execute");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return 0;
+    }
+    
+    int64_t balance = 0;
+    MYSQL_BIND bind_result[1];
+    memset(bind_result, 0, sizeof(bind_result));
+    bind_result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind_result[0].buffer = &balance;
+    
+    if (mysql_stmt_bind_result(stmt, bind_result) != 0) {
+        db->log_error("get_guild_giveaway_balance bind result");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return 0;
+    }
+    
+    mysql_stmt_fetch(stmt);
+    mysql_stmt_close(stmt);
+    db->get_pool()->release(conn);
+    return balance;
+}
+
+bool add_to_guild_balance(Database* db, uint64_t guild_id, int64_t amount) {
+    if (amount <= 0) return false;
+    ensure_guild_balance_exists(db, guild_id);
+    
+    auto conn = db->get_pool()->acquire();
+    
+    const char* query = "UPDATE guild_balances SET balance = balance + ?, total_donated = total_donated + ? WHERE guild_id = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        db->log_error("add_to_guild_balance prepare");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bind[3];
+    memset(bind, 0, sizeof(bind));
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&amount;
+    
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&amount;
+    
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&guild_id;
+    bind[2].is_unsigned = 1;
+    
+    if (mysql_stmt_bind_param(stmt, bind) != 0) {
+        db->log_error("add_to_guild_balance bind");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return false;
+    }
+    
+    bool success = mysql_stmt_execute(stmt) == 0;
+    mysql_stmt_close(stmt);
+    db->get_pool()->release(conn);
+    return success;
+}
+
 // Unified operations that check economy mode and route accordingly
 
 bool ensure_user_exists_unified(Database* db, uint64_t user_id, std::optional<uint64_t> guild_id) {
