@@ -1,0 +1,42 @@
+[Unit]
+Description=Discord Bot (auto-restarting)
+After=network.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/siqnole/Documents/code/bpp/build
+ExecStart=/home/siqnole/Documents/code/bpp/build/discord-bot
+
+# Restart configuration
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=0
+
+# Resource limits to prevent runaway memory
+MemoryMax=2G
+MemoryHigh=1.5G
+
+# Kill remaining processes when service stops
+KillMode=mixed
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=discord-bot
+
+# Security hardening (optional)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/siqnole/Documents/code/bpp/build /home/siqnole/Documents/code/bpp/data
+
+# Environment
+Environment=DB_CONN_DEBUG=0
+
+#User=discordbot
+#EnvironmentFile=/etc/default/discord-bot
+
+[Install]
+WantedBy=multi-user.target

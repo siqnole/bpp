@@ -1,0 +1,185 @@
+#pragma once
+#include "../command.h"
+#include "../embed_style.h"
+#include <dpp/dpp.h>
+#include <vector>
+
+namespace commands {
+
+bool check_hierarchy(dpp::guild& guild, dpp::guild_member& invoker, dpp::guild_member& target, dpp::snowflake bot_id) {
+    // Get highest role for invoker
+    dpp::snowflake invoker_top_role = 0;
+    for (auto& role_id : invoker.get_roles()) {
+        auto role = dpp::find_role(role_id);
+        if (role && role->position > dpp::find_role(invoker_top_role)->position) {
+            invoker_top_role = role_id;
+        }
+    }
+
+    // Get highest role for target
+    dpp::snowflake target_top_role = 0;
+    for (auto& role_id : target.get_roles()) {
+        auto role = dpp::find_role(role_id);
+        if (role && role->position > dpp::find_role(target_top_role)->position) {
+            target_top_role = role_id;
+        }
+    }
+
+    // Check if invoker has higher role than target
+    return dpp::find_role(invoker_top_role)->position > dpp::find_role(target_top_role)->position;
+}
+
+std::vector<Command*> get_moderation_commands() {
+    static std::vector<Command*> cmds;
+
+    // Kick command (slash + text)
+    static Command kick("kick", "kick a member from the server", "moderation", {}, true,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            if (event.msg.mentions.empty()) {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::error("you need to mention someone to kick")));
+                return;
+            }
+
+            dpp::snowflake target_id = event.msg.mentions.begin()->first.id;
+            std::string reason = args.size() > 0 ? args[0] : "no reason provided";
+
+            // Get guild member to check permissions
+            bot.guild_get_member(event.msg.guild_id, target_id, [&bot, event, target_id, reason](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    bot.message_create(dpp::message(event.msg.channel_id,
+                        bronx::error("couldn't fetch member information")));
+                    return;
+                }
+
+                // Perform kick
+                bot.guild_member_kick(event.msg.guild_id, target_id, [&bot, event, target_id, reason](const dpp::confirmation_callback_t& kick_callback) {
+                    if (kick_callback.is_error()) {
+                        auto err = kick_callback.get_error();
+                        std::string error_msg = "couldn't kick member";
+                        
+                        if (err.code == 50013) {
+                            error_msg += " - missing permissions";
+                        } else if (err.code == 10007) {
+                            error_msg += " - member not found";
+                        }
+
+                        bot.message_create(dpp::message(event.msg.channel_id,
+                            bronx::error(error_msg)));
+                        return;
+                    }
+
+                    std::string desc = "✓ kicked <@" + std::to_string(target_id) + ">\n";
+                    desc += "**reason:** " + reason;
+
+                    auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
+                    bronx::add_invoker_footer(embed, event.msg.author);
+
+                    bot.message_create(dpp::message(event.msg.channel_id, embed));
+                });
+            });
+        });
+    cmds.push_back(&kick);
+
+    // Ban command
+    static Command ban("ban", "ban a member from the server", "moderation", {},
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            if (event.msg.mentions.empty()) {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::error("you need to mention someone to ban")));
+                return;
+            }
+
+            dpp::snowflake target_id = event.msg.mentions.begin()->first.id;
+            std::string reason = args.size() > 0 ? args[0] : "no reason provided";
+
+            bot.set_audit_reason(reason).guild_ban_add(event.msg.guild_id, target_id, 0, [&bot, event, target_id, reason](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    auto err = callback.get_error();
+                    std::string error_msg = "couldn't ban member";
+                    
+                    if (err.code == 50013) {
+                        error_msg += " - missing permissions";
+                    } else if (err.code == 10007) {
+                        error_msg += " - member not found";
+                    }
+
+                    bot.message_create(dpp::message(event.msg.channel_id,
+                        bronx::error(error_msg)));
+                    return;
+                }
+
+                std::string desc = "✓ banned <@" + std::to_string(target_id) + ">\n";
+                desc += "**reason:** " + reason;
+
+                auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
+                bronx::add_invoker_footer(embed, event.msg.author);
+
+                bot.message_create(dpp::message(event.msg.channel_id, embed));
+            });
+        });
+    cmds.push_back(&ban);
+
+    // Timeout command
+    static Command timeout("timeout", "timeout a member", "moderation", {"mute"},
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            if (event.msg.mentions.empty()) {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::error("you need to mention someone to timeout")));
+                return;
+            }
+
+            if (args.empty()) {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::error("you need to specify a duration (e.g., 10m, 1h, 1d)")));
+                return;
+            }
+
+            dpp::snowflake target_id = event.msg.mentions.begin()->first.id;
+            std::string duration_str = args[0];
+            
+            // Parse duration
+            int duration_seconds = 60; // Default 1 minute
+            char unit = duration_str.back();
+            int value = std::stoi(duration_str.substr(0, duration_str.length() - 1));
+            
+            if (unit == 'm') duration_seconds = value * 60;
+            else if (unit == 'h') duration_seconds = value * 3600;
+            else if (unit == 'd') duration_seconds = value * 86400;
+
+            std::string reason = args.size() > 1 ? args[1] : "no reason provided";
+
+            bot.guild_get_member(event.msg.guild_id, target_id, [&bot, event, target_id, duration_seconds, reason](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    bot.message_create(dpp::message(event.msg.channel_id,
+                        bronx::error("couldn't fetch member information")));
+                    return;
+                }
+
+                auto member = std::get<dpp::guild_member>(callback.value);
+                member.set_communication_disabled_until(time(nullptr) + duration_seconds);
+
+                bot.guild_edit_member(member, [&bot, event, target_id, reason, duration_seconds](const dpp::confirmation_callback_t& edit_callback) {
+                    if (edit_callback.is_error()) {
+                        bot.message_create(dpp::message(event.msg.channel_id,
+                            bronx::error("couldn't timeout member - missing permissions")));
+                        return;
+                    }
+
+                    std::string desc = "✓ timed out <@" + std::to_string(target_id) + ">\n";
+                    desc += "**duration:** " + std::to_string(duration_seconds / 60) + " minutes\n";
+                    desc += "**reason:** " + reason;
+
+                    auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
+                    bronx::add_invoker_footer(embed, event.msg.author);
+
+                    bot.message_create(dpp::message(event.msg.channel_id, embed));
+                });
+            });
+        });
+    cmds.push_back(&timeout);
+
+    return cmds;
+}
+
+} // namespace commands

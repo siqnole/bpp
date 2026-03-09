@@ -1,0 +1,1109 @@
+#pragma once
+#include "../command.h"
+#include "../embed_style.h"
+#include <dpp/dpp.h>
+#include <vector>
+#include <chrono>
+#include <map>
+#include <set>
+#include <cmath>
+#include <fstream>
+#include <sys/stat.h>
+
+namespace commands {
+
+// Generate dynamic version based on build size and time
+inline std::string get_build_version() {
+    // Get executable size
+    struct stat stat_buf;
+    long file_size = 0;
+    
+    // Try different possible paths to the executable
+    std::vector<std::string> exe_paths = {
+        "/proc/self/exe",  // Linux self-reference
+        "discord-bot",
+        "./discord-bot",
+        "build/discord-bot",
+        "../discord-bot"
+    };
+    
+    for (const auto& path : exe_paths) {
+        if (stat(path.c_str(), &stat_buf) == 0) {
+            file_size = stat_buf.st_size;
+            break;
+        }
+    }
+    
+    // Use logarithmic compression to condense file size to ~4-5 digits
+    // log10(file_size) gives us a nice compressed value
+    int size_component = 0;
+    if (file_size > 0) {
+        // Scale: log10(1MB) ≈ 6, log10(10MB) ≈ 7
+        // Multiply by 10000 to get good granularity
+        size_component = static_cast<int>(std::log10(file_size) * 10000);
+    }
+    
+    // Get current time - minute of day (0-1439)
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    auto now_tm = *std::localtime(&now_time_t);
+    int minute_of_day = now_tm.tm_hour * 60 + now_tm.tm_min;
+    
+    // Format: 1.v[size_component][minute_of_day]
+    // Example: 1.v423041022 (size: 42304, time: 10:22 = 622 minutes)
+    std::string version = "1.v" + std::to_string(size_component) + std::to_string(minute_of_day);
+    
+    return version;
+}
+
+// Poll vote tracking structure
+struct PollData {
+    std::string question;
+    std::vector<std::string> options;
+    std::map<int, std::set<uint64_t>> votes; // option_index -> set of user_ids
+    std::vector<dpp::snowflake> required_roles;
+    std::vector<dpp::snowflake> excluded_roles;
+    uint64_t creator_id;
+    dpp::snowflake message_id;
+    dpp::snowflake channel_id;
+};
+
+// Global poll storage: message_id -> PollData
+static std::map<uint64_t, PollData> active_polls;
+
+// Helper function to create ASCII progress bar
+inline std::string create_progress_bar(int percentage, int length = 10) {
+    int filled = (percentage * length) / 100;
+    std::string bar = "[";
+    for (int i = 0; i < length; i++) {
+        if (i < filled) {
+            bar += "█";
+        } else {
+            bar += "░";
+        }
+    }
+    bar += "] " + std::to_string(percentage) + "%";
+    return bar;
+}
+
+std::vector<Command*> get_utility_commands() {
+    static std::vector<Command*> cmds;
+    
+    // Ping command (slash + text)
+    static Command ping("ping", "check bot latency and response time", "utility", {"pong", "ms"}, true,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            auto start_time = std::chrono::high_resolution_clock::now();
+            
+            // Get websocket latency
+            double ws_latency = 0;
+            auto shards = bot.get_shards();
+            if (!shards.empty()) {
+                ws_latency = shards.begin()->second->websocket_ping * 1000;
+            }
+            
+            // Create initial embed
+            auto loading_embed = bronx::info("calculating latency...");
+            bot.message_create(dpp::message(event.msg.channel_id, loading_embed), [&bot, event, start_time, ws_latency](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) return;
+                
+                auto end_time = std::chrono::high_resolution_clock::now();
+                auto round_trip_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+                auto round_trip_ms = round_trip_us / 1000.0;
+                
+                auto sent_msg = std::get<dpp::message>(callback.value);
+                
+                // Check if user is bot owner
+                bot.current_application_get([&bot, event, ws_latency, round_trip_ms, round_trip_us, sent_msg](const dpp::confirmation_callback_t& app_callback) {
+                    bool is_owner = false;
+                    if (!app_callback.is_error()) {
+                        auto app = std::get<dpp::application>(app_callback.value);
+                        is_owner = (app.owner.id == event.msg.author.id);
+                    }
+                    
+                    std::string description = "**websocket:** `" + std::to_string((int)ws_latency) + "ms`\n";
+                    description += "**round trip:** `" + std::to_string(round_trip_ms).substr(0, std::to_string(round_trip_ms).find('.') + 3) + "ms`\n";
+                    description += "**precision:** `" + std::to_string(round_trip_us) + "μs`\n";
+                    description += "**version:** `" + get_build_version() + "`";
+                    
+                    if (is_owner) {
+                        auto total_secs = bot.uptime().to_secs();
+                        auto weeks = total_secs / (7 * 24 * 3600);
+                        auto days = (total_secs % (7 * 24 * 3600)) / (24 * 3600);
+                        auto hours = (total_secs % (24 * 3600)) / 3600;
+                        auto minutes = (total_secs % 3600) / 60;
+                        auto seconds = total_secs % 60;
+
+                        std::string uptime_str;
+                        if (weeks > 0) {
+                            uptime_str = std::to_string(weeks) + "w";
+                        } else if (days > 0) {
+                            uptime_str = std::to_string(days) + "d";
+                        } else if (hours > 0) {
+                            uptime_str = std::to_string(hours) + "h";
+                        } else if (minutes > 0) {
+                            uptime_str = std::to_string(minutes) + "m";
+                        } else {
+                            uptime_str = std::to_string(seconds) + "s";
+                        }
+
+                        description += "\n\n**owner data:**\n";
+                        description += "**uptime:** `" + uptime_str + "`";
+                    }
+                    
+                    auto embed = bronx::create_embed(description);
+                    bronx::add_invoker_footer(embed, event.msg.author);
+                    
+                    dpp::message edit_msg = sent_msg;
+                    edit_msg.embeds.clear();
+                    edit_msg.add_embed(embed);
+                    bot.message_edit(edit_msg);
+                });
+            });
+        },
+        [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            auto start_time = std::chrono::high_resolution_clock::now();
+            
+            // Get websocket latency
+            double ws_latency = 0;
+            auto shards = bot.get_shards();
+            if (!shards.empty()) {
+                ws_latency = shards.begin()->second->websocket_ping * 1000;
+            }
+            
+            // Reply with thinking state
+            event.thinking(false, [&bot, event, start_time, ws_latency](const dpp::confirmation_callback_t& callback) {
+                auto end_time = std::chrono::high_resolution_clock::now();
+                auto round_trip_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+                auto round_trip_ms = round_trip_us / 1000.0;
+                
+                // Check if user is bot owner
+                bot.current_application_get([&bot, event, ws_latency, round_trip_ms, round_trip_us](const dpp::confirmation_callback_t& app_callback) {
+                    bool is_owner = false;
+                    if (!app_callback.is_error()) {
+                        auto app = std::get<dpp::application>(app_callback.value);
+                        is_owner = (app.owner.id == event.command.get_issuing_user().id);
+                    }
+                    
+                    std::string description = "**websocket:** `" + std::to_string((int)ws_latency) + "ms`\n";
+                    description += "**round trip:** `" + std::to_string(round_trip_ms).substr(0, std::to_string(round_trip_ms).find('.') + 3) + "ms`\n";
+                    description += "**precision:** `" + std::to_string(round_trip_us) + "μs`\n";
+                    description += "**version:** `" + get_build_version() + "`";
+                    
+                    if (is_owner) {
+                        description += "\n\n**owner data:**\n";
+                        description += "**uptime:** `" + std::to_string(bot.uptime().to_secs()) + "s`";
+                    }
+                    
+                    auto embed = bronx::create_embed(description);
+                    bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+                    
+                    event.edit_original_response(dpp::message().add_embed(embed));
+                });
+            });
+        });
+    cmds.push_back(&ping);
+
+    // User info command (slash + text)
+    static Command userinfo("userinfo", "display information about a user", "utility", {"ui", "whois"}, true,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            dpp::snowflake user_id;
+            
+            // Check if user was mentioned
+            if (!event.msg.mentions.empty()) {
+                user_id = event.msg.mentions.begin()->first.id;
+            } else {
+                user_id = event.msg.author.id;
+            }
+
+            // Get guild member for additional info
+            bot.guild_get_member(event.msg.guild_id, user_id, [&bot, event, user_id](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    bronx::send_message(bot, event, bronx::error("couldn't fetch user information"));
+                    return;
+                }
+
+                auto member = std::get<dpp::guild_member>(callback.value);
+                dpp::user* user_ptr = member.get_user();
+                if (!user_ptr) return;
+                dpp::user user = *user_ptr;
+                
+                std::string description = "**username:** " + user.username + "\n";
+                
+                // Show name field if display name and nickname are the same
+                std::string nickname = member.get_nickname();
+                std::string display_name = user.global_name;
+                
+                if (!display_name.empty() && !nickname.empty() && display_name == nickname) {
+                    description += "**name:** " + display_name + "\n";
+                } else {
+                    if (!display_name.empty()) {
+                        description += "**display name:** " + display_name + "\n";
+                    }
+                    if (!nickname.empty()) {
+                        description += "**nickname:** " + nickname + "\n";
+                    }
+                }
+                
+                description += "**id:** " + std::to_string(user.id) + "\n";
+                description += "**created:** <t:" + std::to_string((int64_t)user.id.get_creation_time()) + ":R>\n";
+                description += "**joined:** <t:" + std::to_string((int64_t)member.joined_at) + ":R>\n";
+                
+                // Avatar links
+                std::string avatar_url = user.get_avatar_url(256);
+                std::string guild_avatar_url = member.get_avatar_url(256);
+                
+                description += "\n";
+                if (!avatar_url.empty()) {
+                    description += "[avatar](" + avatar_url + ")";
+                }
+                if (!guild_avatar_url.empty() && guild_avatar_url != avatar_url) {
+                    if (!avatar_url.empty()) description += " | ";
+                    description += "[server avatar](" + guild_avatar_url + ")";
+                }
+
+                auto embed = bronx::create_embed(description)
+                    .set_thumbnail(user.get_avatar_url());
+                
+                bronx::add_invoker_footer(embed, event.msg.author);
+
+                bronx::send_message(bot, event, embed);
+            });
+        },
+        [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            dpp::snowflake user_id;
+            
+            // Get user from options or default to command user
+            auto user_param = event.get_parameter("user");
+            if (std::holds_alternative<dpp::snowflake>(user_param)) {
+                user_id = std::get<dpp::snowflake>(user_param);
+            } else {
+                user_id = event.command.get_issuing_user().id;
+            }
+
+            bot.guild_get_member(event.command.guild_id, user_id, [&bot, event, user_id](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    auto embed = bronx::error("couldn't fetch user information");
+                    event.reply(dpp::message().add_embed(embed));
+                    return;
+                }
+
+                auto member = std::get<dpp::guild_member>(callback.value);
+                dpp::user* user_ptr = member.get_user();
+                if (!user_ptr) return;
+                dpp::user user = *user_ptr;
+                
+                std::string description = "**username:** " + user.username + "\n";
+                
+                // Show name field if display name and nickname are the same
+                std::string nickname = member.get_nickname();
+                std::string display_name = user.global_name;
+                
+                if (!display_name.empty() && !nickname.empty() && display_name == nickname) {
+                    description += "**name:** " + display_name + "\n";
+                } else {
+                    if (!display_name.empty()) {
+                        description += "**display name:** " + display_name + "\n";
+                    }
+                    if (!nickname.empty()) {
+                        description += "**nickname:** " + nickname + "\n";
+                    }
+                }
+                
+                description += "**id:** " + std::to_string(user.id) + "\n";
+                description += "**created:** <t:" + std::to_string((int64_t)user.id.get_creation_time()) + ":R>\n";
+                description += "**joined:** <t:" + std::to_string((int64_t)member.joined_at) + ":R>\n";
+                
+                // Avatar links
+                std::string avatar_url = user.get_avatar_url(256);
+                std::string guild_avatar_url = member.get_avatar_url(256);
+                
+                description += "\n";
+                if (!avatar_url.empty()) {
+                    description += "[avatar](" + avatar_url + ")";
+                }
+                if (!guild_avatar_url.empty() && guild_avatar_url != avatar_url) {
+                    if (!avatar_url.empty()) description += " | ";
+                    description += "[server avatar](" + guild_avatar_url + ")";
+                }
+
+                auto embed = bronx::create_embed(description)
+                    .set_thumbnail(user.get_avatar_url());
+                
+                bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+
+                event.reply(dpp::message().add_embed(embed));
+            });
+        },
+        {dpp::command_option(dpp::co_user, "user", "the user to get info about", false)});
+    cmds.push_back(&userinfo);
+
+    // Avatar command (text only)
+    static Command avatar("avatar", "display a user's avatar", "utility", {"av", "pfp"}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            dpp::user target = event.msg.mentions.empty() ? event.msg.author : event.msg.mentions.begin()->first;
+            std::string display_name = target.global_name.empty() ? target.username : target.global_name;
+            
+            auto embed = bronx::create_embed(display_name + "'s avatar")
+                .set_image(target.get_avatar_url(4096));
+            
+            bronx::add_invoker_footer(embed, event.msg.author);
+            
+            bronx::send_message(bot, event, embed);
+        });
+    cmds.push_back(&avatar);
+
+    // Server info command (slash + text)
+    static Command serverinfo("serverinfo", "display information about the server", "utility", {"si", "guildinfo"}, true,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            // Note: member_count requires GUILD_MEMBERS intent enabled in Discord Developer Portal
+            bot.guild_get(event.msg.guild_id, [&bot, event](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    bronx::send_message(bot, event, bronx::error("couldn't fetch server information"));
+                    return;
+                }
+
+                auto guild = std::get<dpp::guild>(callback.value);
+                
+                std::string description = "**name:** " + guild.name + "\n";
+                description += "**id:** " + std::to_string(guild.id) + "\n";
+                description += "**owner:** <@" + std::to_string(guild.owner_id) + ">\n";
+                description += "**members:** " + std::to_string(guild.member_count) + "\n";
+                
+                // Vanity URL
+                if (!guild.vanity_url_code.empty()) {
+                    description += "**vanity:** discord.gg/" + guild.vanity_url_code + "\n";
+                }
+                
+                // Boost information
+                if (guild.premium_subscription_count > 0) {
+                    description += "**boosts:** " + std::to_string(guild.premium_subscription_count);
+                    description += " (level " + std::to_string(guild.premium_tier) + ")\n";
+                }
+                
+                // Verification level
+                std::string verification;
+                switch((int)guild.verification_level) {
+                    case 0: verification = "none"; break;
+                    case 1: verification = "low"; break;
+                    case 2: verification = "medium"; break;
+                    case 3: verification = "high"; break;
+                    case 4: verification = "very high"; break;
+                    default: verification = "unknown"; break;
+                }
+                description += "**verification:** " + verification + "\n";
+                
+                description += "**created:** <t:" + std::to_string((int64_t)guild.id.get_creation_time()) + ":R>";
+                
+                // Add banner, splash and discovery splash links
+                std::string banner_url = guild.get_banner_url(512, dpp::i_webp);
+                std::string splash_url = guild.get_splash_url(512, dpp::i_webp);
+                std::string discovery_url = guild.get_discovery_splash_url(512, dpp::i_webp);
+                if (!banner_url.empty() || !splash_url.empty() || !discovery_url.empty()) {
+                    description += "\n\n";
+                    bool first = true;
+                    if (!banner_url.empty()) {
+                        description += "[server banner](" + banner_url + ")";
+                        first = false;
+                    }
+                    if (!splash_url.empty()) {
+                        if (!first) description += " | ";
+                        description += "[splash banner](" + splash_url + ")";
+                        first = false;
+                    }
+                    if (!discovery_url.empty()) {
+                        if (!first) description += " | ";
+                        description += "[invite banner](" + discovery_url + ")";
+                    }
+                }
+
+                auto embed = bronx::create_embed(description);
+                
+                std::string icon_url = guild.get_icon_url();
+                if (!icon_url.empty()) {
+                    embed.set_thumbnail(icon_url);
+                }
+                
+                bronx::add_invoker_footer(embed, event.msg.author);
+
+                bronx::send_message(bot, event, embed);
+            });
+        },
+        [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            bot.guild_get(event.command.guild_id, [&bot, event](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    auto embed = bronx::error("couldn't fetch server information");
+                    event.reply(dpp::message().add_embed(embed));
+                    return;
+                }
+
+                auto guild = std::get<dpp::guild>(callback.value);
+                
+                std::string description = "**name:** " + guild.name + "\n";
+                description += "**id:** " + std::to_string(guild.id) + "\n";
+                description += "**owner:** <@" + std::to_string(guild.owner_id) + ">\n";
+                description += "**members:** " + std::to_string(guild.member_count) + "\n";
+                
+                // Vanity URL
+                if (!guild.vanity_url_code.empty()) {
+                    description += "**vanity:** discord.gg/" + guild.vanity_url_code + "\n";
+                }
+                
+                // Boost information
+                if (guild.premium_subscription_count > 0) {
+                    description += "**boosts:** " + std::to_string(guild.premium_subscription_count);
+                    description += " (level " + std::to_string(guild.premium_tier) + ")\n";
+                }
+                
+                // Verification level
+                std::string verification;
+                switch((int)guild.verification_level) {
+                    case 0: verification = "none"; break;
+                    case 1: verification = "low"; break;
+                    case 2: verification = "medium"; break;
+                    case 3: verification = "high"; break;
+                    case 4: verification = "very high"; break;
+                    default: verification = "unknown"; break;
+                }
+                description += "**verification:** " + verification + "\n";
+                
+                description += "**created:** <t:" + std::to_string((int64_t)guild.id.get_creation_time()) + ":R>";
+                
+                // Add banner, splash and discovery splash links
+                std::string banner_url = guild.get_banner_url(512, dpp::i_webp);
+                std::string splash_url = guild.get_splash_url(512, dpp::i_webp);
+                std::string discovery_url = guild.get_discovery_splash_url(512, dpp::i_webp);
+                if (!banner_url.empty() || !splash_url.empty() || !discovery_url.empty()) {
+                    description += "\n\n";
+                    bool first = true;
+                    if (!banner_url.empty()) {
+                        description += "[server banner](" + banner_url + ")";
+                        first = false;
+                    }
+                    if (!splash_url.empty()) {
+                        if (!first) description += " | ";
+                        description += "[splash banner](" + splash_url + ")";
+                        first = false;
+                    }
+                    if (!discovery_url.empty()) {
+                        if (!first) description += " | ";
+                        description += "[invite banner](" + discovery_url + ")";
+                    }
+                }
+
+                auto embed = bronx::create_embed(description);
+                
+                std::string icon_url = guild.get_icon_url();
+                if (!icon_url.empty()) {
+                    embed.set_thumbnail(icon_url);
+                }
+                
+                bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+
+                event.reply(dpp::message().add_embed(embed));
+            });
+        });
+    cmds.push_back(&serverinfo);
+
+    // Poll command (slash only)
+    static Command poll("poll", "create a poll with optional role-based voting restrictions", "utility", {}, true,
+        nullptr, // No text command handler
+        [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            std::string question = std::get<std::string>(event.get_parameter("question"));
+            std::string option1 = std::get<std::string>(event.get_parameter("option1"));
+            std::string option2 = std::get<std::string>(event.get_parameter("option2"));
+            
+            std::vector<std::string> options;
+            options.push_back(option1);
+            options.push_back(option2);
+            
+            // Get optional options 3-10
+            for (int i = 3; i <= 10; i++) {
+                try {
+                    auto opt = event.get_parameter("option" + std::to_string(i));
+                    if (std::holds_alternative<std::string>(opt)) {
+                        std::string option_value = std::get<std::string>(opt);
+                        if (!option_value.empty()) {
+                            options.push_back(option_value);
+                        }
+                    }
+                } catch (...) {
+                    break;
+                }
+            }
+            
+            // Get role restrictions
+            std::vector<dpp::snowflake> required_roles;
+            std::vector<dpp::snowflake> excluded_roles;
+            
+            // Get up to 3 required roles
+            for (int i = 1; i <= 3; i++) {
+                try {
+                    std::string param_name = (i == 1) ? "require_role" : "require_role" + std::to_string(i);
+                    auto require_param = event.get_parameter(param_name);
+                    if (std::holds_alternative<dpp::snowflake>(require_param)) {
+                        required_roles.push_back(std::get<dpp::snowflake>(require_param));
+                    }
+                } catch (...) {}
+            }
+            
+            // Get up to 3 excluded roles
+            for (int i = 1; i <= 3; i++) {
+                try {
+                    std::string param_name = (i == 1) ? "exclude_role" : "exclude_role" + std::to_string(i);
+                    auto exclude_param = event.get_parameter(param_name);
+                    if (std::holds_alternative<dpp::snowflake>(exclude_param)) {
+                        excluded_roles.push_back(std::get<dpp::snowflake>(exclude_param));
+                    }
+                } catch (...) {}
+            }
+            
+            // Build poll embed
+            std::string description = "**" + question + "**\n\n";
+            
+            // Add options with emoji and progress bars (initially 0%)
+            std::vector<std::string> number_emojis = {"1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"};
+            for (size_t i = 0; i < options.size() && i < 10; i++) {
+                description += number_emojis[i] + " **" + options[i] + "**\n";
+                description += "`" + create_progress_bar(0, 15) + "` 0 votes\n";
+            }
+            
+            description += "\n**total votes:** 0\n";
+            
+            // Add role restrictions info
+            if (!required_roles.empty() || !excluded_roles.empty()) {
+                description += "\n**voting restrictions:**\n";
+                if (!required_roles.empty()) {
+                    description += "must have: ";
+                    for (size_t i = 0; i < required_roles.size(); i++) {
+                        description += "<@&" + std::to_string(required_roles[i]) + ">";
+                        if (i < required_roles.size() - 1) description += ", ";
+                    }
+                    description += "\n";
+                }
+                if (!excluded_roles.empty()) {
+                    description += "cannot have: ";
+                    for (size_t i = 0; i < excluded_roles.size(); i++) {
+                        description += "<@&" + std::to_string(excluded_roles[i]) + ">";
+                        if (i < excluded_roles.size() - 1) description += ", ";
+                    }
+                    description += "\n";
+                }
+            }
+            
+            description += "\n*Poll created by <@" + std::to_string(event.command.get_issuing_user().id) + ">*";
+            
+            auto embed = bronx::create_embed(description);
+            embed.set_color(0x5865F2);
+            
+            // Create buttons for voting
+            std::vector<dpp::component> rows;
+            dpp::component current_row;
+            current_row.set_type(dpp::cot_action_row);
+            
+            for (size_t i = 0; i < options.size() && i < 10; i++) {
+                dpp::component btn;
+                btn.set_type(dpp::cot_button);
+                btn.set_style(dpp::cos_primary);
+                btn.set_emoji(number_emojis[i]);
+                
+                // Encode role restrictions in custom_id
+                // Format: poll_vote_<creator_id>_<option_index>_<req_count>_<req_role1>_<req_role2>..._<exc_count>_<exc_role1>...
+                std::string custom_id = "poll_vote_" + std::to_string(event.command.get_issuing_user().id) + "_" + std::to_string(i);
+                custom_id += "_" + std::to_string(required_roles.size());
+                for (const auto& role : required_roles) {
+                    custom_id += "_" + std::to_string(role);
+                }
+                custom_id += "_" + std::to_string(excluded_roles.size());
+                for (const auto& role : excluded_roles) {
+                    custom_id += "_" + std::to_string(role);
+                }
+                btn.set_id(custom_id);
+                
+                current_row.add_component(btn);
+                
+                // Discord allows max 5 buttons per row
+                if ((i + 1) % 5 == 0 || i == options.size() - 1) {
+                    rows.push_back(current_row);
+                    current_row = dpp::component();
+                    current_row.set_type(dpp::cot_action_row);
+                }
+            }
+            
+            dpp::message msg;
+            msg.add_embed(embed);
+            for (const auto& row : rows) {
+                msg.add_component(row);
+            }
+            
+            // Store poll data with temporary ID (will update after reply)
+            PollData poll;
+            poll.question = question;
+            poll.options = options;
+            poll.required_roles = required_roles;
+            poll.excluded_roles = excluded_roles;
+            poll.creator_id = event.command.get_issuing_user().id;
+            poll.channel_id = event.command.channel_id;
+            
+            // Reply and get message ID from interaction
+            event.reply(msg, [poll, &bot](const dpp::confirmation_callback_t& callback) mutable {
+                if (callback.is_error()) return;
+                
+                // For interaction replies, we need to get the message via webhook
+                // The message ID is in the interaction token
+                // Store with interaction ID for now
+            });
+            
+            // Store poll with command ID as key (interactions store message info differently)
+            active_polls[event.command.id] = poll;
+        },
+        {
+            dpp::command_option(dpp::co_string, "question", "The poll question", true),
+            dpp::command_option(dpp::co_string, "option1", "First option", true),
+            dpp::command_option(dpp::co_string, "option2", "Second option", true),
+            dpp::command_option(dpp::co_string, "option3", "Third option", false),
+            dpp::command_option(dpp::co_string, "option4", "Fourth option", false),
+            dpp::command_option(dpp::co_string, "option5", "Fifth option", false),
+            dpp::command_option(dpp::co_string, "option6", "Sixth option", false),
+            dpp::command_option(dpp::co_string, "option7", "Seventh option", false),
+            dpp::command_option(dpp::co_string, "option8", "Eighth option", false),
+            dpp::command_option(dpp::co_string, "option9", "Ninth option", false),
+            dpp::command_option(dpp::co_string, "option10", "Tenth option", false),
+            dpp::command_option(dpp::co_role, "require_role", "Users must have this role to vote", false),
+            dpp::command_option(dpp::co_role, "require_role2", "Users must have this role to vote (additional)", false),
+            dpp::command_option(dpp::co_role, "require_role3", "Users must have this role to vote (additional)", false),
+            dpp::command_option(dpp::co_role, "exclude_role", "Users with this role cannot vote", false),
+            dpp::command_option(dpp::co_role, "exclude_role2", "Users with this role cannot vote (additional)", false),
+            dpp::command_option(dpp::co_role, "exclude_role3", "Users with this role cannot vote (additional)", false)
+        });
+    cmds.push_back(&poll);
+
+    // Cleanup command (text only)
+    static Command cleanup("cleanup", "delete recent bot messages and commands that invoked them", "utility", {"clear", "clean"}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            // Default to 50 messages, max 100
+            int limit = 50;
+            if (!args.empty()) {
+                try {
+                    limit = std::stoi(args[0]);
+                    if (limit < 1) limit = 50;
+                    if (limit > 100) limit = 100;
+                } catch (...) {
+                    limit = 50;
+                }
+            }
+            
+            // Fetch recent messages
+            bot.messages_get(event.msg.channel_id, 0, 0, 0, limit, [&bot, event](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    bot.message_create(dpp::message(event.msg.channel_id,
+                        bronx::error("Failed to fetch messages for cleanup")));
+                    return;
+                }
+                
+                auto messages = callback.get<dpp::message_map>();
+                std::set<dpp::snowflake> to_delete_set;
+                
+                // Filter messages: bot messages and command messages
+                for (const auto& [msg_id, msg] : messages) {
+                    // Delete if it's a bot message
+                    if (msg.author.id == bot.me.id) {
+                        to_delete_set.insert(msg_id);
+                    }
+                    // Delete if it's a command message (starts with prefix)
+                    else if (msg.content.size() > 2 && msg.content.substr(0, 2) == "b.") {
+                        to_delete_set.insert(msg_id);
+                    }
+                }
+                
+                // Also delete the cleanup command itself
+                to_delete_set.insert(event.msg.id);
+                
+                if (to_delete_set.empty()) {
+                    auto embed = bronx::info("No bot messages or commands found to clean up");
+                    bot.message_create(dpp::message(event.msg.channel_id, embed));
+                    return;
+                }
+                
+                // Filter messages for bulk delete (must be < 14 days old and max 100)
+                // Discord only allows bulk delete for messages less than 2 weeks old
+                auto now = std::chrono::system_clock::now();
+                auto two_weeks_ago = now - std::chrono::hours(24 * 14);
+                
+                std::vector<dpp::snowflake> bulk_delete;
+                
+                for (const auto& msg_id : to_delete_set) {
+                    // Get message creation time using DPP's method
+                    auto msg_created = dpp::snowflake(msg_id).get_creation_time();
+                    auto msg_time = std::chrono::system_clock::from_time_t(msg_created);
+                    
+                    // Only include messages less than 14 days old
+                    if (msg_time > two_weeks_ago) {
+                        bulk_delete.push_back(msg_id);
+                    }
+                }
+                
+                if (bulk_delete.empty()) {
+                    auto embed = bronx::info("No messages recent enough to delete (messages must be < 14 days old)");
+                    bot.message_create(dpp::message(event.msg.channel_id, embed));
+                    return;
+                }
+                
+                // Limit to 100 messages max
+                if (bulk_delete.size() > 100) {
+                    bulk_delete.resize(100);
+                }
+                
+                int delete_count = bulk_delete.size();
+                
+                // Use bulk delete (requires minimum 2 messages)
+                if (bulk_delete.size() >= 2) {
+                    bot.message_delete_bulk(bulk_delete, event.msg.channel_id, [&bot, event, delete_count](const dpp::confirmation_callback_t& del_callback) {
+                        if (del_callback.is_error()) {
+                            auto error = del_callback.get_error();
+                            std::string error_msg = "Failed to delete messages: " + error.human_readable;
+                            if (error.code == 50013) {
+                                error_msg = "Missing permissions! Bot needs **Manage Messages** permission.";
+                            } else if (error.code == 50034) {
+                                error_msg = "Some messages are too old (> 14 days) to bulk delete.";
+                            }
+                            bot.message_create(dpp::message(event.msg.channel_id,
+                                bronx::error(error_msg)));
+                            return;
+                        }
+                        
+                        // Send confirmation
+                        std::string description = "✅ Cleaned up **" + std::to_string(delete_count) + "** messages";
+                        auto embed = bronx::create_embed(description);
+                        embed.set_color(0x43B581);
+                        
+                        bot.message_create(dpp::message(event.msg.channel_id, embed));
+                    });
+                } else if (bulk_delete.size() == 1) {
+                    // Single message - delete individually
+                    bot.message_delete(bulk_delete[0], event.msg.channel_id, [&bot, event](const dpp::confirmation_callback_t& del_callback) {
+                        if (del_callback.is_error()) {
+                            auto error = del_callback.get_error();
+                            std::string error_msg = "Failed to delete message: " + error.human_readable;
+                            if (error.code == 50013) {
+                                error_msg = "Missing permissions! Bot needs **Manage Messages** permission.";
+                            }
+                            bot.message_create(dpp::message(event.msg.channel_id,
+                                bronx::error(error_msg)));
+                            return;
+                        }
+                        
+                        std::string description = "✅ Cleaned up **1** message";
+                        auto embed = bronx::create_embed(description);
+                        embed.set_color(0x43B581);
+                        
+                        bot.message_create(dpp::message(event.msg.channel_id, embed));
+                    });
+                }
+            });
+        });
+    cmds.push_back(&cleanup);
+
+    return cmds;
+}
+
+// Register poll interaction handlers
+inline void register_utility_interactions(dpp::cluster& bot) {
+    // Handle poll voting
+    bot.on_button_click([&bot](const dpp::button_click_t& event) {
+        std::string custom_id = event.custom_id;
+        
+        if (custom_id.find("poll_vote_") == 0) {
+            // Parse custom_id: poll_vote_<creator_id>_<option_index>_<req_count>_<req_roles...>_<exc_count>_<exc_roles...>
+            std::vector<std::string> parts;
+            std::stringstream ss(custom_id);
+            std::string part;
+            while (std::getline(ss, part, '_')) {
+                parts.push_back(part);
+            }
+            
+            if (parts.size() < 4) return;
+            
+            // parts[0] = "poll"
+            // parts[1] = "vote"
+            // parts[2] = creator_id
+            // parts[3] = option_index
+            // parts[4] = req_count (if exists)
+            // parts[5...] = req_roles and exc_count and exc_roles
+            
+            int option_index = std::stoi(parts[3]);
+            
+            // Check for role restrictions
+            std::vector<dpp::snowflake> required_roles;
+            std::vector<dpp::snowflake> excluded_roles;
+            
+            if (parts.size() > 4) {
+                int req_count = std::stoi(parts[4]);
+                size_t current_idx = 5;
+                
+                // Parse required roles
+                for (int i = 0; i < req_count && current_idx < parts.size(); i++, current_idx++) {
+                    required_roles.push_back(std::stoull(parts[current_idx]));
+                }
+                
+                // Parse excluded roles count
+                int exc_count = 0;
+                if (current_idx < parts.size()) {
+                    exc_count = std::stoi(parts[current_idx]);
+                    current_idx++;
+                }
+                
+                // Parse excluded roles
+                for (int i = 0; i < exc_count && current_idx < parts.size(); i++, current_idx++) {
+                    excluded_roles.push_back(std::stoull(parts[current_idx]));
+                }
+            }
+            
+            // If no role restrictions, just confirm the vote immediately
+            if (required_roles.empty() && excluded_roles.empty()) {
+                // Find the poll data using the interaction's message ID
+                // For component interactions, we need to check the message.interaction.id
+                uint64_t poll_id = 0;
+                uint64_t interaction_msg_id = event.command.message_id;
+                
+                // Try to find poll by checking all active polls for matching message
+                for (auto& [pid, pdata] : active_polls) {
+                    // Check if this interaction is for this poll's message
+                    if (interaction_msg_id != 0 && pdata.message_id == interaction_msg_id) {
+                        poll_id = pid;
+                        break;
+                    }
+                    // Fallback: check if the creator and channel match
+                    if (pdata.channel_id == event.command.channel_id) {
+                        poll_id = pid;
+                        // Update the message_id if we didn't have it
+                        pdata.message_id = interaction_msg_id;
+                        break;
+                    }
+                }
+                
+                if (poll_id == 0 || active_polls.find(poll_id) == active_polls.end()) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("Poll data not found")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+                
+                PollData& poll = active_polls[poll_id];
+                uint64_t user_id = event.command.get_issuing_user().id;
+                
+                // Remove previous vote if exists
+                for (auto& [opt_idx, voters] : poll.votes) {
+                    voters.erase(user_id);
+                }
+                
+                // Add new vote
+                poll.votes[option_index].insert(user_id);
+                
+                // Calculate vote percentages
+                int total_votes = 0;
+                for (const auto& [opt_idx, voters] : poll.votes) {
+                    total_votes += voters.size();
+                }
+                
+                // Build updated embed
+                std::string description = "**" + poll.question + "**\n\n";
+                std::vector<std::string> number_emojis = {"1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"};
+                
+                for (size_t i = 0; i < poll.options.size() && i < 10; i++) {
+                    int vote_count = poll.votes[i].size();
+                    int percentage = (total_votes > 0) ? (vote_count * 100 / total_votes) : 0;
+                    
+                    description += number_emojis[i] + " **" + poll.options[i] + "**\n";
+                    description += "`" + create_progress_bar(percentage, 15) + "` " + std::to_string(vote_count) + " votes\n";
+                }
+                
+                description += "\n**total votes:** " + std::to_string(total_votes) + "\n";
+                
+                // Add role restrictions info if present
+                if (!poll.required_roles.empty() || !poll.excluded_roles.empty()) {
+                    description += "\n**voting restrictions:**\n";
+                    if (!poll.required_roles.empty()) {
+                        description += "must have: ";
+                        for (size_t i = 0; i < poll.required_roles.size(); i++) {
+                            description += "<@&" + std::to_string(poll.required_roles[i]) + ">";
+                            if (i < poll.required_roles.size() - 1) description += ", ";
+                        }
+                        description += "\n";
+                    }
+                    if (!poll.excluded_roles.empty()) {
+                        description += "cannot have: ";
+                        for (size_t i = 0; i < poll.excluded_roles.size(); i++) {
+                            description += "<@&" + std::to_string(poll.excluded_roles[i]) + ">";
+                            if (i < poll.excluded_roles.size() - 1) description += ", ";
+                        }
+                        description += "\n";
+                    }
+                }
+                
+                description += "\n*Poll created by <@" + std::to_string(poll.creator_id) + ">*";
+                
+                auto embed = bronx::create_embed(description);
+                embed.set_color(0x5865F2);
+                
+                // Get the poll message and update it
+                bot.message_get(poll.message_id, poll.channel_id, [&bot, embed](const dpp::confirmation_callback_t& get_callback) {
+                    if (!get_callback.is_error()) {
+                        auto original_msg = get_callback.get<dpp::message>();
+                        original_msg.embeds.clear();
+                        original_msg.add_embed(embed);
+                        bot.message_edit(original_msg);
+                    }
+                });
+                
+                // Send ephemeral confirmation
+                std::string emoji = number_emojis[option_index];
+                event.reply(dpp::ir_channel_message_with_source,
+                    dpp::message().add_embed(bronx::success("You voted for option " + emoji)).set_flags(dpp::m_ephemeral));
+                return;
+            }
+            
+            // Get the guild member to check roles
+            dpp::snowflake guild_id = event.command.guild_id;
+            dpp::snowflake user_id = event.command.get_issuing_user().id;
+            
+            bot.guild_get_member(guild_id, user_id, [&bot, event, required_roles, excluded_roles, option_index](const dpp::confirmation_callback_t& callback) {
+                if (callback.is_error()) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("Failed to verify your roles")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+                
+                auto member = std::get<dpp::guild_member>(callback.value);
+                const auto& user_roles = member.get_roles();
+                
+                // Check if user has all required roles
+                if (!required_roles.empty()) {
+                    for (const auto& req_role : required_roles) {
+                        bool has_role = false;
+                        for (const auto& user_role : user_roles) {
+                            if (user_role == req_role) {
+                                has_role = true;
+                                break;
+                            }
+                        }
+                        if (!has_role) {
+                            event.reply(dpp::ir_channel_message_with_source,
+                                dpp::message().add_embed(bronx::error("You don't have all the required roles to vote in this poll")).set_flags(dpp::m_ephemeral));
+                            return;
+                        }
+                    }
+                }
+                
+                // Check if user has any excluded roles
+                if (!excluded_roles.empty()) {
+                    for (const auto& exc_role : excluded_roles) {
+                        for (const auto& user_role : user_roles) {
+                            if (user_role == exc_role) {
+                                event.reply(dpp::ir_channel_message_with_source,
+                                    dpp::message().add_embed(bronx::error("You cannot vote in this poll with your current roles")).set_flags(dpp::m_ephemeral));
+                                return;
+                            }
+                        }
+                    }
+                }
+                
+                // Vote is valid - update poll
+                uint64_t poll_id = 0;
+                uint64_t interaction_msg_id = event.command.message_id;
+                
+                // Try to find poll by checking all active polls
+                for (auto& [pid, pdata] : active_polls) {
+                    if (interaction_msg_id != 0 && pdata.message_id == interaction_msg_id) {
+                        poll_id = pid;
+                        break;
+                    }
+                    if (pdata.channel_id == event.command.channel_id) {
+                        poll_id = pid;
+                        pdata.message_id = interaction_msg_id;
+                        break;
+                    }
+                }
+                
+                if (poll_id == 0 || active_polls.find(poll_id) == active_polls.end()) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("Poll data not found")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+                
+                PollData& poll = active_polls[poll_id];
+                uint64_t user_id = event.command.get_issuing_user().id;
+                
+                // Remove previous vote if exists
+                for (auto& [opt_idx, voters] : poll.votes) {
+                    voters.erase(user_id);
+                }
+                
+                // Add new vote
+                poll.votes[option_index].insert(user_id);
+                
+                // Calculate vote percentages
+                int total_votes = 0;
+                for (const auto& [opt_idx, voters] : poll.votes) {
+                    total_votes += voters.size();
+                }
+                
+                // Build updated embed
+                std::string description = "**" + poll.question + "**\n\n";
+                std::vector<std::string> number_emojis = {"1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"};
+                
+                for (size_t i = 0; i < poll.options.size() && i < 10; i++) {
+                    int vote_count = poll.votes[i].size();
+                    int percentage = (total_votes > 0) ? (vote_count * 100 / total_votes) : 0;
+                    
+                    description += number_emojis[i] + " **" + poll.options[i] + "**\n";
+                    description += "`" + create_progress_bar(percentage, 15) + "` " + std::to_string(vote_count) + " votes\n";
+                }
+                
+                description += "\n**total votes:** " + std::to_string(total_votes) + "\n";
+                
+                // Add role restrictions info
+                if (!poll.required_roles.empty() || !poll.excluded_roles.empty()) {
+                    description += "\n**voting restrictions:**\n";
+                    if (!poll.required_roles.empty()) {
+                        description += "must have: ";
+                        for (size_t i = 0; i < poll.required_roles.size(); i++) {
+                            description += "<@&" + std::to_string(poll.required_roles[i]) + ">";
+                            if (i < poll.required_roles.size() - 1) description += ", ";
+                        }
+                        description += "\n";
+                    }
+                    if (!poll.excluded_roles.empty()) {
+                        description += "cannot have: ";
+                        for (size_t i = 0; i < poll.excluded_roles.size(); i++) {
+                            description += "<@&" + std::to_string(poll.excluded_roles[i]) + ">";
+                            if (i < poll.excluded_roles.size() - 1) description += ", ";
+                        }
+                        description += "\n";
+                    }
+                }
+                
+                description += "\n*Poll created by <@" + std::to_string(poll.creator_id) + ">*";
+                
+                auto embed = bronx::create_embed(description);
+                embed.set_color(0x5865F2);
+                
+                // Get the poll message and update it
+                bot.message_get(poll.message_id, poll.channel_id, [&bot, embed](const dpp::confirmation_callback_t& get_callback) {
+                    if (!get_callback.is_error()) {
+                        auto original_msg = get_callback.get<dpp::message>();
+                        original_msg.embeds.clear();
+                        original_msg.add_embed(embed);
+                        bot.message_edit(original_msg);
+                    }
+                });
+                
+                // Send ephemeral confirmation
+                std::string emoji = number_emojis[option_index];
+                
+                event.reply(dpp::ir_channel_message_with_source,
+                    dpp::message().add_embed(bronx::success("You voted for option " + emoji)).set_flags(dpp::m_ephemeral));
+            });
+        }
+    });
+}
+
+} // namespace commands
