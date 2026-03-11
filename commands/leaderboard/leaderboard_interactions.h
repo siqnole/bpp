@@ -9,16 +9,88 @@ namespace commands {
 namespace leaderboard {
 
 inline void register_interactions(dpp::cluster& bot, bronx::db::Database* db) {
-    // Handle category selection dropdown
+    // Handle category selection dropdowns
     bot.on_select_click([&bot, db](const dpp::select_click_t& event) {
-        // Check if this is a leaderboard category selection
+        // Handle inline category selector on leaderboard messages
+        if (event.custom_id.find("lb_catselect_") == 0) {
+            // Parse: lb_catselect_scope_userid
+            ::std::string suffix = event.custom_id.substr(13); // "lb_catselect_".length()
+            size_t last_underscore = suffix.rfind('_');
+            if (last_underscore == ::std::string::npos) return;
+            
+            ::std::string scope_str = suffix.substr(0, last_underscore);
+            uint64_t expected_user_id = 0;
+            try {
+                expected_user_id = ::std::stoull(suffix.substr(last_underscore + 1));
+            } catch (...) { return; }
+            
+            if (event.command.get_issuing_user().id != expected_user_id) {
+                event.reply(dpp::ir_channel_message_with_source, 
+                    dpp::message().add_embed(bronx::error("this menu isn't for you")).set_flags(dpp::m_ephemeral));
+                return;
+            }
+            
+            bool is_global = (scope_str == "global");
+            ::std::string new_category = resolve_category_alias(event.values[0]);
+            uint64_t user_id = static_cast<uint64_t>(event.command.get_issuing_user().id);
+            uint64_t guild_id = is_global ? 0 : static_cast<uint64_t>(event.command.guild_id);
+            
+            auto info = get_category_info(new_category);
+            if (info.title == "unknown") {
+                event.reply(dpp::ir_channel_message_with_source,
+                    dpp::message().add_embed(bronx::error("unknown category")).set_flags(dpp::m_ephemeral));
+                return;
+            }
+            
+            auto all_entries = get_entries_for_category(db, new_category, 0, 5000);
+            if (!is_global && guild_id != 0) {
+                all_entries = filter_by_guild_members(bot, all_entries, guild_id);
+            }
+            
+            int total_entries = static_cast<int>(all_entries.size());
+            int total_pages = ::std::max(1, (total_entries + LEADERBOARD_ENTRIES_PER_PAGE - 1) / LEADERBOARD_ENTRIES_PER_PAGE);
+            int64_t total_value = calculate_total_value(all_entries);
+            
+            dpp::message msg;
+            
+            if (all_entries.empty()) {
+                ::std::string description;
+                if (!is_global) {
+                    description = "no users from this server found in the " + info.title + " leaderboard";
+                } else {
+                    description = "no data available for the " + info.title + " leaderboard";
+                }
+                auto embed = bronx::create_embed(description);
+                bronx::add_invoker_footer(embed, event.command.usr);
+                msg.add_embed(embed);
+            } else {
+                int end_idx = ::std::min(LEADERBOARD_ENTRIES_PER_PAGE, total_entries);
+                ::std::vector<bronx::db::LeaderboardEntry> page_entries(
+                    all_entries.begin(),
+                    all_entries.begin() + end_idx
+                );
+                
+                ::std::string description = build_leaderboard_description(bot, db, page_entries, info, new_category, 1, is_global, event.command.usr.id, total_value);
+                auto embed = bronx::create_embed(description);
+                bronx::add_invoker_footer(embed, event.command.usr);
+                msg.add_embed(embed);
+            }
+            
+            auto paginator = create_paginator_buttons(new_category, is_global, 1, total_pages, user_id);
+            msg.add_component(paginator);
+            auto dropdown = create_category_dropdown_row(new_category, is_global, user_id);
+            msg.add_component(dropdown);
+            
+            event.reply(dpp::ir_update_message, msg);
+            return;
+        }
+        
+        // Handle help-page category selection (lb_category_ prefix)
         if (event.custom_id.find("lb_category_") != 0) return;
         
-        // Extract user ID from custom_id
         ::std::string user_id_str = event.custom_id.substr(12); // "lb_category_".length()
         dpp::snowflake expected_user_id = ::std::stoull(user_id_str);
         
-        // Verify the user clicking is the one who invoked the command
         if (event.command.get_issuing_user().id != expected_user_id) {
             event.reply(dpp::ir_channel_message_with_source, 
                 dpp::message().add_embed(bronx::error("this menu isn't for you")).set_flags(dpp::m_ephemeral));
@@ -27,7 +99,6 @@ inline void register_interactions(dpp::cluster& bot, bronx::db::Database* db) {
         
         ::std::string selected_category = resolve_category_alias(event.values[0]);
         
-        // Send the command as a message
         event.reply(dpp::ir_channel_message_with_source, 
             dpp::message().set_content("lb " + selected_category).set_flags(dpp::m_ephemeral));
     });
@@ -94,19 +165,7 @@ inline void register_interactions(dpp::cluster& bot, bronx::db::Database* db) {
         bool new_global = is_global;
         int new_page = current_page;
         
-        if (action == "prev") {
-            // Previous category (reset to page 1)
-            new_category = get_prev_category(category);
-            new_page = 1;
-        } else if (action == "next") {
-            // Next category (reset to page 1)
-            new_category = get_next_category(category);
-            new_page = 1;
-        } else if (action == "toggle") {
-            // Toggle between server and global (reset to page 1)
-            new_global = !is_global;
-            new_page = 1;
-        } else if (action == "pageprev") {
+        if (action == "pageprev") {
             // Previous page
             new_page = current_page - 1;
             if (new_page < 1) new_page = 1;
@@ -114,9 +173,9 @@ inline void register_interactions(dpp::cluster& bot, bronx::db::Database* db) {
             // Next page
             new_page = current_page + 1;
         } else if (action == "pageinfo") {
-            // Page info button is disabled, but acknowledge click anyway
-            event.reply(dpp::ir_deferred_update_message, dpp::message());
-            return;
+            // Toggle between server and global (reset to page 1)
+            new_global = !is_global;
+            new_page = 1;
         } else {
             // Unknown action, ignore
             return;
@@ -188,9 +247,9 @@ inline void register_interactions(dpp::cluster& bot, bronx::db::Database* db) {
         auto paginator = create_paginator_buttons(new_category, new_global, new_page, total_pages, user_id);
         msg.add_component(paginator);
         
-        // Add category navigation buttons (row 2)
-        auto nav_buttons = create_navigation_buttons(new_category, new_global, user_id);
-        msg.add_component(nav_buttons);
+        // Add category dropdown selector (row 2)
+        auto dropdown = create_category_dropdown_row(new_category, new_global, user_id);
+        msg.add_component(dropdown);
         
         // Update the message
         event.reply(dpp::ir_update_message, msg);

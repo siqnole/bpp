@@ -42,7 +42,8 @@ static MYSQL* make_new_connection() {
     my_bool reconnect = 1;
     mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
 
-    // Enable SSL for remote database connections (e.g. Aiven)
+    // Enable TCP keepalive for remote connections to detect dead connections
+    // faster and avoid long hangs on broken pipes
     if (g_config.host != "localhost" && g_config.host != "127.0.0.1") {
         my_bool ssl_enforce = 1;
         mysql_options(mysql, MYSQL_OPT_SSL_ENFORCE, &ssl_enforce);
@@ -69,13 +70,14 @@ static MYSQL* make_new_connection() {
 // ---------------------------------------------------------------------------
 
 ConnectionPool::ConnectionPool(const DatabaseConfig& config)
-    : max_connections_(config.pool_size > 0 ? config.pool_size : 10) {
+    : max_connections_(config.pool_size > 0 ? config.pool_size : 25) {
     g_config = config;
     g_verbose_logging = config.log_connections;
 
-    // Pre-create a small number of connections so the first queries are fast.
-    // We create min(4, max_connections_) eagerly; the rest are created lazily.
-    size_t eager = std::min<size_t>(4, max_connections_);
+    // Pre-create connections so the first queries are fast.
+    // For remote databases we need more ready connections to absorb
+    // concurrent requests without blocking on new SSL handshakes.
+    size_t eager = std::min<size_t>(8, max_connections_);
     for (size_t i = 0; i < eager; ++i) {
         MYSQL* m = make_new_connection();
         if (m) {
@@ -114,18 +116,38 @@ std::shared_ptr<Connection> ConnectionPool::acquire() {
         auto conn = pool_.front();
         pool_.pop();
 
-        // Validate the connection is still alive (cheap ping check)
-        if (conn && conn->get() && mysql_ping(conn->get()) == 0) {
-            if (g_verbose_logging) {
-                std::cerr << "ConnectionPool::acquire() reused pooled connection\n";
+        if (!conn || !conn->get()) {
+            total_connections_ = (total_connections_ > 0 ? total_connections_ - 1 : 0);
+            continue;
+        }
+
+        // Only ping connections that have been idle for >60 seconds.
+        // For recently-used connections, skip the expensive network round-trip.
+        auto idle_time = std::chrono::steady_clock::now() - conn->last_used();
+        bool needs_ping = idle_time > std::chrono::seconds(60);
+
+        if (needs_ping) {
+            // Unlock during network I/O to avoid holding the pool mutex
+            lock.unlock();
+            bool alive = (mysql_ping(conn->get()) == 0);
+            lock.lock();
+
+            if (!alive) {
+                if (g_verbose_logging) {
+                    std::cerr << "ConnectionPool::acquire() dropped stale connection (failed ping after "
+                              << std::chrono::duration_cast<std::chrono::seconds>(idle_time).count() << "s idle)\n";
+                }
+                total_connections_ = (total_connections_ > 0 ? total_connections_ - 1 : 0);
+                continue;
             }
-            return conn;
         }
-        // Connection was stale — drop it and try the next one
+
+        conn->touch();
         if (g_verbose_logging) {
-            std::cerr << "ConnectionPool::acquire() dropped stale connection\n";
+            std::cerr << "ConnectionPool::acquire() reused pooled connection"
+                      << (needs_ping ? " (pinged)" : " (fast)") << "\n";
         }
-        total_connections_ = (total_connections_ > 0 ? total_connections_ - 1 : 0);
+        return conn;
     }
 
     // Pool empty — create a new connection if we haven't hit the limit.
@@ -151,6 +173,7 @@ std::shared_ptr<Connection> ConnectionPool::acquire() {
 void ConnectionPool::release(std::shared_ptr<Connection> conn) {
     if (!conn || !conn->get()) return;
 
+    conn->touch();  // mark as recently used
     std::lock_guard<std::mutex> lock(mutex_);
 
     // Return the connection to the pool if below capacity

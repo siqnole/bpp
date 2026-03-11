@@ -9,7 +9,11 @@
 #include <random>
 #include <algorithm>
 #include <sstream>
+#include <iomanip>
 #include <set>
+#include <mutex>
+#include <thread>
+#include <chrono>
 
 using namespace bronx::db;
 
@@ -25,15 +29,25 @@ struct MinesweeperGame {
     int cols; // x
     int total_mines;
     int safe_cells_revealed;
-    double multiplier_per_safe;
     ::std::set<int> mine_positions; // positions of mines (row * cols + col)
     ::std::set<int> revealed_positions; // positions that have been revealed
     bool active;
     bool game_over;
     bool won;
+    ::std::chrono::steady_clock::time_point created_at; // for timeout
 };
 
 static ::std::map<uint64_t, MinesweeperGame> active_minesweeper_games;
+static ::std::mutex minesweeper_games_mutex;
+
+// Game timeout: 5 minutes of inactivity → auto-forfeit
+static constexpr int MINESWEEPER_TIMEOUT_SECONDS = 300;
+
+// Check if a game has expired (call while holding the mutex)
+static bool is_minesweeper_expired(const MinesweeperGame& game) {
+    auto elapsed = ::std::chrono::steady_clock::now() - game.created_at;
+    return ::std::chrono::duration_cast<::std::chrono::seconds>(elapsed).count() >= MINESWEEPER_TIMEOUT_SECONDS;
+}
 
 // Helper to convert difficulty to mine count
 inline int difficulty_to_mines(const ::std::string& diff, int total_cells) {
@@ -72,28 +86,26 @@ inline ::std::set<int> generate_mines(int total_cells, int num_mines) {
     return mines;
 }
 
-// Calculate multiplier for minesweeper using conditional probability
-// This ensures fair payouts: each cell revealed pays based on actual risk of hitting a mine
-inline double calculate_multiplier_per_safe(int total_cells, int num_mines) {
+// Calculate cumulative multiplier for minesweeper using conditional probability.
+// After revealing k safe cells, the fair multiplier is the product of
+// (remaining_total / remaining_safe) for each successive pick, with a 3% house edge.
+// This ensures that early (low-risk) reveals give small multipliers and later
+// (high-risk) reveals give progressively larger multipliers.
+inline double calculate_cumulative_multiplier(int total_cells, int num_mines, int revealed) {
     int safe_cells = total_cells - num_mines;
-    if (safe_cells <= 0) return 0.0;
+    if (safe_cells <= 0 || revealed <= 0) return 1.0;
+    if (revealed > safe_cells) revealed = safe_cells;
     
-    // Use proper risk-based multiplier: for each cell revealed, the probability of 
-    // surviving that pick is (remaining_safe / remaining_total).
-    // Fair cumulative multiplier for N cells = product of (remaining_total / remaining_safe) for each pick.
-    // We distribute this evenly so mult_per_safe gives an approximately fair game (~3% house edge).
-    // Fair full-clear multiplier = total_cells! * (total_cells - num_mines - safe_cells)! / ((total_cells - safe_cells)! * safe_cells!)
-    // Simplified: product of (total-i)/(safe-i) for i=0..safe-1 = C(total, mines)
-    double fair_total_mult = 1.0;
-    for (int i = 0; i < safe_cells; i++) {
-        fair_total_mult *= (double)(total_cells - i) / (double)(safe_cells - i);
+    double mult = 1.0;
+    for (int i = 0; i < revealed; i++) {
+        // Probability of surviving pick i: (safe_cells - i) / (total_cells - i)
+        // Fair payout for surviving: inverse of that probability
+        mult *= (double)(total_cells - i) / (double)(safe_cells - i);
     }
     // Apply 3% house edge
-    fair_total_mult *= 0.97;
-    // Distribute evenly across safe cells: mult_per_safe = (fair_total - 1.0) / safe_cells
-    double mult_per_safe = (fair_total_mult - 1.0) / safe_cells;
+    mult *= 0.97;
     
-    return std::max(0.05, mult_per_safe); // minimum 5% per cell
+    return mult;
 }
 
 // Create the game board display
@@ -207,7 +219,8 @@ inline ::std::vector<dpp::component> create_minesweeper_buttons(const Minesweepe
 
 // Build the minesweeper message (for use with ir_update_message interaction replies)
 inline dpp::message build_minesweeper_message(const MinesweeperGame& game, bool show_all_mines = false) {
-    double current_multiplier = 1.0 + (game.safe_cells_revealed * game.multiplier_per_safe);
+    int total_cells = game.rows * game.cols;
+    double current_multiplier = calculate_cumulative_multiplier(total_cells, game.total_mines, game.safe_cells_revealed);
     int64_t current_payout = (int64_t)(game.initial_bet * current_multiplier);
     
     ::std::string content = "MINESWEEPER";
@@ -223,7 +236,10 @@ inline dpp::message build_minesweeper_message(const MinesweeperGame& game, bool 
     content += "**Bet:** $" + format_number(game.initial_bet) + "\n";
     content += "**Grid:** " + ::std::to_string(game.cols) + "x" + ::std::to_string(game.rows) + 
                " (" + ::std::to_string(game.total_mines) + " mines)\n";
-    content += "**Current multiplier:** " + ::std::to_string(current_multiplier).substr(0, 4) + "x\n";
+    // Format multiplier with 2 decimal places
+    ::std::ostringstream mult_ss;
+    mult_ss << ::std::fixed << ::std::setprecision(2) << current_multiplier;
+    content += "**Current multiplier:** " + mult_ss.str() + "x\n";
     content += "**Current payout:** $" + format_number(current_payout) + "\n\n";
     
     if (!game.game_over && game.active) {
@@ -345,11 +361,11 @@ inline Command* get_minesweeper_command(Database* db) {
             game.cols = x;
             game.total_mines = num_mines;
             game.safe_cells_revealed = 0;
-            game.multiplier_per_safe = calculate_multiplier_per_safe(total_cells, num_mines);
             game.mine_positions = generate_mines(total_cells, num_mines);
             game.active = true;
             game.game_over = false;
             game.won = false;
+            game.created_at = ::std::chrono::steady_clock::now();
             
             // Create initial message
             ::std::string content = "MINESWEEPER\n\n";
@@ -372,6 +388,7 @@ inline Command* get_minesweeper_command(Database* db) {
                 if (!callback.is_error()) {
                     auto sent_msg = ::std::get<dpp::message>(callback.value);
                     game.message_id = sent_msg.id;
+                    ::std::lock_guard<::std::mutex> lock(minesweeper_games_mutex);
                     active_minesweeper_games[event.msg.author.id] = game;
                 }
             });
@@ -480,11 +497,11 @@ inline Command* get_minesweeper_command(Database* db) {
             game.cols = x;
             game.total_mines = num_mines;
             game.safe_cells_revealed = 0;
-            game.multiplier_per_safe = calculate_multiplier_per_safe(total_cells, num_mines);
             game.mine_positions = generate_mines(total_cells, num_mines);
             game.active = true;
             game.game_over = false;
             game.won = false;
+            game.created_at = ::std::chrono::steady_clock::now();
             
             ::std::string content = "MINESWEEPER\n\n";
             content += "**Bet:** $" + format_number(bet) + "\n";
@@ -508,6 +525,7 @@ inline Command* get_minesweeper_command(Database* db) {
                     auto sent_msg = callback.get<dpp::message>();
                     game.message_id = sent_msg.id;
                     game.channel_id = sent_msg.channel_id;
+                    ::std::lock_guard<::std::mutex> lock(minesweeper_games_mutex);
                     active_minesweeper_games[game.user_id] = game;
                 }
             });
@@ -590,6 +608,7 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
             // Remove game from active games after a delay
             ::std::thread([user_id]() {
                 ::std::this_thread::sleep_for(::std::chrono::seconds(30));
+                ::std::lock_guard<::std::mutex> lock(minesweeper_games_mutex);
                 active_minesweeper_games.erase(user_id);
             }).detach();
         } else {
@@ -604,7 +623,8 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
                 game.game_over = true;
                 game.won = true;
                 
-                double final_multiplier = 1.0 + (game.safe_cells_revealed * game.multiplier_per_safe);
+                int total_cells_n = game.rows * game.cols;
+                double final_multiplier = calculate_cumulative_multiplier(total_cells_n, game.total_mines, game.safe_cells_revealed);
                 int64_t payout = (int64_t)(game.initial_bet * final_multiplier);
                 
                 db->update_wallet(user_id, payout);
@@ -629,6 +649,7 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
                 // Remove game from active games after a delay
                 ::std::thread([user_id]() {
                     ::std::this_thread::sleep_for(::std::chrono::seconds(30));
+                    ::std::lock_guard<::std::mutex> lock(minesweeper_games_mutex);
                     active_minesweeper_games.erase(user_id);
                 }).detach();
             } else {
@@ -652,6 +673,8 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
             return;
         }
         
+        ::std::lock_guard<::std::mutex> lock(minesweeper_games_mutex);
+        
         if (active_minesweeper_games.find(user_id) == active_minesweeper_games.end()) {
             event.reply(dpp::ir_channel_message_with_source,
                 dpp::message().add_embed(bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
@@ -659,6 +682,17 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         }
         
         MinesweeperGame& game = active_minesweeper_games[user_id];
+        
+        // Check for timeout
+        if (is_minesweeper_expired(game)) {
+            game.active = false;
+            game.game_over = true;
+            db->update_wallet(user_id, game.initial_bet);
+            active_minesweeper_games.erase(user_id);
+            event.reply(dpp::ir_update_message,
+                dpp::message().set_content("MINESWEEPER - EXPIRED\n\nYour game timed out after 5 minutes.\nYour bet of $" + format_number(game.initial_bet) + " has been refunded."));
+            return;
+        }
         
         if (!game.active) {
             event.reply(dpp::ir_channel_message_with_source,
@@ -673,7 +707,8 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         }
         
         // Calculate winnings
-        double final_multiplier = 1.0 + (game.safe_cells_revealed * game.multiplier_per_safe);
+        int total_cells = game.rows * game.cols;
+        double final_multiplier = calculate_cumulative_multiplier(total_cells, game.total_mines, game.safe_cells_revealed);
         int64_t payout = (int64_t)(game.initial_bet * final_multiplier);
         
         db->update_wallet(user_id, payout);
@@ -698,7 +733,9 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         game.won = true;
         
         ::std::string content = "MINESWEEPER - CASHED OUT\n\n";
-        content += "multiplier: **" + ::std::to_string(final_multiplier).substr(0, 4) + "x**\n\n";
+        ::std::ostringstream co_ss;
+        co_ss << ::std::fixed << ::std::setprecision(2) << final_multiplier;
+        content += "multiplier: **" + co_ss.str() + "x**\n\n";
         content += "bet: **$" + format_number(game.initial_bet) + "**\n";
         content += "payout: **$" + format_number(payout) + "**\n";
         content += "profit: **$" + format_number(payout - game.initial_bet) + "**";
@@ -711,6 +748,7 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         // Remove game from active games after a delay
         ::std::thread([user_id]() {
             ::std::this_thread::sleep_for(::std::chrono::seconds(30));
+            ::std::lock_guard<::std::mutex> lock(minesweeper_games_mutex);
             active_minesweeper_games.erase(user_id);
         }).detach();
     });

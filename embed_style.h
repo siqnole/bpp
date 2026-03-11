@@ -283,4 +283,32 @@ namespace bronx {
     inline void safe_slash_reply(dpp::cluster& bot, const dpp::slashcommand_t& event, const dpp::embed& embed) {
         safe_slash_reply(bot, event, dpp::message().add_embed(embed));
     }
+
+    // ========================================================================
+    // Safe message edit with permission error handling
+    // ========================================================================
+
+    // Edit a message with graceful error handling - silently logs failures instead of crashing
+    inline void safe_message_edit(dpp::cluster& bot, const dpp::message& msg,
+                                   std::function<void(bool success)> callback = nullptr) {
+        bot.message_edit(msg, [callback](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                // Log the error but don't DM the user for edits - they already saw the original message
+                const auto err = cb.get_error();
+                std::cerr << "[safe_message_edit] Edit failed (code " << err.code << "): " << err.message << "\n";
+                if (callback) callback(false);
+            } else {
+                if (callback) callback(true);
+            }
+        });
+    }
+
+    // Edit with embed - convenience overload
+    inline void safe_message_edit(dpp::cluster& bot, dpp::snowflake channel_id, dpp::snowflake message_id,
+                                   const dpp::embed& embed, std::function<void(bool success)> callback = nullptr) {
+        dpp::message msg(channel_id, "");
+        msg.id = message_id;
+        msg.add_embed(embed);
+        safe_message_edit(bot, msg, callback);
+    }
 }

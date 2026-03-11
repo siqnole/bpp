@@ -14,6 +14,17 @@ bool Database::execute(const std::string& query) {
     if (!success) {
         last_error_ = mysql_error(conn->get());
     }
+    // Drain any result set(s) before returning to pool.
+    // Required because connections use CLIENT_MULTI_STATEMENTS: unconsumed
+    // results leave stale protocol data on the wire, corrupting the next
+    // prepared-statement operation that reuses this connection (SIGSEGV in
+    // mysql_stmt_bind_param).
+    MYSQL_RES* res = mysql_store_result(conn->get());
+    if (res) mysql_free_result(res);
+    while (mysql_next_result(conn->get()) == 0) {
+        res = mysql_store_result(conn->get());
+        if (res) mysql_free_result(res);
+    }
     pool_->release(conn);
     return success;
 }

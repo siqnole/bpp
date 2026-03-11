@@ -2,6 +2,8 @@
 #include "../../command.h"
 #include "../../embed_style.h"
 #include "../../database/core/database.h"
+#include "../../database/operations/economy/server_economy_operations.h"
+#include "../../database/operations/economy/server_fishing_operations.h"
 #include "../economy_core.h"
 #include "../milestones.h"
 #include "../achievements.h"
@@ -10,6 +12,8 @@
 #include "../global_boss.h"
 #include "../pets/pets.h"
 #include "crews.h"
+#include "../daily_challenges/daily_stat_tracker.h"
+#include "../skill_tree/skill_tree.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <random>
@@ -29,6 +33,16 @@ namespace fishing {
 
 // how long the fishing command remains on cooldown (seconds)
 static const int FISH_COOLDOWN_SECONDS = 30;
+
+// Get cooldown adjusted by Quick Hands skill (fish_cooldown_reduction)
+static int get_adjusted_fish_cooldown(Database* db, uint64_t uid, int base_cd) {
+    double reduction = commands::skill_tree::get_skill_bonus(db, uid, "fish_cooldown_reduction");
+    if (reduction > 0.0) {
+        int adjusted = static_cast<int>(base_cd * (1.0 - reduction / 100.0));
+        return std::max(adjusted, 5); // minimum 5s cooldown
+    }
+    return base_cd;
+}
 
 // ============================================================
 // ANTI-MACRO / CAPTCHA SYSTEM
@@ -578,6 +592,22 @@ static dpp::message complete_fish(Database* db, const FishMinigameState& state, 
         // Pre-compute crew bonus (1.0, 1.15, or 1.25)
         double crew_mult = ::commands::fishing::crews::get_crew_bonus(db, state.uid);
 
+        // Pre-fetch DB stats used by fish effects to avoid per-fish DB calls
+        int64_t prefetch_wallet = db->get_wallet(uid);
+        int64_t prefetch_bank = db->get_bank(uid);
+        int64_t prefetch_fish_caught = db->get_stat(uid, "fish_caught");
+        int64_t prefetch_fish_sold = db->get_stat(uid, "fish_sold");
+        int64_t prefetch_gambling_wins = db->get_stat(uid, "gambling_wins");
+        int64_t prefetch_gambling_losses = db->get_stat(uid, "gambling_losses");
+        // Pre-fetch inventory for Collector effect
+        auto prefetch_inv = db->get_inventory(uid);
+        std::set<std::string> prefetch_unique_collectibles;
+        for (auto& i : prefetch_inv) if (i.item_type == "collectible") prefetch_unique_collectibles.insert(i.item_id);
+
+        // Accumulator for batch fish_catches INSERT (must be declared before lambda)
+        std::vector<Database::FishCatchRow> pending_fish_catches;
+        pending_fish_catches.reserve(state.used_bait + state.extra_fish);
+
         auto roll_and_store = [&](bool is_bonus) -> CatchInfo {
             int idx; const FishType *fishptr;
             bool avoid_common = (state.bait_id == "bait_rare" || state.bait_id == "bait_epic" || state.bait_id == "bait_legendary");
@@ -634,16 +664,16 @@ static dpp::message complete_fish(Database* db, const FishMinigameState& state, 
                     case FishEffect::Surge: val += state.gear_lvl * state.gear_lvl * 50; break;
                     case FishEffect::Diminishing: { double m = 3.0 - state.luck / 50.0; val = (int64_t)(val * std::max(0.5, m)); break; }
                     case FishEffect::Cascading: { int rolls = 1 + rand() % 6; val = (int64_t)(val * pow(1.15, rolls)); break; }
-                    case FishEffect::Wealthy: { int64_t w = db->get_wallet(uid); val = (int64_t)(val * (1.0 + sqrt((double)w) / 1000.0)); break; }
-                    case FishEffect::Banker: { int64_t b = db->get_bank(uid); val = (int64_t)(val * (1.0 + log10((double)b + 1) / 5.0)); break; }
-                    case FishEffect::Fisher: { int64_t fc = db->get_stat(uid, "fish_caught"); val = (int64_t)(val * (1.0 + (double)fc / 50000.0)); break; }
-                    case FishEffect::Merchant: { int64_t fs = db->get_stat(uid, "fish_sold"); val += fs / 100; break; }
-                    case FishEffect::Gambler: { int64_t wins = db->get_stat(uid, "gambling_wins"); int64_t losses = db->get_stat(uid, "gambling_losses"); val = (wins > losses) ? val * 2 : (int64_t)(val * 0.5); break; }
+                    case FishEffect::Wealthy: { val = (int64_t)(val * (1.0 + sqrt((double)prefetch_wallet) / 1000.0)); break; }
+                    case FishEffect::Banker: { val = (int64_t)(val * (1.0 + log10((double)prefetch_bank + 1) / 5.0)); break; }
+                    case FishEffect::Fisher: { val = (int64_t)(val * (1.0 + (double)prefetch_fish_caught / 50000.0)); break; }
+                    case FishEffect::Merchant: { val += prefetch_fish_sold / 100; break; }
+                    case FishEffect::Gambler: { val = (prefetch_gambling_wins > prefetch_gambling_losses) ? val * 2 : (int64_t)(val * 0.5); break; }
                     case FishEffect::Ascended: { double mult = std::min(10.0, pow(1.5, state.prestige_level)); val = (int64_t)(val * mult); break; }
-                    case FishEffect::Underdog: { int64_t w = db->get_wallet(uid); double m2 = 2.0 - (double)w / 10000000.0; val = (int64_t)(val * std::max(0.5, m2)); break; }
-                    case FishEffect::HotStreak: { int64_t wins = db->get_stat(uid, "gambling_wins"); int64_t losses = db->get_stat(uid, "gambling_losses"); val = (int64_t)(val * (1.0 + (double)wins / ((double)wins + (double)losses + 1.0))); break; }
-                    case FishEffect::Collector: { auto inv = db->get_inventory(uid); std::set<std::string> unique; for(auto& i : inv) if(i.item_type == "collectible") unique.insert(i.item_id); val += unique.size() * 100; break; }
-                    case FishEffect::Persistent: { int64_t fc = db->get_stat(uid, "fish_caught"); int64_t fs = db->get_stat(uid, "fish_sold"); val = (int64_t)(val * log2((double)(fc + fs) + 2.0)); break; }
+                    case FishEffect::Underdog: { double m2 = 2.0 - (double)prefetch_wallet / 10000000.0; val = (int64_t)(val * std::max(0.5, m2)); break; }
+                    case FishEffect::HotStreak: { val = (int64_t)(val * (1.0 + (double)prefetch_gambling_wins / ((double)prefetch_gambling_wins + (double)prefetch_gambling_losses + 1.0))); break; }
+                    case FishEffect::Collector: { val += prefetch_unique_collectibles.size() * 100; break; }
+                    case FishEffect::Persistent: { val = (int64_t)(val * log2((double)(prefetch_fish_caught + prefetch_fish_sold) + 2.0)); break; }
                     default: break;
                 }
             }
@@ -676,14 +706,28 @@ static dpp::message complete_fish(Database* db, const FishMinigameState& state, 
             std::string fid = generate_fish_id();
             std::string metadata = "{\"name\":\"" + fish.name + "\",\"value\":" + std::to_string(val) + ",\"locked\":false}";
             db->add_item(uid, fid, "collectible", 1, metadata);
+            // fish_catch logging is deferred to a batch INSERT after the loop
             std::string rarity = get_fish_rarity(fish.name);
-            db->add_fish_catch(uid, rarity, fish.name, 1.0, val, state.rod_id, state.bait_id);
+            pending_fish_catches.push_back({rarity, fish.name, 1.0, val, state.rod_id, state.bait_id});
             return {fish, val, triggered, trigType, is_bonus, delta, mult, probability, fid, false};
         };
 
         std::vector<CatchInfo> caught_log;
         for (int i = 0; i < state.used_bait; ++i) caught_log.push_back(roll_and_store(false));
         for (int i = 0; i < state.extra_fish; ++i) caught_log.push_back(roll_and_store(true));
+
+        // Flush all fish catches in one round-trip instead of N
+        if (!pending_fish_catches.empty()) {
+            db->add_fish_catches_batch(uid, pending_fish_catches);
+            // Also record per-guild fish catches for dashboard stats
+            if (state.guild_id != 0) {
+                bronx::db::server_economy_operations::create_guild_economy(db, state.guild_id);
+                for (const auto& fc : pending_fish_catches) {
+                    bronx::db::server_fishing_operations::create_server_fish_catch(
+                        db, state.guild_id, uid, fc.rarity, fc.fish_name, fc.weight, fc.value, fc.rod_id, fc.bait_id);
+                }
+            }
+        }
 
         // build header/footer
         std::string header;
@@ -743,6 +787,19 @@ static dpp::message complete_fish(Database* db, const FishMinigameState& state, 
         dpp::message msg = build_fish_message(uid);
         global_boss::on_fish_command(db, uid, (int64_t)caught_log.size());
         ::commands::pets::pet_hooks::on_fish(db, uid, (int)caught_log.size());
+
+        // Track daily challenge stats
+        ::commands::daily_challenges::track_daily_stat(db, uid, "fish_caught", (int64_t)caught_log.size());
+        // Also increment fish_caught in user_stats (was missing)
+        db->increment_stat(uid, "fish_caught", (int64_t)caught_log.size());
+        // Count rare+ catches for daily challenge
+        int rare_count = 0;
+        for (const auto& c : caught_log) {
+            std::string rarity = get_fish_rarity(c.fish.name);
+            if (rarity == "rare" || rarity == "epic" || rarity == "legendary" || rarity == "prestige") rare_count++;
+        }
+        if (rare_count > 0) ::commands::daily_challenges::track_daily_stat(db, uid, "rare_fish_caught", rare_count);
+
         return msg;
     } catch (const std::exception &e) {
         return dpp::message().add_embed(bronx::error("an internal error occurred during fishing"));
@@ -774,16 +831,49 @@ static void start_minigame(dpp::cluster& bot, Database* db, FishMinigameState st
             interaction_token = it->second.interaction_token;
         }
 
-        if (message_id == 0) return;
+        if (message_id == 0) {
+            // message_create/edit_response failed (e.g. Missing Permissions) — clean up and refund bait
+            std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+            auto it = fish_minigames.find(uid);
+            if (it != fish_minigames.end() && !it->second.completed) {
+                it->second.completed = true;
+                if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                    try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                }
+                fish_minigames.erase(uid);
+            }
+            return;
+        }
 
         // Update message to show bite (use interaction webhook for slash commands)
         dpp::message bite_msg = build_bite_message(uid);
         bite_msg.id = message_id;
         bite_msg.channel_id = channel_id;
+
+        // Error handler for bite edit failure — clean up minigame and refund bait
+        auto on_bite_edit = [&bot, db, uid, channel_id](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                auto it = fish_minigames.find(uid);
+                if (it != fish_minigames.end() && !it->second.completed) {
+                    it->second.completed = true;
+                    if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                        try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                    }
+                    fish_minigames.erase(uid);
+                }
+                // Try to send a fallback error message
+                try {
+                    bot.message_create(dpp::message(channel_id, "").add_embed(
+                        bronx::error("fishing failed \xe2\x80\x94 missing permissions to edit messages in this channel. your bait has been refunded.")));
+                } catch (...) {}
+            }
+        };
+
         if (!interaction_token.empty()) {
-            bot.interaction_response_edit(interaction_token, bite_msg);
+            bot.interaction_response_edit(interaction_token, bite_msg, on_bite_edit);
         } else {
-            bot.message_edit(bite_msg);
+            bot.message_edit(bite_msg, on_bite_edit);
         }
 
         // Schedule timeout
@@ -800,14 +890,25 @@ static void start_minigame(dpp::cluster& bot, Database* db, FishMinigameState st
             dpp::message escaped_msg = build_escaped_message(used_bait);
             escaped_msg.id = message_id;
             escaped_msg.channel_id = channel_id;
+
+            // Error handler for escaped edit failure — send fallback message
+            auto on_escape_edit = [&bot, channel_id, used_bait](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) {
+                    try {
+                        bot.message_create(dpp::message(channel_id, "").add_embed(
+                            bronx::error("the fish got away! (" + std::to_string(used_bait) + " bait consumed). use `fish` to try again.")));
+                    } catch (...) {}
+                }
+            };
+
             if (!interaction_token.empty()) {
-                bot.interaction_response_edit(interaction_token, escaped_msg);
+                bot.interaction_response_edit(interaction_token, escaped_msg, on_escape_edit);
             } else {
-                bot.message_edit(escaped_msg);
+                bot.message_edit(escaped_msg, on_escape_edit);
             }
 
-            // Set a shorter cooldown on timeout (15s instead of 30s)
-            db->set_cooldown(uid, "fish", FISH_COOLDOWN_SECONDS / 2);
+            // Set a shorter cooldown on timeout (15s instead of 30s), adjusted by Quick Hands skill
+            db->set_cooldown(uid, "fish", get_adjusted_fish_cooldown(db, uid, FISH_COOLDOWN_SECONDS / 2));
             fish_minigames.erase(uid);
         }
     }).detach();
@@ -844,7 +945,7 @@ static void handle_reel_in(dpp::cluster& bot, Database* db, uint64_t uid, uint64
             desc += "*" + std::to_string(used_bait) + " bait was consumed.*\n\n";
             desc += "Use `fish` to try again.";
             event.reply(dpp::ir_update_message, dpp::message().add_embed(bronx::create_embed(desc, bronx::COLOR_ERROR)));
-            db->set_cooldown(uid, "fish", FISH_COOLDOWN_SECONDS / 2);
+            db->set_cooldown(uid, "fish", get_adjusted_fish_cooldown(db, uid, FISH_COOLDOWN_SECONDS / 2));
             return;
         }
 
@@ -875,8 +976,8 @@ static void handle_reel_in(dpp::cluster& bot, Database* db, uint64_t uid, uint64
     // Edit the original message with the receipt (use interaction webhook for button clicks)
     event.edit_response(result);
 
-    // Set cooldown
-    db->set_cooldown(uid, "fish", FISH_COOLDOWN_SECONDS);
+    // Set cooldown (adjusted by Quick Hands skill)
+    db->set_cooldown(uid, "fish", get_adjusted_fish_cooldown(db, uid, FISH_COOLDOWN_SECONDS));
 
     // Track milestones
     {
@@ -986,7 +1087,25 @@ inline Command* get_fish_command(Database* db) {
                                             start_minigame(bot, db, state_copy);
                                         }
                                     } catch (const std::bad_variant_access&) {
-                                        // Failed to get message from callback
+                                        // Failed to get message from callback — clean up and refund bait
+                                        std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                                        auto it = fish_minigames.find(uid);
+                                        if (it != fish_minigames.end()) {
+                                            if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                                                try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                                            }
+                                            fish_minigames.erase(uid);
+                                        }
+                                    }
+                                } else {
+                                    // message_create failed (e.g. Missing Permissions) — clean up and refund bait
+                                    std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                                    auto it = fish_minigames.find(uid);
+                                    if (it != fish_minigames.end()) {
+                                        if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                                            try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                                        }
+                                        fish_minigames.erase(uid);
                                     }
                                 }
                             });
@@ -1016,7 +1135,25 @@ inline Command* get_fish_command(Database* db) {
                                     start_minigame(bot, db, state_copy);
                                 }
                             } catch (const std::bad_variant_access&) {
-                                // Failed to get message from callback
+                                // Failed to get message from callback — clean up and refund bait
+                                std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                                auto it = fish_minigames.find(uid);
+                                if (it != fish_minigames.end()) {
+                                    if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                                        try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                                    }
+                                    fish_minigames.erase(uid);
+                                }
+                            }
+                        } else {
+                            // message_create failed (e.g. Missing Permissions) — clean up and refund bait
+                            std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                            auto it = fish_minigames.find(uid);
+                            if (it != fish_minigames.end()) {
+                                if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                                    try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                                }
+                                fish_minigames.erase(uid);
                             }
                         }
                     });
@@ -1063,9 +1200,39 @@ inline Command* get_fish_command(Database* db) {
                                             FishMinigameState state_copy = it->second;
                                             start_minigame(bot, db, state_copy);
                                         }
-                                    } catch (const std::bad_variant_access&) {}
+                                    } catch (const std::bad_variant_access&) {
+                                        // Failed to get message — clean up and refund bait
+                                        std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                                        auto it = fish_minigames.find(uid);
+                                        if (it != fish_minigames.end()) {
+                                            if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                                                try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                                            }
+                                            fish_minigames.erase(uid);
+                                        }
+                                    }
+                                } else {
+                                    // get_original_response failed — clean up and refund bait
+                                    std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                                    auto it = fish_minigames.find(uid);
+                                    if (it != fish_minigames.end()) {
+                                        if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                                            try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                                        }
+                                        fish_minigames.erase(uid);
+                                    }
                                 }
                             });
+                        } else {
+                            // edit_response failed (e.g. Missing Permissions) — clean up and refund bait
+                            std::lock_guard<std::mutex> lock(fish_minigame_mutex);
+                            auto it = fish_minigames.find(uid);
+                            if (it != fish_minigames.end()) {
+                                if (it->second.used_bait > 0 && !it->second.bait_id.empty()) {
+                                    try { db->add_item(uid, it->second.bait_id, "bait", it->second.used_bait, it->second.bait_meta, it->second.bait_lvl); } catch (...) {}
+                                }
+                                fish_minigames.erase(uid);
+                            }
                         }
                     });
                 };

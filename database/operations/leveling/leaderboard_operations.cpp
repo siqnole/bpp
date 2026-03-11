@@ -341,54 +341,68 @@ std::vector<LeaderboardEntry> Database::get_prestige_leaderboard(uint64_t guild_
     auto conn = pool_->acquire();
     
     // Always return global leaderboard - guild filtering done in command handler
-    std::string query = "SELECT user_id, prestige "
-                       "FROM users "
-                       "WHERE prestige > 0 "
-                       "ORDER BY prestige DESC, user_id ASC LIMIT ?";
+    // Try rebirth-aware query first: includes users who rebirthed (prestige reset to 0)
+    // Effective prestige = rebirth_level * 100 + prestige for ranking
+    std::string rb_query =
+        "SELECT u.user_id, u.prestige, COALESCE(r.rebirth_level, 0) "
+        "FROM users u "
+        "LEFT JOIN user_rebirths r ON u.user_id = r.user_id "
+        "WHERE u.prestige > 0 OR r.rebirth_level > 0 "
+        "ORDER BY (COALESCE(r.rebirth_level, 0) * 100 + u.prestige) DESC, u.user_id ASC "
+        "LIMIT " + std::to_string(limit);
     
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    if (!stmt) {
-        pool_->release(conn);
-        return entries;
-    }
-    
-    if (mysql_stmt_prepare(stmt, query.c_str(), query.length()) != 0) {
-        mysql_stmt_close(stmt);
-        pool_->release(conn);
-        return entries;
-    }
-    
-    MYSQL_BIND bind[1] = {};
-    bind[0].buffer_type = MYSQL_TYPE_LONG;
-    bind[0].buffer = &limit;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    
-    if (mysql_stmt_execute(stmt) == 0) {
-        MYSQL_BIND result_bind[2] = {};
-        uint64_t user_id;
-        int prestige_level;
-        
-        result_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-        result_bind[0].buffer = &user_id;
-        result_bind[1].buffer_type = MYSQL_TYPE_LONG;
-        result_bind[1].buffer = &prestige_level;
-        
-        mysql_stmt_bind_result(stmt, result_bind);
-        
-        int rank = 1;
-        while (mysql_stmt_fetch(stmt) == 0) {
-            LeaderboardEntry entry;
-            entry.user_id = user_id;
-            entry.username = "";
-            entry.value = prestige_level;
-            entry.rank = rank++;
-            entry.extra_info = bronx::EMOJI_STAR;
-            entries.push_back(entry);
+    bool ok = false;
+    if (mysql_query(conn->get(), rb_query.c_str()) == 0) {
+        MYSQL_RES* res = mysql_store_result(conn->get());
+        if (res) {
+            ok = true;
+            int rank = 1;
+            MYSQL_ROW row;
+            while ((row = mysql_fetch_row(res)) != nullptr) {
+                LeaderboardEntry entry;
+                entry.user_id = std::stoull(row[0]);
+                entry.username = "";
+                int prestige = row[1] ? std::stoi(row[1]) : 0;
+                int rebirth = row[2] ? std::stoi(row[2]) : 0;
+                entry.value = rebirth * 100 + prestige;
+                entry.rank = rank++;
+                if (rebirth > 0) {
+                    entry.extra_info = "\xF0\x9F\x94\x84 R" + std::to_string(rebirth) + " \xC2\xB7 P" + std::to_string(prestige) + " " + bronx::EMOJI_STAR;
+                } else {
+                    entry.extra_info = std::to_string(prestige) + " " + bronx::EMOJI_STAR;
+                }
+                entries.push_back(entry);
+            }
+            mysql_free_result(res);
         }
     }
     
-    mysql_stmt_close(stmt);
+    // Fallback: original prestige-only query (user_rebirths table may not exist yet)
+    if (!ok) {
+        std::string query = "SELECT user_id, prestige "
+                           "FROM users "
+                           "WHERE prestige > 0 "
+                           "ORDER BY prestige DESC, user_id ASC "
+                           "LIMIT " + std::to_string(limit);
+        if (mysql_query(conn->get(), query.c_str()) == 0) {
+            MYSQL_RES* res = mysql_store_result(conn->get());
+            if (res) {
+                int rank = 1;
+                MYSQL_ROW row;
+                while ((row = mysql_fetch_row(res)) != nullptr) {
+                    LeaderboardEntry entry;
+                    entry.user_id = std::stoull(row[0]);
+                    entry.username = "";
+                    entry.value = std::stoi(row[1]);
+                    entry.rank = rank++;
+                    entry.extra_info = std::to_string(entry.value) + " " + bronx::EMOJI_STAR;
+                    entries.push_back(entry);
+                }
+                mysql_free_result(res);
+            }
+        }
+    }
+    
     pool_->release(conn);
     return entries;
 }

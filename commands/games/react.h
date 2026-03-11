@@ -192,7 +192,7 @@ static void update_react_message(dpp::cluster& bot, ReactGame& game, const ::std
     if (!game.interaction_token.empty()) {
         bot.interaction_response_edit(game.interaction_token, msg);
     } else {
-        bot.message_edit(msg);
+        bronx::safe_message_edit(bot, msg);
     }
 }
 
@@ -301,7 +301,7 @@ static void handle_round_win(dpp::cluster& bot, Database* db, ReactGame& game, u
         if (!game.interaction_token.empty()) {
             bot.interaction_response_edit(game.interaction_token, msg);
         } else {
-            bot.message_edit(msg);
+            bronx::safe_message_edit(bot, msg);
         }
         
         // Clean up after delay

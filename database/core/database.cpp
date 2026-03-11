@@ -48,6 +48,41 @@ bool Database::connect() {
             auto migration_start = std::chrono::steady_clock::now();
             std::vector<std::string> migrations;
 
+            // Helper: MySQL-compatible "ADD COLUMN IF NOT EXISTS" via stored procedure
+            migrations.push_back(
+                "DROP PROCEDURE IF EXISTS _add_col_if_missing");
+            migrations.push_back(
+                "CREATE PROCEDURE _add_col_if_missing("
+                "  IN p_table VARCHAR(64), IN p_column VARCHAR(64), IN p_definition VARCHAR(512))"
+                "BEGIN "
+                "  IF NOT EXISTS ("
+                "    SELECT 1 FROM information_schema.columns "
+                "    WHERE table_schema = DATABASE() AND table_name = p_table AND column_name = p_column"
+                "  ) THEN "
+                "    SET @ddl = CONCAT('ALTER TABLE `', p_table, '` ADD COLUMN `', p_column, '` ', p_definition); "
+                "    PREPARE stmt FROM @ddl; "
+                "    EXECUTE stmt; "
+                "    DEALLOCATE PREPARE stmt; "
+                "  END IF; "
+                "END");
+            migrations.push_back(
+                "DROP PROCEDURE IF EXISTS _drop_fk_if_exists");
+            migrations.push_back(
+                "CREATE PROCEDURE _drop_fk_if_exists("
+                "  IN p_table VARCHAR(64), IN p_constraint VARCHAR(64))"
+                "BEGIN "
+                "  IF EXISTS ("
+                "    SELECT 1 FROM information_schema.TABLE_CONSTRAINTS "
+                "    WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = p_table "
+                "      AND CONSTRAINT_NAME = p_constraint AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
+                "  ) THEN "
+                "    SET @ddl = CONCAT('ALTER TABLE `', p_table, '` DROP FOREIGN KEY `', p_constraint, '`'); "
+                "    PREPARE stmt FROM @ddl; "
+                "    EXECUTE stmt; "
+                "    DEALLOCATE PREPARE stmt; "
+                "  END IF; "
+                "END");
+
             // --- table creation ---
             migrations.push_back(
                 "CREATE TABLE IF NOT EXISTS global_blacklist ("
@@ -55,14 +90,14 @@ bool Database::connect() {
                 "reason VARCHAR(512) DEFAULT NULL,"
                 "added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
                 "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE) ENGINE=InnoDB");
-            migrations.push_back("ALTER TABLE global_blacklist ADD COLUMN IF NOT EXISTS reason VARCHAR(512) DEFAULT NULL");
+            migrations.push_back("CALL _add_col_if_missing('global_blacklist','reason','VARCHAR(512) DEFAULT NULL')");
             migrations.push_back(
                 "CREATE TABLE IF NOT EXISTS global_whitelist ("
                 "user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,"
                 "reason VARCHAR(512) DEFAULT NULL,"
                 "added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
                 "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE) ENGINE=InnoDB");
-            migrations.push_back("ALTER TABLE global_whitelist ADD COLUMN IF NOT EXISTS reason VARCHAR(512) DEFAULT NULL");
+            migrations.push_back("CALL _add_col_if_missing('global_whitelist','reason','VARCHAR(512) DEFAULT NULL')");
             migrations.push_back(
                 "CREATE TABLE IF NOT EXISTS guild_prefixes ("
                 "guild_id BIGINT UNSIGNED NOT NULL,"
@@ -187,15 +222,19 @@ bool Database::connect() {
                 "INDEX idx_world_events_active (active, ends_at),"
                 "INDEX idx_world_events_type (event_type)) ENGINE=InnoDB");
 
-            // --- column additions ---
-            migrations.push_back("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1");
-            migrations.push_back("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS metadata TEXT");
-            migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS required_level INT NOT NULL DEFAULT 0");
-            migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1");
-            migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS usable BOOLEAN NOT NULL DEFAULT FALSE");
-            migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS metadata TEXT");
+            // --- column additions (MySQL-compatible) ---
+            migrations.push_back("CALL _add_col_if_missing('inventory','level','INT NOT NULL DEFAULT 1')");
+            migrations.push_back("CALL _add_col_if_missing('inventory','metadata','TEXT')");
+            migrations.push_back("CALL _add_col_if_missing('shop_items','required_level','INT NOT NULL DEFAULT 0')");
+            migrations.push_back("CALL _add_col_if_missing('shop_items','level','INT NOT NULL DEFAULT 1')");
+            migrations.push_back("CALL _add_col_if_missing('shop_items','usable','BOOLEAN NOT NULL DEFAULT FALSE')");
+            migrations.push_back("CALL _add_col_if_missing('shop_items','metadata','TEXT')");
 
             // --- data migrations ---
+            // Fix zero-datetime rows that block ALTER under strict mode
+            migrations.push_back(
+                "UPDATE inventory SET acquired_at = NOW() "
+                "WHERE acquired_at = '0000-00-00 00:00:00' OR acquired_at IS NULL");
             // Expand inventory item_type ENUM to cover all shop categories
             migrations.push_back(
                 "ALTER TABLE inventory MODIFY COLUMN item_type "
@@ -352,6 +391,68 @@ UPDATE inventory SET level = CASE item_id
     ELSE level END
 WHERE item_id IN ('rod_wood','rod_iron','rod_steel','rod_gold','rod_diamond','rod_infinity','rod_dev','rod_shrek',
                     'bait_common','bait_uncommon','bait_rare','bait_epic','bait_legendary','bait_pi','bait_segfault','bait_swamp')
+)SQL");
+
+            // --- seed mining shop items (pickaxes, minecarts, bags) ---
+            migrations.push_back(R"SQL(
+INSERT INTO shop_items (item_id, name, description, category, price, max_quantity, required_level, level, usable, metadata) VALUES
+('pickaxe_wood','Wooden Pickaxe','basic mining tool','pickaxe',500,NULL,0,1,TRUE,'{"luck":0,"duration":20,"multimine":0}'),
+('pickaxe_stone','Stone Pickaxe','slightly better than wood','pickaxe',2000,NULL,0,2,TRUE,'{"luck":5,"duration":25,"multimine":1}'),
+('pickaxe_iron','Iron Pickaxe','sturdy iron construction','pickaxe',15000,NULL,0,3,TRUE,'{"luck":10,"duration":30,"multimine":2}'),
+('pickaxe_gold','Golden Pickaxe','luxurious and effective','pickaxe',100000,NULL,0,4,TRUE,'{"luck":20,"duration":35,"multimine":3}'),
+('pickaxe_diamond','Diamond Pickaxe','cuts through anything','pickaxe',750000,NULL,0,5,TRUE,'{"luck":40,"duration":40,"multimine":4,"multiore_chance":0.10,"multiore_max":1}'),
+('pickaxe_p1','Emberstrike Pickaxe','forged in prestige flames','pickaxe',5000000,NULL,0,7,TRUE,'{"luck":50,"duration":40,"multimine":5,"prestige":1,"multiore_chance":0.15,"multiore_max":2}'),
+('pickaxe_p2','Voidbreaker Pickaxe','mines through dimensions','pickaxe',25000000,NULL,0,8,TRUE,'{"luck":65,"duration":45,"multimine":7,"prestige":2,"multiore_chance":0.20,"multiore_max":2}'),
+('pickaxe_p3','Phantomsteel Pickaxe','phases through stone','pickaxe',100000000,NULL,0,9,TRUE,'{"luck":80,"duration":45,"multimine":9,"prestige":3,"multiore_chance":0.25,"multiore_max":3}'),
+('pickaxe_p4','Starforged Pickaxe','starforged mining power','pickaxe',500000000,NULL,0,10,TRUE,'{"luck":100,"duration":50,"multimine":11,"prestige":4,"multiore_chance":0.30,"multiore_max":4}'),
+('pickaxe_p5','Worldsplitter Pickaxe','ultimate mining instrument','pickaxe',2000000000,NULL,0,11,TRUE,'{"luck":120,"duration":50,"multimine":13,"prestige":5,"multiore_chance":0.35,"multiore_max":5}'),
+('minecart_rusty','Rusty Minecart','barely rolls','minecart',400,NULL,0,1,TRUE,'{"speed":10000,"spawn_rates":{"coal":10}}'),
+('minecart_wood','Wooden Minecart','creaky but functional','minecart',1800,NULL,0,2,TRUE,'{"speed":8000,"spawn_rates":{"coal":10,"copper ore":8,"iron ore":5}}'),
+('minecart_iron','Iron Minecart','solid and reliable','minecart',12000,NULL,0,3,TRUE,'{"speed":6500,"spawn_rates":{"silver ore":10,"gold ore":8,"lapis lazuli":5}}'),
+('minecart_steel','Steel Minecart','high-speed ore delivery','minecart',80000,NULL,0,4,TRUE,'{"speed":5000,"spawn_rates":{"ruby":10,"sapphire":8,"emerald":6,"platinum ore":5}}'),
+('minecart_diamond','Diamond Minecart','frictionless perfection','minecart',600000,NULL,0,5,TRUE,'{"speed":4000,"spawn_rates":{"diamond":10,"mithril ore":8,"iridium ore":6}}'),
+('bag_cloth','Cloth Bag','flimsy but functional','bag',300,NULL,0,1,TRUE,'{"capacity":5,"rip_chance":0.60}'),
+('bag_leather','Leather Bag','holds a decent amount','bag',1500,NULL,0,2,TRUE,'{"capacity":8,"rip_chance":0.45}'),
+('bag_canvas','Canvas Bag','sturdy woven canvas','bag',10000,NULL,0,3,TRUE,'{"capacity":12,"rip_chance":0.30}'),
+('bag_iron','Iron Bag','reinforced metal ore bag','bag',70000,NULL,0,4,TRUE,'{"capacity":18,"rip_chance":0.18}'),
+('bag_diamond','Diamond Bag','unrippable crystalline bag','bag',500000,NULL,0,5,TRUE,'{"capacity":25,"rip_chance":0.08}'),
+('bag_obsidian','Risky Bag','30 seconds until the fail safe alarm! make the most of it!','bag',3000000,NULL,0,6,TRUE,'{"capacity":100,"rip_chance":1}'),
+('bag_ender','Ender Bag','connected to the Ender Chest','bag',20000000,NULL,0,7,TRUE,'{"capacity":50,"rip_chance":0.02}')
+ON DUPLICATE KEY UPDATE price=VALUES(price),name=VALUES(name),description=VALUES(description),metadata=VALUES(metadata),level=VALUES(level)
+)SQL");
+
+            // --- migrate existing inventory pickaxes to include multiore_chance/multiore_max ---
+            migrations.push_back(R"SQL(
+UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.10, '$.multiore_max', 1)
+WHERE item_id = 'pickaxe_diamond' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
+)SQL");
+            migrations.push_back(R"SQL(
+UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.15, '$.multiore_max', 2)
+WHERE item_id = 'pickaxe_p1' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
+)SQL");
+            migrations.push_back(R"SQL(
+UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.20, '$.multiore_max', 2)
+WHERE item_id = 'pickaxe_p2' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
+)SQL");
+            migrations.push_back(R"SQL(
+UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.25, '$.multiore_max', 3)
+WHERE item_id = 'pickaxe_p3' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
+)SQL");
+            migrations.push_back(R"SQL(
+UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.30, '$.multiore_max', 4)
+WHERE item_id = 'pickaxe_p4' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
+)SQL");
+            migrations.push_back(R"SQL(
+UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.35, '$.multiore_max', 5)
+WHERE item_id = 'pickaxe_p5' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
+)SQL");
+
+            // --- seed autofisher shop items ---
+            migrations.push_back(R"SQL(
+INSERT INTO shop_items (item_id, name, description, category, price, max_quantity, required_level, level, usable, metadata) VALUES
+('auto_fisher_1','Basic Autofisher','automatically catches fish while you are away (slower rate)','automation',5000000,NULL,0,1,TRUE,'{"tier":1,"rate":300}'),
+('auto_fisher_2','Advanced Autofisher','upgraded autofisher with faster catch rate','automation',25000000,NULL,0,2,TRUE,'{"tier":2,"rate":180}')
+ON DUPLICATE KEY UPDATE price=VALUES(price),name=VALUES(name),description=VALUES(description),metadata=VALUES(metadata),level=VALUES(level)
 )SQL");
 
             // Run all migrations on a single connection for speed
@@ -1607,6 +1708,43 @@ bool Database::autofisher_add_fish(uint64_t user_id, const std::string& fish_nam
     mysql_stmt_close(stmt); pool_->release(conn); return ok;
 }
 
+// ---------------------------------------------------------------------------
+// Batch insert multiple fish into autofisher storage in one round-trip.
+// ---------------------------------------------------------------------------
+bool Database::autofisher_add_fish_batch(uint64_t user_id, const std::vector<AutofishFishRow>& rows) {
+    if (rows.empty()) return true;
+    auto conn = pool_->acquire();
+    if (!conn) { log_error("autofisher_add_fish_batch acquire"); return false; }
+
+    std::string sql = "INSERT INTO autofisher_fish (user_id, fish_name, value, metadata) VALUES ";
+    std::string uid_str = std::to_string(user_id);
+
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (i > 0) sql += ',';
+        char esc_name[201], esc_meta[8193];
+        mysql_real_escape_string(conn->get(), esc_name, rows[i].fish_name.c_str(), rows[i].fish_name.size());
+        mysql_real_escape_string(conn->get(), esc_meta, rows[i].metadata.c_str(),
+                                 std::min(rows[i].metadata.size(), (size_t)4096));
+        sql += '(';
+        sql += uid_str;
+        sql += ",'";
+        sql += esc_name;
+        sql += "',";
+        sql += std::to_string(rows[i].value);
+        sql += ",'";
+        sql += esc_meta;
+        sql += "')";
+    }
+
+    bool ok = (mysql_real_query(conn->get(), sql.c_str(), sql.size()) == 0);
+    if (!ok) {
+        last_error_ = mysql_error(conn->get());
+        log_error("autofisher_add_fish_batch");
+    }
+    pool_->release(conn);
+    return ok;
+}
+
 std::vector<AutofishFish> Database::autofisher_get_fish(uint64_t user_id) {
     std::vector<AutofishFish> out;
     auto conn = pool_->acquire();
@@ -1699,6 +1837,267 @@ int64_t Database::autofisher_clear_fish(uint64_t user_id) {
     }
     pool_->release(conn);
     return total;
+}
+
+std::vector<Database::ActiveGiveawayRow> Database::get_active_giveaways() {
+    std::vector<ActiveGiveawayRow> result;
+    auto conn = pool_->acquire();
+    if (!conn) return result;
+    
+    const char* q = "SELECT id, guild_id, channel_id, COALESCE(message_id, 0), created_by, "
+                    "prize_amount, max_winners, UNIX_TIMESTAMP(ends_at) "
+                    "FROM giveaways WHERE active = TRUE AND ends_at > NOW()";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return result;
+    }
+    
+    if (mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return result;
+    }
+    
+    uint64_t id, guild_id, channel_id, message_id, created_by;
+    int64_t prize;
+    int max_winners;
+    long long ends_at_ts;
+    
+    MYSQL_BIND br[8];
+    memset(br, 0, sizeof(br));
+    br[0].buffer_type = MYSQL_TYPE_LONGLONG; br[0].buffer = &id;         br[0].is_unsigned = 1;
+    br[1].buffer_type = MYSQL_TYPE_LONGLONG; br[1].buffer = &guild_id;   br[1].is_unsigned = 1;
+    br[2].buffer_type = MYSQL_TYPE_LONGLONG; br[2].buffer = &channel_id; br[2].is_unsigned = 1;
+    br[3].buffer_type = MYSQL_TYPE_LONGLONG; br[3].buffer = &message_id; br[3].is_unsigned = 1;
+    br[4].buffer_type = MYSQL_TYPE_LONGLONG; br[4].buffer = &created_by; br[4].is_unsigned = 1;
+    br[5].buffer_type = MYSQL_TYPE_LONGLONG; br[5].buffer = &prize;
+    br[6].buffer_type = MYSQL_TYPE_LONG;     br[6].buffer = &max_winners;
+    br[7].buffer_type = MYSQL_TYPE_LONGLONG; br[7].buffer = &ends_at_ts;
+    
+    if (mysql_stmt_bind_result(stmt, br) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return result;
+    }
+    
+    mysql_stmt_store_result(stmt);
+    while (mysql_stmt_fetch(stmt) == 0) {
+        ActiveGiveawayRow row;
+        row.id = id;
+        row.guild_id = guild_id;
+        row.channel_id = channel_id;
+        row.message_id = message_id;
+        row.created_by = created_by;
+        row.prize = prize;
+        row.max_winners = max_winners;
+        row.ends_at = std::chrono::system_clock::from_time_t(static_cast<time_t>(ends_at_ts));
+        result.push_back(row);
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return result;
+}
+
+// ========================================
+// GIVEAWAY OPERATIONS
+// ========================================
+
+int64_t Database::get_guild_balance(uint64_t guild_id) {
+    auto conn = pool_->acquire();
+    if (!conn) return 0;
+    
+    const char* q = "SELECT balance FROM guild_balances WHERE guild_id=?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
+    
+    MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+    bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = &guild_id; bp[0].is_unsigned = 1;
+    mysql_stmt_bind_param(stmt, bp);
+    
+    if (mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt); pool_->release(conn); return 0;
+    }
+    
+    int64_t balance = 0;
+    MYSQL_BIND br[1]; memset(br, 0, sizeof(br));
+    br[0].buffer_type = MYSQL_TYPE_LONGLONG; br[0].buffer = &balance;
+    mysql_stmt_bind_result(stmt, br);
+    mysql_stmt_store_result(stmt);
+    mysql_stmt_fetch(stmt);
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return balance;
+}
+
+bool Database::donate_to_guild(uint64_t user_id, uint64_t guild_id, int64_t amount) {
+    if (amount <= 0) return false;
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    // Ensure guild_balances row exists
+    const char* q1 = "INSERT IGNORE INTO guild_balances (guild_id, balance) VALUES (?, 0)";
+    MYSQL_STMT* s1 = mysql_stmt_init(conn->get());
+    if (s1 && mysql_stmt_prepare(s1, q1, strlen(q1)) == 0) {
+        MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+        bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = &guild_id; bp[0].is_unsigned = 1;
+        mysql_stmt_bind_param(s1, bp);
+        mysql_stmt_execute(s1);
+    }
+    if (s1) mysql_stmt_close(s1);
+    
+    // Add to guild balance
+    const char* q2 = "UPDATE guild_balances SET balance = balance + ?, total_donated = total_donated + ? WHERE guild_id = ?";
+    MYSQL_STMT* s2 = mysql_stmt_init(conn->get());
+    if (!s2 || mysql_stmt_prepare(s2, q2, strlen(q2)) != 0) {
+        if (s2) mysql_stmt_close(s2);
+        pool_->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bp2[3]; memset(bp2, 0, sizeof(bp2));
+    bp2[0].buffer_type = MYSQL_TYPE_LONGLONG; bp2[0].buffer = &amount;
+    bp2[1].buffer_type = MYSQL_TYPE_LONGLONG; bp2[1].buffer = &amount;
+    bp2[2].buffer_type = MYSQL_TYPE_LONGLONG; bp2[2].buffer = &guild_id; bp2[2].is_unsigned = 1;
+    mysql_stmt_bind_param(s2, bp2);
+    
+    bool ok = mysql_stmt_execute(s2) == 0;
+    mysql_stmt_close(s2);
+    pool_->release(conn);
+    return ok;
+}
+
+uint64_t Database::create_giveaway(uint64_t guild_id, uint64_t channel_id, uint64_t created_by,
+                                   int64_t prize, int max_winners, int duration_seconds) {
+    auto conn = pool_->acquire();
+    if (!conn) return 0;
+    
+    const char* q = "INSERT INTO giveaways (guild_id, channel_id, created_by, prize_amount, max_winners, ends_at) "
+                    "VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
+    
+    MYSQL_BIND bp[6]; memset(bp, 0, sizeof(bp));
+    bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = &guild_id;          bp[0].is_unsigned = 1;
+    bp[1].buffer_type = MYSQL_TYPE_LONGLONG; bp[1].buffer = &channel_id;        bp[1].is_unsigned = 1;
+    bp[2].buffer_type = MYSQL_TYPE_LONGLONG; bp[2].buffer = &created_by;        bp[2].is_unsigned = 1;
+    bp[3].buffer_type = MYSQL_TYPE_LONGLONG; bp[3].buffer = &prize;
+    bp[4].buffer_type = MYSQL_TYPE_LONG;     bp[4].buffer = &max_winners;
+    bp[5].buffer_type = MYSQL_TYPE_LONG;     bp[5].buffer = &duration_seconds;
+    mysql_stmt_bind_param(stmt, bp);
+    
+    if (mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
+    
+    uint64_t giveaway_id = mysql_stmt_insert_id(stmt);
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return giveaway_id;
+}
+
+bool Database::enter_giveaway(uint64_t giveaway_id, uint64_t user_id) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* q = "INSERT IGNORE INTO giveaway_entries (giveaway_id, user_id) VALUES (?, ?)";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
+    bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = &giveaway_id; bp[0].is_unsigned = 1;
+    bp[1].buffer_type = MYSQL_TYPE_LONGLONG; bp[1].buffer = &user_id;     bp[1].is_unsigned = 1;
+    mysql_stmt_bind_param(stmt, bp);
+    
+    bool ok = mysql_stmt_execute(stmt) == 0 && mysql_stmt_affected_rows(stmt) > 0;
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
+}
+
+std::vector<uint64_t> Database::get_giveaway_entries(uint64_t giveaway_id) {
+    std::vector<uint64_t> result;
+    auto conn = pool_->acquire();
+    if (!conn) return result;
+    
+    const char* q = "SELECT user_id FROM giveaway_entries WHERE giveaway_id=?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return result;
+    }
+    
+    MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+    bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = &giveaway_id; bp[0].is_unsigned = 1;
+    mysql_stmt_bind_param(stmt, bp);
+    
+    if (mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt); pool_->release(conn); return result;
+    }
+    
+    uint64_t uid;
+    MYSQL_BIND br[1]; memset(br, 0, sizeof(br));
+    br[0].buffer_type = MYSQL_TYPE_LONGLONG; br[0].buffer = &uid; br[0].is_unsigned = 1;
+    mysql_stmt_bind_result(stmt, br);
+    mysql_stmt_store_result(stmt);
+    
+    while (mysql_stmt_fetch(stmt) == 0) {
+        result.push_back(uid);
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return result;
+}
+
+bool Database::end_giveaway(uint64_t giveaway_id, const std::vector<uint64_t>& winner_ids) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    // Build JSON array of winner IDs
+    std::string json = "[";
+    for (size_t i = 0; i < winner_ids.size(); ++i) {
+        if (i > 0) json += ",";
+        json += std::to_string(winner_ids[i]);
+    }
+    json += "]";
+    
+    const char* q = "UPDATE giveaways SET active = FALSE, winner_ids = ? WHERE id = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    unsigned long json_len = json.size();
+    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
+    bp[0].buffer_type = MYSQL_TYPE_STRING;   bp[0].buffer = (void*)json.c_str(); bp[0].buffer_length = json_len; bp[0].length = &json_len;
+    bp[1].buffer_type = MYSQL_TYPE_LONGLONG; bp[1].buffer = &giveaway_id;        bp[1].is_unsigned = 1;
+    mysql_stmt_bind_param(stmt, bp);
+    
+    bool ok = mysql_stmt_execute(stmt) == 0;
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
 }
 
 } // namespace db

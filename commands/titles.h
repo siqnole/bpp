@@ -3,6 +3,7 @@
 #include "../embed_style.h"
 #include "../database/core/database.h"
 #include "economy_core.h"
+#include "title_utils.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <string>
@@ -192,18 +193,7 @@ inline std::vector<TitleDef> get_available_titles(bronx::db::Database* db) {
     return out;
 }
 
-// Encode a title display string as valid JSON for the metadata column.
-// Format: {"display":"VALUE"} — handles embedded quotes and backslashes.
-inline std::string title_display_to_json(const std::string& display) {
-    std::string result = "{\"display\":\"";
-    for (char c : display) {
-        if      (c == '"')  result += "\\\"";
-        else if (c == '\\') result += "\\\\";
-        else                result += c;
-    }
-    result += "\"}";
-    return result;
-}
+// title_display_to_json is now in title_utils.h (included above)
 
 // Get the display string for a user's equipped title (empty if none).
 // Metadata is stored as {"display":"VALUE"} (valid JSON).  Pre-existing rows

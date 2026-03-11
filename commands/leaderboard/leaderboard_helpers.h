@@ -15,6 +15,94 @@ namespace leaderboard {
 
 using commands::economy::format_number;
 
+// Sanitize display name for safe embedding
+// Removes ANSI escape sequences, zero-width characters, and escapes Discord markdown
+inline ::std::string sanitize_display_name(const ::std::string& name) {
+    ::std::string result;
+    result.reserve(name.size());
+    
+    bool in_ansi_escape = false;
+    
+    for (size_t i = 0; i < name.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(name[i]);
+        
+        // Check for ANSI escape sequences (\x1b[ or \033[)
+        if (c == 0x1b || c == 033) {
+            in_ansi_escape = true;
+            continue;
+        }
+        
+        // Skip until end of ANSI escape sequence
+        if (in_ansi_escape) {
+            // ANSI sequences end with a letter (a-zA-Z)
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                in_ansi_escape = false;
+            }
+            continue;
+        }
+        
+        // Skip zero-width characters (U+200B, U+200C, U+200D, U+FEFF, U+2060)
+        // These are multi-byte UTF-8 sequences
+        if (i + 2 < name.size() && c == 0xE2 && static_cast<unsigned char>(name[i+1]) == 0x80) {
+            unsigned char third = static_cast<unsigned char>(name[i+2]);
+            // U+200B (zero-width space): E2 80 8B
+            // U+200C (zero-width non-joiner): E2 80 8C
+            // U+200D (zero-width joiner): E2 80 8D
+            if (third == 0x8B || third == 0x8C || third == 0x8D) {
+                i += 2;
+                continue;
+            }
+        }
+        // U+FEFF (BOM/zero-width no-break space): EF BB BF
+        if (i + 2 < name.size() && c == 0xEF && static_cast<unsigned char>(name[i+1]) == 0xBB && static_cast<unsigned char>(name[i+2]) == 0xBF) {
+            i += 2;
+            continue;
+        }
+        // U+2060 (word joiner): E2 81 A0
+        if (i + 2 < name.size() && c == 0xE2 && static_cast<unsigned char>(name[i+1]) == 0x81 && static_cast<unsigned char>(name[i+2]) == 0xA0) {
+            i += 2;
+            continue;
+        }
+        
+        // Escape Discord markdown characters
+        // We escape: * _ ~ ` | \ (backslash itself needs escaping in result)
+        switch (c) {
+            case '*':
+            case '_':
+            case '~':
+            case '`':
+            case '|':
+            case '\\':
+                result += '\\';
+                result += static_cast<char>(c);
+                break;
+            default:
+                // Skip control characters except printable ASCII and valid UTF-8
+                if (c >= 32 || c >= 0x80) {
+                    result += static_cast<char>(c);
+                }
+                break;
+        }
+    }
+    
+    // Truncate to reasonable length (32 chars)
+    if (result.size() > 32) {
+        // Find UTF-8 safe truncation point
+        size_t safe_end = 32;
+        while (safe_end > 0 && (static_cast<unsigned char>(result[safe_end]) & 0xC0) == 0x80) {
+            --safe_end;
+        }
+        result = result.substr(0, safe_end) + "...";
+    }
+    
+    // Return empty string protection
+    if (result.empty() || result.find_first_not_of(" \t\n\r") == std::string::npos) {
+        return "User";
+    }
+    
+    return result;
+}
+
 // Convert prestige level to roman numerals
 inline ::std::string prestige_to_roman(int prestige) {
     if (prestige <= 0) return "";
@@ -45,6 +133,24 @@ inline ::std::string get_prestige_display(bronx::db::Database* db, uint64_t user
     int prestige = db->get_prestige(user_id);
     if (prestige <= 0) return "";
     return "[" + prestige_to_roman(prestige) + "] ";
+}
+
+// Get rebirth display string (e.g., "\xF0\x9F\x94\x84II " for rebirth 2)
+// Queries the user_rebirths table; returns empty if no rebirths or table missing.
+inline ::std::string get_rebirth_display(bronx::db::Database* db, uint64_t user_id) {
+    if (!db) return "";
+    ::std::string sql = "SELECT rebirth_level FROM user_rebirths WHERE user_id = " + ::std::to_string(user_id);
+    MYSQL_RES* res = commands::economy::db_select(db, sql);
+    int level = 0;
+    if (res) {
+        MYSQL_ROW row = mysql_fetch_row(res);
+        if (row && row[0]) level = ::std::stoi(row[0]);
+        mysql_free_result(res);
+    }
+    if (level <= 0) return "";
+    static const char* roman[] = {"", "I", "II", "III", "IV", "V"};
+    ::std::string numeral = (level >= 1 && level <= 5) ? roman[level] : ::std::to_string(level);
+    return "\xF0\x9F\x94\x84" + numeral + " "; // 🔄 + roman numeral
 }
 
 // Filter leaderboard entries to only include members of a specific guild
@@ -199,7 +305,7 @@ inline dpp::component create_category_select_menu(uint64_t user_id) {
                .add_select_option(dpp::select_option("🎰 gambling profit", "gambling-profit", "gambling earnings"))
                .add_select_option(dpp::select_option("💸 gambling losses", "gambling-losses", "gambling losses"))
                .add_select_option(dpp::select_option("⌨️ commands used", "commands", "command usage count"))
-               .add_select_option(dpp::select_option(bronx::EMOJI_STAR + " prestige level", "prestige", "prestige rank"))
+               .add_select_option(dpp::select_option("⭐ prestige level", "prestige", "prestige rank"))
                .add_select_option(dpp::select_option("🌐 global XP", "global-xp", "total XP across all servers"))
                .add_select_option(dpp::select_option("📊 server XP", "server-xp", "XP in this server"));
     
@@ -394,13 +500,14 @@ inline dpp::component create_paginator_buttons(
     prev_btn.set_label("◀");
     prev_btn.set_disabled(current_page <= 1);
     
-    // Page indicator button (non-interactive)
+    // Scope toggle button (also shows page info)
+    // Green = global, Red = server
     dpp::component page_btn;
     page_btn.set_type(dpp::cot_button);
-    page_btn.set_style(dpp::cos_secondary);
+    page_btn.set_style(is_global ? dpp::cos_success : dpp::cos_danger);
     page_btn.set_id("lb_pageinfo_" + category + "_" + scope + "_" + ::std::to_string(current_page) + "_" + user_id_str);
-    page_btn.set_label(::std::to_string(current_page) + "/" + ::std::to_string(total_pages));
-    page_btn.set_disabled(true);
+    page_btn.set_label(::std::to_string(current_page) + "/" + ::std::to_string(total_pages) + (is_global ? " \xf0\x9f\x8c\x8d" : " \xf0\x9f\x8f\xa0"));
+    page_btn.set_disabled(false);
     
     // Next page button
     dpp::component next_btn;
@@ -417,9 +524,9 @@ inline dpp::component create_paginator_buttons(
     return action_row;
 }
 
-// Create navigation buttons for leaderboard (navigate between categories)
-inline dpp::component create_navigation_buttons(
-    const ::std::string& category,
+// Create category dropdown selector (row 2)
+inline dpp::component create_category_dropdown_row(
+    const ::std::string& current_category,
     bool is_global,
     uint64_t user_id
 ) {
@@ -429,30 +536,42 @@ inline dpp::component create_navigation_buttons(
     dpp::component action_row;
     action_row.set_type(dpp::cot_action_row);
     
-    // Previous category button
-    dpp::component prev_btn;
-    prev_btn.set_type(dpp::cot_button);
-    prev_btn.set_style(dpp::cos_secondary);
-    prev_btn.set_id("lb_prev_" + category + "_" + scope + "_" + user_id_str);
-    prev_btn.set_label("⏮");
+    dpp::component select_menu;
+    select_menu.set_type(dpp::cot_selectmenu)
+        .set_placeholder("select a leaderboard")
+        .set_id("lb_catselect_" + scope + "_" + user_id_str);
     
-    // Scope toggle button
-    dpp::component toggle_btn;
-    toggle_btn.set_type(dpp::cot_button);
-    toggle_btn.set_style(is_global ? dpp::cos_success : dpp::cos_primary);
-    toggle_btn.set_id("lb_toggle_" + category + "_" + scope + "_" + user_id_str);
-    toggle_btn.set_label(is_global ? "🌍 global" : "🏠 server");
+    struct LbOption {
+        ::std::string label;
+        ::std::string value;
+        ::std::string description;
+    };
     
-    // Next category button
-    dpp::component next_btn;
-    next_btn.set_type(dpp::cot_button);
-    next_btn.set_style(dpp::cos_secondary);
-    next_btn.set_id("lb_next_" + category + "_" + scope + "_" + user_id_str);
-    next_btn.set_label("⏭");
+    static const ::std::vector<LbOption> options = {
+        {"💰 net worth", "networth", "total wallet + bank"},
+        {"💵 wallet", "wallet", "wallet balance"},
+        {"🏦 bank", "bank", "bank balance"},
+        {"⭐ prestige", "prestige", "prestige level"},
+        {"🐟 fish caught", "fish-caught", "total fish caught"},
+        {"📦 fish sold", "fish-sold", "total fish sold"},
+        {"💎 valuable fish", "fish-value", "most valuable catch"},
+        {"🎣 fishing profit", "fishing-profit", "total fishing earnings"},
+        {"🎰 gambling profit", "gambling-profit", "gambling earnings"},
+        {"💸 gambling losses", "gambling-losses", "gambling losses"},
+        {"⌨️ commands used", "commands", "command usage count"},
+        {"🌐 global XP", "global-xp", "total XP across all servers"},
+        {"📊 server XP", "server-xp", "XP in this server"},
+    };
     
-    action_row.add_component(prev_btn);
-    action_row.add_component(toggle_btn);
-    action_row.add_component(next_btn);
+    for (const auto& opt : options) {
+        auto option = dpp::select_option(opt.label, opt.value, opt.description);
+        if (opt.value == current_category) {
+            option.set_default(true);
+        }
+        select_menu.add_select_option(option);
+    }
+    
+    action_row.add_component(select_menu);
     
     return action_row;
 }
@@ -503,14 +622,17 @@ inline ::std::string build_leaderboard_description(
         dpp::user* user = dpp::find_user(entry.user_id);
         if (user && !user->global_name.empty()) {
             // Use display name (global_name) if available
-            display_name = user->global_name;
+            display_name = sanitize_display_name(user->global_name);
         } else if (user && !user->username.empty()) {
             // Fall back to username if no display name
-            display_name = user->username;
+            display_name = sanitize_display_name(user->username);
         } else {
             // Fall back to user ID if username fetch fails
             display_name = "User#" + ::std::to_string(entry.user_id);
         }
+
+        // Rebirth prefix (e.g., "🔄II " for rebirth 2)
+        ::std::string rebirth_prefix = get_rebirth_display(db, entry.user_id);
 
         // Prestige prefix (e.g., "[II] " for prestige 2)
         ::std::string prestige_prefix = get_prestige_display(db, entry.user_id);
@@ -528,23 +650,26 @@ inline ::std::string build_leaderboard_description(
             name_formatted = "__" + name_formatted + "__";
         }
         
-        description += rank_emoji + " " + prestige_prefix + title_prefix + name_formatted + " — ";
+        description += rank_emoji + " " + rebirth_prefix + prestige_prefix + title_prefix + name_formatted + " — ";
         
-        if (info.is_currency) {
+        if (category == "prestige") {
+            // Prestige leaderboard: extra_info carries the full display (e.g., "🔄 R2 · P5 ⭐" or "10 ⭐")
+            description += entry.extra_info;
+        } else if (info.is_currency) {
             description += "$" + format_number(entry.value);
         } else {
             description += format_number(entry.value);
         }
         
-        // Show percentage for top 3 if total_value is provided
-        if (rank <= 3 && total_value > 0) {
+        // Show percentage for top 3 if total_value is provided (skip prestige, it uses effective values)
+        if (rank <= 3 && total_value > 0 && category != "prestige") {
             double percentage = (static_cast<double>(entry.value) / total_value) * 100.0;
             std::ostringstream pct_stream;
             pct_stream << std::fixed << std::setprecision(1) << percentage;
             description += " (" + pct_stream.str() + "%)";
         }
         
-        if (!entry.extra_info.empty()) {
+        if (!entry.extra_info.empty() && category != "prestige") {
             description += " " + entry.extra_info;
         }
         

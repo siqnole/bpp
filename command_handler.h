@@ -13,6 +13,8 @@
 #include "command.h"
 #include "embed_style.h"
 #include "database/operations/economy/history_operations.h"
+#include "database/operations/economy/server_economy_operations.h"
+#include "commands/daily_challenges/daily_stat_tracker.h"
 // forward declare owner helper to avoid circular dependency
 namespace commands { bool is_owner(uint64_t user_id); }
 
@@ -254,6 +256,11 @@ public:
                 if (db_) {
                     bronx::db::history_operations::log_command(db_, event.msg.author.id, it->second->name);
                     db_->increment_stat(event.msg.author.id, "commands_used", 1);
+                    ::commands::daily_challenges::track_daily_stat(db_, event.msg.author.id, "commands_today", 1);
+                    // Per-guild command tracking for dashboard
+                    if (event.msg.guild_id != 0) {
+                        bronx::db::server_economy_operations::log_server_command(db_, event.msg.guild_id, event.msg.author.id, it->second->name);
+                    }
                 }
                 
                 it->second->text_handler(bot, event, args);
@@ -331,6 +338,11 @@ public:
                 if (db_) {
                     bronx::db::history_operations::log_command(db_, event.command.get_issuing_user().id, it->second->name);
                     db_->increment_stat(event.command.get_issuing_user().id, "commands_used", 1);
+                    ::commands::daily_challenges::track_daily_stat(db_, event.command.get_issuing_user().id, "commands_today", 1);
+                    // Per-guild command tracking for dashboard
+                    if (event.command.guild_id != 0) {
+                        bronx::db::server_economy_operations::log_server_command(db_, event.command.guild_id, event.command.get_issuing_user().id, it->second->name);
+                    }
                 }
                 
                 it->second->slash_handler(bot, event);
@@ -389,6 +401,16 @@ public:
     const std::string& get_prefix() const { return prefix; }
 
 protected:
+    // Virtual methods for whitelist/blacklist checks — override in subclasses
+    // to use cached database instead of raw DB
+    virtual bool check_global_whitelisted(uint64_t user_id) {
+        return db_ && db_->is_global_whitelisted(user_id);
+    }
+    
+    virtual bool check_global_blacklisted(uint64_t user_id) {
+        return db_ && db_->is_global_blacklisted(user_id);
+    }
+
     // ========================================================================
     // BAC (Bronx AntiCheat) — core check run on every command invocation
     // Returns true if the command should be blocked.
@@ -399,8 +421,8 @@ protected:
                    const dpp::slashcommand_t* slash_evt) {
         // owner & whitelisted users are always exempt
         if (commands::is_owner(user_id)) return false;
-        if (db_ && db_->is_global_whitelisted(user_id)) return false;
-        if (db_ && db_->is_global_blacklisted(user_id)) return true;
+        if (check_global_whitelisted(user_id)) return false;
+        if (check_global_blacklisted(user_id)) return true;
 
         std::lock_guard<std::mutex> lock(bac_mutex_);
         auto now = std::chrono::steady_clock::now();

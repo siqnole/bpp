@@ -6,6 +6,7 @@
 #include "../economy_core.h"
 #include "../achievements.h"
 #include "../global_boss.h"
+#include "../daily_challenges/daily_stat_tracker.h"
 #include <dpp/dpp.h>
 #include <algorithm>
 
@@ -61,6 +62,8 @@ inline Command* get_sellfish_command(Database* db) {
                     db->increment_stat(event.msg.author.id, "fish_sold", fish_sold);
                     db->increment_stat(event.msg.author.id, "fish_value", total_earned);
                     db->increment_stat(event.msg.author.id, "fish_profit", total_earned);
+                    ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "fish_sell_value_today", total_earned);
+                    ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coins_earned_today", total_earned);
                     
                     // Track global boss fish profit
                     global_boss::on_fish_profit(db, event.msg.author.id, total_earned);
@@ -116,6 +119,8 @@ inline Command* get_sellfish_command(Database* db) {
                                 db->increment_stat(event.msg.author.id, "fish_sold", 1);
                                 db->increment_stat(event.msg.author.id, "fish_value", fish_value);
                                 db->increment_stat(event.msg.author.id, "fish_profit", fish_value);
+                                ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "fish_sell_value_today", fish_value);
+                                ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coins_earned_today", fish_value);
                                 
                                 // Check for fish value achievements
                                 achievements::check_achievements_for_stat(bot, db, event.msg.channel_id,
@@ -195,6 +200,8 @@ inline Command* get_sellfish_command(Database* db) {
                     db->increment_stat(uid, "fish_sold", fish_sold);
                     db->increment_stat(uid, "fish_value", total_earned);
                     db->increment_stat(uid, "fish_profit", total_earned);
+                    ::commands::daily_challenges::track_daily_stat(db, uid, "fish_sell_value_today", total_earned);
+                    ::commands::daily_challenges::track_daily_stat(db, uid, "coins_earned_today", total_earned);
                     
                     // Track global boss fish profit
                     global_boss::on_fish_profit(db, uid, total_earned);
@@ -238,6 +245,8 @@ inline Command* get_sellfish_command(Database* db) {
                                 db->increment_stat(uid, "fish_sold", 1);
                                 db->increment_stat(uid, "fish_value", fish_value);
                                 db->increment_stat(uid, "fish_profit", fish_value);
+                                ::commands::daily_challenges::track_daily_stat(db, uid, "fish_sell_value_today", fish_value);
+                                ::commands::daily_challenges::track_daily_stat(db, uid, "coins_earned_today", fish_value);
                                 
                                 // Check for fish value achievements
                                 achievements::check_achievements_for_stat(bot, db, event.command.channel_id, uid, "fish_value");

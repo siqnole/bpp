@@ -217,6 +217,7 @@ inline Command* create_streak_command(Database* db) {
             
             // Next milestone
             desc += "\xF0\x9F\x8E\xAF **Milestones**\n";
+            bool shown_next_text = false;
             
             for (const auto& m : STREAK_MILESTONES) {
                 std::string status;
@@ -234,10 +235,9 @@ inline Command* create_streak_command(Database* db) {
                     int days_left = m.day - display_streak;
                     desc += " *(" + std::to_string(days_left) + " days away)*";
                     // Only show "next" for the very first uncompleted milestone
-                    static bool shown_next = false;
-                    if (!shown_next) {
+                    if (!shown_next_text) {
                         desc += " \xE2\x97\x80\xEF\xB8\x8F NEXT";
-                        shown_next = true;
+                        shown_next_text = true;
                     }
                 }
                 desc += "\n";

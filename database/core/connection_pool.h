@@ -5,13 +5,14 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
 
 namespace bronx {
 namespace db {
 
 class Connection {
 public:
-    Connection(MYSQL* conn) : conn_(conn) {}
+    Connection(MYSQL* conn) : conn_(conn), last_used_(std::chrono::steady_clock::now()) {}
     ~Connection() {
         if (conn_) {
             mysql_close(conn_);
@@ -21,6 +22,10 @@ public:
     MYSQL* get() { return conn_; }
     operator bool() const { return conn_ != nullptr; }
     
+    // Track when this connection was last used (for idle-based health checks)
+    void touch() { last_used_ = std::chrono::steady_clock::now(); }
+    std::chrono::steady_clock::time_point last_used() const { return last_used_; }
+    
     // Non-copyable, movable
     Connection(const Connection&) = delete;
     Connection& operator=(const Connection&) = delete;
@@ -29,6 +34,7 @@ public:
     
 private:
     MYSQL* conn_;
+    std::chrono::steady_clock::time_point last_used_;
 };
 
 class ConnectionPool {

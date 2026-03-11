@@ -140,100 +140,103 @@ inline ::std::vector<Command*> create_leaderboard_commands(bronx::db::Database* 
             auto paginator = create_paginator_buttons(category, global_scope, current_page, total_pages, author_id);
             msg.add_component(paginator);
             
-            // Add category navigation buttons (row 2)
-            auto nav_buttons = create_navigation_buttons(category, global_scope, author_id);
-            msg.add_component(nav_buttons);
+            // Add category dropdown selector (row 2)
+            auto dropdown = create_category_dropdown_row(category, global_scope, author_id);
+            msg.add_component(dropdown);
             
             bronx::send_message(bot, event, msg);
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
-            // Default to networth and server scope
-            ::std::string category = "networth";
-            bool global_scope = false;
-            
-            // Get category parameter (optional)
-            try {
-                auto cat_param = event.get_parameter("category");
-                if (::std::holds_alternative<::std::string>(cat_param)) {
-                    category = resolve_category_alias(::std::get<::std::string>(cat_param));
+            // Defer the response immediately since leaderboard queries can be slow
+            event.thinking(false, [db, &bot, event](const dpp::confirmation_callback_t&) {
+                // Default to networth and server scope
+                ::std::string category = "networth";
+                bool global_scope = false;
+                
+                // Get category parameter (optional)
+                try {
+                    auto cat_param = event.get_parameter("category");
+                    if (::std::holds_alternative<::std::string>(cat_param)) {
+                        category = resolve_category_alias(::std::get<::std::string>(cat_param));
+                    }
+                } catch (...) {
+                    // category parameter is optional, use default
                 }
-            } catch (...) {
-                // category parameter is optional, use default
-            }
-            
-            // Get scope parameter (optional)
-            try {
-                auto scope_param = event.get_parameter("scope");
-                if (::std::holds_alternative<::std::string>(scope_param)) {
-                    global_scope = (::std::get<::std::string>(scope_param) == "global");
+                
+                // Get scope parameter (optional)
+                try {
+                    auto scope_param = event.get_parameter("scope");
+                    if (::std::holds_alternative<::std::string>(scope_param)) {
+                        global_scope = (::std::get<::std::string>(scope_param) == "global");
+                    }
+                } catch (...) {
+                    // scope parameter is optional, use default
                 }
-            } catch (...) {
-                // scope parameter is optional, use default
-            }
-            
-            uint64_t guild_id = global_scope ? 0 : static_cast<uint64_t>(event.command.guild_id);
-            
-            // Get category info
-            auto info = get_category_info(category);
-            
-            if (info.title == "unknown") {
-                event.reply(dpp::message().add_embed(bronx::error("unknown leaderboard category")));
-                return;
-            }
-            
-            // Get leaderboard data - always fetch global (we'll filter by guild members after)
-            auto entries = get_entries_for_category(db, category, 0, 5000); // Get top 5000 to ensure server members appear
-            
-            // Filter by guild members if this is a server request
-            if (!global_scope && guild_id != 0) {
-                entries = filter_by_guild_members(bot, entries, guild_id);
-            }
-            
-            if (entries.empty()) {
-                ::std::string description;
-                if (!global_scope) {
-                    description = "no users from this server found in the " + info.title + " leaderboard\n\n";
-                    description += "try `/leaderboard " + category + " scope:global` to see the global leaderboard";
-                } else {
-                    description = "no data available for the " + info.title + " leaderboard";
+                
+                uint64_t guild_id = global_scope ? 0 : static_cast<uint64_t>(event.command.guild_id);
+                
+                // Get category info
+                auto info = get_category_info(category);
+                
+                if (info.title == "unknown") {
+                    event.edit_response(dpp::message().add_embed(bronx::error("unknown leaderboard category")));
+                    return;
                 }
-                event.reply(dpp::message().add_embed(bronx::info(description)));
-                return;
-            }
+                
+                // Get leaderboard data - always fetch global (we'll filter by guild members after)
+                auto entries = get_entries_for_category(db, category, 0, 5000); // Get top 5000 to ensure server members appear
+                
+                // Filter by guild members if this is a server request
+                if (!global_scope && guild_id != 0) {
+                    entries = filter_by_guild_members(bot, entries, guild_id);
+                }
             
-            // Calculate pagination (always start at page 1)
-            int total_entries = static_cast<int>(entries.size());
-            int total_pages = (total_entries + LEADERBOARD_ENTRIES_PER_PAGE - 1) / LEADERBOARD_ENTRIES_PER_PAGE;
-            int current_page = 1;
-            
-            // Calculate total value for percentage display
-            int64_t total_value = calculate_total_value(entries);
-            
-            // Get entries for first page
-            int end_idx = ::std::min(LEADERBOARD_ENTRIES_PER_PAGE, total_entries);
-            ::std::vector<bronx::db::LeaderboardEntry> page_entries(
-                entries.begin(),
-                entries.begin() + end_idx
-            );
-            
-            ::std::string description = build_leaderboard_description(bot, db, page_entries, info, category, 1, global_scope, event.command.usr.id, total_value);
-            
-            auto embed = bronx::create_embed(description);
-            bronx::add_invoker_footer(embed, event.command.usr);
-            
-            dpp::message msg;
-            msg.add_embed(embed);
-            
-            // Add paginator buttons (row 1)
-            uint64_t user_id = static_cast<uint64_t>(event.command.usr.id);
-            auto paginator = create_paginator_buttons(category, global_scope, current_page, total_pages, user_id);
-            msg.add_component(paginator);
-            
-            // Add category navigation buttons (row 2)
-            auto nav_buttons = create_navigation_buttons(category, global_scope, user_id);
-            msg.add_component(nav_buttons);
-            
-            event.reply(msg);
+                if (entries.empty()) {
+                    ::std::string description;
+                    if (!global_scope) {
+                        description = "no users from this server found in the " + info.title + " leaderboard\n\n";
+                        description += "try `/leaderboard " + category + " scope:global` to see the global leaderboard";
+                    } else {
+                        description = "no data available for the " + info.title + " leaderboard";
+                    }
+                    event.edit_response(dpp::message().add_embed(bronx::info(description)));
+                    return;
+                }
+                
+                // Calculate pagination (always start at page 1)
+                int total_entries = static_cast<int>(entries.size());
+                int total_pages = (total_entries + LEADERBOARD_ENTRIES_PER_PAGE - 1) / LEADERBOARD_ENTRIES_PER_PAGE;
+                int current_page = 1;
+                
+                // Calculate total value for percentage display
+                int64_t total_value = calculate_total_value(entries);
+                
+                // Get entries for first page
+                int end_idx = ::std::min(LEADERBOARD_ENTRIES_PER_PAGE, total_entries);
+                ::std::vector<bronx::db::LeaderboardEntry> page_entries(
+                    entries.begin(),
+                    entries.begin() + end_idx
+                );
+                
+                ::std::string description = build_leaderboard_description(bot, db, page_entries, info, category, 1, global_scope, event.command.usr.id, total_value);
+                
+                auto embed = bronx::create_embed(description);
+                bronx::add_invoker_footer(embed, event.command.usr);
+                
+                dpp::message msg;
+                msg.add_embed(embed);
+                
+                // Add paginator buttons (row 1)
+                uint64_t user_id = static_cast<uint64_t>(event.command.usr.id);
+                auto paginator = create_paginator_buttons(category, global_scope, current_page, total_pages, user_id);
+                msg.add_component(paginator);
+                
+                // Add category dropdown selector (row 2)
+                auto dropdown = create_category_dropdown_row(category, global_scope, user_id);
+                msg.add_component(dropdown);
+                
+                event.edit_response(msg);
+            }); // end event.thinking callback
         },
         options);
         

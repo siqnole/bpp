@@ -22,60 +22,15 @@ bool Database::add_item(uint64_t user_id, const std::string& item_id, const std:
     
     auto conn = pool_->acquire();
     
-    // Check if item already exists
-    const char* check_query = "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?";
+    // Single-statement UPSERT using ON DUPLICATE KEY UPDATE
+    // Leverages UNIQUE KEY unique_user_item (user_id, item_id) to avoid
+    // the previous SELECT + INSERT/UPDATE two-round-trip pattern.
+    const char* upsert_query =
+        "INSERT INTO inventory (user_id, item_id, item_type, quantity, level, metadata) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity), level = VALUES(level)";
+    
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, check_query, strlen(check_query)) != 0) {
-        last_error_ = mysql_stmt_error(stmt);
-        log_error("add_item check prepare");
-        mysql_stmt_close(stmt);
-        pool_->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[2];
-    memset(bind, 0, sizeof(bind));
-    
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&user_id;
-    bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_STRING;
-    bind[1].buffer = (char*)item_id.c_str();
-    bind[1].buffer_length = item_id.length();
-    
-    mysql_stmt_bind_param(stmt, bind);
-    
-    if (mysql_stmt_execute(stmt) != 0) {
-        last_error_ = mysql_stmt_error(stmt);
-        log_error("add_item check execute");
-        mysql_stmt_close(stmt);
-        pool_->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND result_bind[1];
-    memset(result_bind, 0, sizeof(result_bind));
-    int existing_quantity = 0;
-    
-    result_bind[0].buffer_type = MYSQL_TYPE_LONG;
-    result_bind[0].buffer = (char*)&existing_quantity;
-    
-    mysql_stmt_bind_result(stmt, result_bind);
-    
-    bool exists = (mysql_stmt_fetch(stmt) == 0);
-    mysql_stmt_close(stmt);
-    
-    // Insert or update including level column
-    const char* upsert_query;
-    if (exists) {
-        upsert_query = "UPDATE inventory SET quantity = quantity + ?, level = ? WHERE user_id = ? AND item_id = ?";
-    } else {
-        upsert_query = "INSERT INTO inventory (user_id, item_id, item_type, quantity, level, metadata) VALUES (?, ?, ?, ?, ?, ?)";
-    }
-    
-    stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, upsert_query, strlen(upsert_query)) != 0) {
         last_error_ = mysql_stmt_error(stmt);
         log_error("add_item upsert prepare");
@@ -84,56 +39,35 @@ bool Database::add_item(uint64_t user_id, const std::string& item_id, const std:
         return false;
     }
     
-    if (exists) {
-        MYSQL_BIND update_bind[4];
-        memset(update_bind, 0, sizeof(update_bind));
-        
-        update_bind[0].buffer_type = MYSQL_TYPE_LONG;
-        update_bind[0].buffer = (char*)&quantity;
-        
-        update_bind[1].buffer_type = MYSQL_TYPE_LONG;
-        update_bind[1].buffer = (char*)&level;
-        
-        update_bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-        update_bind[2].buffer = (char*)&user_id;
-        update_bind[2].is_unsigned = 1;
-        
-        update_bind[3].buffer_type = MYSQL_TYPE_STRING;
-        update_bind[3].buffer = (char*)item_id.c_str();
-        update_bind[3].buffer_length = item_id.length();
-        
-        mysql_stmt_bind_param(stmt, update_bind);
-    } else {
-        MYSQL_BIND insert_bind[6];
-        memset(insert_bind, 0, sizeof(insert_bind));
-        
-        insert_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-        insert_bind[0].buffer = (char*)&user_id;
-        insert_bind[0].is_unsigned = 1;
-        
-        insert_bind[1].buffer_type = MYSQL_TYPE_STRING;
-        insert_bind[1].buffer = (char*)item_id.c_str();
-        insert_bind[1].buffer_length = item_id.length();
-        
-        insert_bind[2].buffer_type = MYSQL_TYPE_STRING;
-        insert_bind[2].buffer = (char*)db_type.c_str();
-        insert_bind[2].buffer_length = db_type.length();
-        
-        insert_bind[3].buffer_type = MYSQL_TYPE_LONG;
-        insert_bind[3].buffer = (char*)&quantity;
-        
-        insert_bind[4].buffer_type = MYSQL_TYPE_LONG;
-        insert_bind[4].buffer = (char*)&level;
-        
-        // Handle metadata - can be NULL or JSON string
-        my_bool metadata_is_null = metadata.empty();
-        insert_bind[5].buffer_type = MYSQL_TYPE_STRING;
-        insert_bind[5].buffer = (char*)metadata.c_str();
-        insert_bind[5].buffer_length = metadata.length();
-        insert_bind[5].is_null = &metadata_is_null;
-        
-        mysql_stmt_bind_param(stmt, insert_bind);
-    }
+    MYSQL_BIND insert_bind[6];
+    memset(insert_bind, 0, sizeof(insert_bind));
+    
+    insert_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    insert_bind[0].buffer = (char*)&user_id;
+    insert_bind[0].is_unsigned = 1;
+    
+    insert_bind[1].buffer_type = MYSQL_TYPE_STRING;
+    insert_bind[1].buffer = (char*)item_id.c_str();
+    insert_bind[1].buffer_length = item_id.length();
+    
+    insert_bind[2].buffer_type = MYSQL_TYPE_STRING;
+    insert_bind[2].buffer = (char*)db_type.c_str();
+    insert_bind[2].buffer_length = db_type.length();
+    
+    insert_bind[3].buffer_type = MYSQL_TYPE_LONG;
+    insert_bind[3].buffer = (char*)&quantity;
+    
+    insert_bind[4].buffer_type = MYSQL_TYPE_LONG;
+    insert_bind[4].buffer = (char*)&level;
+    
+    // Handle metadata - can be NULL or JSON string
+    my_bool metadata_is_null = metadata.empty();
+    insert_bind[5].buffer_type = MYSQL_TYPE_STRING;
+    insert_bind[5].buffer = (char*)metadata.c_str();
+    insert_bind[5].buffer_length = metadata.length();
+    insert_bind[5].is_null = &metadata_is_null;
+    
+    mysql_stmt_bind_param(stmt, insert_bind);
     
     bool success = (mysql_stmt_execute(stmt) == 0);
     if (!success) {

@@ -7,6 +7,7 @@
 #include "../global_boss.h"
 #include "../pets/pets.h"
 #include "../skill_tree/skill_tree.h"
+#include "../daily_challenges/daily_stat_tracker.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <random>
@@ -57,6 +58,8 @@ struct MiningSession {
     double rip_chance;       // bag rip chance on timeout (0.0 - 1.0)
     int speed_ms;            // how often ores appear (ms)
     int multimine = 0;       // max extra ores per hit (0 = disabled, up to 20)
+    double multiore_chance = 0.0; // chance (0.0-1.0) each hit spawns 1-3 random bonus ores
+    int multiore_max = 3;        // max random bonus ores per trigger
 
     // Game state
     std::vector<MineInfo> collected;
@@ -151,6 +154,11 @@ static dpp::message build_mining_message(MiningSession& s) {
     if (s.multimine > 0) {
         desc += "⛏️x Multimine [up to " + std::to_string(s.multimine) + " extra]\n";
     }
+    if (s.multiore_chance > 0.001) {
+        char moc[32];
+        snprintf(moc, sizeof(moc), "%.0f%%", s.multiore_chance * 100.0);
+        desc += "🎲 Multi-Ore [" + std::string(moc) + " chance, up to " + std::to_string(s.multiore_max) + " bonus]\n";
+    }
     desc += "Bag: **" + std::to_string(s.collected.size()) + "/" + std::to_string(s.bag_capacity) + "**";
     if (!s.collected.empty()) {
         desc += "  |  Value: **$" + format_number(s.total_value) + "**";
@@ -240,6 +248,13 @@ static dpp::message build_mining_results(MiningSession& s, Database* db, bool ri
             if (o.hadEffect) {
                 desc += " ✨";
             }
+            if (o.bonus_type == OreBonusType::Multimine) {
+                desc += " ⛏️x";
+            } else if (o.bonus_type == OreBonusType::MultiOre) {
+                desc += " 🎲";
+            } else if (o.bonus_type == OreBonusType::DoubleCatch) {
+                desc += " 2️⃣";
+            }
             desc += "\n";
         }
         if (s.collected.size() > 15) {
@@ -249,6 +264,21 @@ static dpp::message build_mining_results(MiningSession& s, Database* db, bool ri
             desc += "\n\n🎁 **Cashout Bonus** `[" + s.bonus_ore_id + "]` – __$" + format_number(s.bonus_value) + "__";
         }
         desc += "\n**Total ores:** " + std::to_string(s.collected.size() + (s.bonus_value > 0 ? 1 : 0));
+        // Count bonus ores by type
+        int mm_count = 0, mo_count = 0, dc_count = 0;
+        for (auto& o : s.collected) {
+            if (o.bonus_type == OreBonusType::Multimine) mm_count++;
+            else if (o.bonus_type == OreBonusType::MultiOre) mo_count++;
+            else if (o.bonus_type == OreBonusType::DoubleCatch) dc_count++;
+        }
+        if (mm_count > 0 || mo_count > 0 || dc_count > 0) {
+            desc += " (";
+            bool first = true;
+            if (mm_count > 0) { desc += "⛏️x" + std::to_string(mm_count); first = false; }
+            if (mo_count > 0) { if (!first) desc += ", "; desc += "🎲" + std::to_string(mo_count); first = false; }
+            if (dc_count > 0) { if (!first) desc += ", "; desc += "2️⃣" + std::to_string(dc_count); }
+            desc += " bonus)";
+        }
         desc += "\n**Total value:** $" + format_number(s.total_value);
         if (s.prestige_level > 0) {
             desc += "\n⭐ Prestige " + std::to_string(s.prestige_level) + " [+" + std::to_string(s.prestige_level * 5) + "%]";
@@ -328,6 +358,10 @@ static void finalize_mining(Database* db, MiningSession& s, bool from_timeout) {
         // Track per-species ore mastery
         db->increment_stat(s.user_id, "ore_mastery_" + ore_info.ore.name, 1);
     }
+
+    // Track daily challenge stats for mining
+    ::commands::daily_challenges::track_daily_stat(db, s.user_id, "ores_mined", (int64_t)s.collected.size());
+    ::commands::daily_challenges::track_daily_stat(db, s.user_id, "ore_value_today", s.total_value);
 
     // Track global boss ores mined (count all collected ores including bonus below)
     int64_t total_ores_for_boss = (int64_t)s.collected.size();
@@ -425,6 +459,8 @@ inline Command* get_mine_command(Database* db) {
             session.rip_chance = parse_mine_meta_double(bag_meta, "rip_chance", 0.20);
             session.speed_ms = parse_mine_meta_int(minecart_meta, "speed", 8000);
             session.multimine = std::min(20, parse_mine_meta_int(pickaxe_meta, "multimine", 0));
+            session.multiore_chance = parse_mine_meta_double(pickaxe_meta, "multiore_chance", 0.0);
+            session.multiore_max = std::max(1, std::min(5, parse_mine_meta_int(pickaxe_meta, "multiore_max", 3)));
             session.prestige_level = db->get_prestige(uid);
             session.guild_id = guild_id;
             session.is_boosting = is_boosting;
@@ -689,7 +725,7 @@ inline void register_mining_interactions(dpp::cluster& bot, Database* db) {
                     val = apply_ore_effect(db, s, s.current_ore, val, triggered);
 
                     std::string oid = generate_ore_id();
-                    MineInfo info{s.current_ore, val, triggered, s.current_ore.effect, s.current_ore_probability, oid, false};
+                    MineInfo info{s.current_ore, val, triggered, s.current_ore.effect, s.current_ore_probability, oid, false, OreBonusType::Normal};
                     s.collected.push_back(info);
                     s.total_value += val;
                     
@@ -700,6 +736,7 @@ inline void register_mining_interactions(dpp::cluster& bot, Database* db) {
                             std::string d_oid = generate_ore_id();
                             MineInfo d_info = info; // copy
                             d_info.item_id = d_oid;
+                            d_info.bonus_type = OreBonusType::DoubleCatch;
                             s.collected.push_back(d_info);
                             s.total_value += val;
                         }
@@ -735,9 +772,49 @@ inline void register_mining_interactions(dpp::cluster& bot, Database* db) {
                             bool mm_triggered = false;
                             mm_val = apply_ore_effect(db, s, s.current_ore, mm_val, mm_triggered);
                             std::string mm_oid = generate_ore_id();
-                            MineInfo mm_info{s.current_ore, mm_val, mm_triggered, s.current_ore.effect, s.current_ore_probability, mm_oid, false};
+                            MineInfo mm_info{s.current_ore, mm_val, mm_triggered, s.current_ore.effect, s.current_ore_probability, mm_oid, false, OreBonusType::Multimine};
                             s.collected.push_back(mm_info);
                             s.total_value += mm_val;
+                        }
+                    }
+
+                    // Multi-Ore: chance to spawn random bonus ores of different types
+                    if (s.multiore_chance > 0.001 && (int)s.collected.size() < s.bag_capacity) {
+                        std::uniform_real_distribution<double> mo_roll(0.0, 1.0);
+                        if (mo_roll(s.gen) < s.multiore_chance) {
+                            // Determine how many bonus ores (1 to multiore_max)
+                            std::uniform_int_distribution<int> mo_count(1, s.multiore_max);
+                            int bonus_count = mo_count(s.gen);
+                            int space = s.bag_capacity - (int)s.collected.size();
+                            bonus_count = std::min(bonus_count, space);
+                            for (int bo = 0; bo < bonus_count; bo++) {
+                                // Roll a random ore from the full pool
+                                int bo_idx;
+                                try {
+                                    bo_idx = s.dist(s.gen);
+                                    if (bo_idx < 0 || bo_idx >= (int)s.pool.size()) bo_idx = 0;
+                                } catch (...) { bo_idx = 0; }
+                                const OreType& bonus_ore = s.pool[bo_idx];
+                                double bo_prob = (s.total_weight > 0)
+                                    ? (s.weights[bo_idx] / (double)s.total_weight) * 100.0 : 0.01;
+                                // Roll value
+                                std::uniform_int_distribution<int64_t> bo_valdis(bonus_ore.min_value, bonus_ore.max_value);
+                                int64_t bo_val = bo_valdis(s.gen);
+                                if (luck != 0) bo_val += bo_val * luck / 100;
+                                if (prestige_bonus > 0) bo_val += bo_val * prestige_bonus / 100;
+                                bo_val += bo_val / 4; // active mining bonus
+                                if (s.pickaxe_level > 1) bo_val += (bo_val * s.pickaxe_level * 6) / 100;
+                                if (s.guild_id == MINE_SUPPORT_SERVER_ID) bo_val += (bo_val * 5) / 100;
+                                if (s.is_boosting) bo_val += (bo_val * 10) / 100;
+                                if (uid == MINE_OWNER_ID && s.guild_id != 0) bo_val += (bo_val * 10) / 100;
+                                if (s.skill_value_bonus > 0) bo_val += bo_val * (s.skill_value_bonus / 100.0);
+                                bool bo_triggered = false;
+                                bo_val = apply_ore_effect(db, s, bonus_ore, bo_val, bo_triggered);
+                                std::string bo_oid = generate_ore_id();
+                                MineInfo bo_info{bonus_ore, bo_val, bo_triggered, bonus_ore.effect, bo_prob, bo_oid, false, OreBonusType::MultiOre};
+                                s.collected.push_back(bo_info);
+                                s.total_value += bo_val;
+                            }
                         }
                     }
 

@@ -16,6 +16,11 @@
 #include "performance/cached_database.h" 
 #include "performance/cache_manager.h"
 #include "performance/xp_batch_writer.h"
+#include "performance/async_stat_writer.h"
+#include "performance/local_db.h"
+#include "performance/write_batch_queue.h"
+#include "performance/api_cache_client.h"
+#include "performance/hybrid_database.h"
 #include "commands/utility.h"
 #include "commands/utility/autopurge.h"
 #include "commands/fun.h"
@@ -178,6 +183,9 @@ int main(int argc, char* argv[]) {
     std::string BOT_TOKEN;
     const char* env_token = std::getenv("BOT_TOKEN");
     if (!env_token || std::string(env_token).empty()) {
+        env_token = std::getenv("DISCORD_TOKEN");
+    }
+    if (!env_token || std::string(env_token).empty()) {
         env_token = std::getenv("TOKEN");
     }
     if (env_token && std::string(env_token).size() > 0) {
@@ -226,13 +234,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << clr::BOLD_GREEN << "✔ database connected successfully" << clr::RESET << "\n";
-    // purge any leftover active_title rows so inventories stay clean; this is
-    // safe to run repeatedly and covers both legacy data and any stray
-    // entries that slip through.
-    int purged = db.delete_inventory_item_for_all_users("active_title");
-    if (purged > 0) {
-        std::cout << clr::YELLOW << "⚠ " << clr::RESET << "purged " << purged << " legacy active_title entries from inventories\n";
-    }
+    // NOTE: active_title purge removed — it was clearing everyone's equipped
+    // titles on every bot restart, causing titles to disappear from leaderboards
+    // and profiles.  Equipped titles are now preserved across restarts.
     
     // Enable debug modes if requested
     if (std::getenv("INVENTORY_DEBUG")) {
@@ -269,6 +273,57 @@ int main(int argc, char* argv[]) {
     leveling::set_xp_batch_writer(&xp_batch_writer);
     xp_batch_writer.start();
     std::cout << clr::GREEN << "✔ " << clr::RESET << "XP batch writer started " << clr::DIM << "(flush interval: 5s)" << clr::RESET << "\n";
+    
+    // PERFORMANCE FIX: Async stat/log writer — moves synchronous log_command()
+    // and increment_stat() calls off the gateway threads.  These were doing
+    // 3 blocking DB round-trips per command, adding 150-300ms to every response.
+    bronx::perf::AsyncStatWriter async_stat_writer(&db, std::chrono::milliseconds(3000));
+    async_stat_writer.start();
+    std::cout << clr::GREEN << "✔ " << clr::RESET << "Async stat writer started " << clr::DIM << "(flush interval: 3s)" << clr::RESET << "\n";
+    
+    // ========================================================================
+    // HYBRID PERFORMANCE LAYER — Local SQLite + batch writes + API cache
+    // Eliminates 40-100ms remote DB round-trips for the hottest data paths.
+    // ========================================================================
+    
+    // 1. Local SQLite cache — sub-ms reads for user data, inventory, stats, shop
+    bronx::local::LocalDB local_db("/tmp/bronxbot_cache.db");
+    if (local_db.initialize()) {
+        std::cout << clr::GREEN << "✔ " << clr::RESET << "Local SQLite cache initialized " 
+                  << clr::DIM << "(/tmp/bronxbot_cache.db, WAL mode)" << clr::RESET << "\n";
+    } else {
+        std::cerr << clr::YELLOW << "⚠ " << clr::RESET << "Local SQLite cache failed to initialize, using remote-only\n";
+    }
+    
+    // 2. Write batch queue — non-blocking wallet/bank/inventory/stat writes
+    bronx::batch::WriteBatchQueue write_batch(&db, &local_db, std::chrono::milliseconds(2000));
+    write_batch.start();
+    std::cout << clr::GREEN << "✔ " << clr::RESET << "Write batch queue started " 
+              << clr::DIM << "(flush interval: 2s)" << clr::RESET << "\n";
+    
+    // 3. API cache client — fetch leaderboards/aggregations from the site API
+    bronx::api::ApiCacheClient api_client(&local_db);
+    std::cout << clr::GREEN << "✔ " << clr::RESET << "API cache client initialized " 
+              << clr::DIM << "(" << api_client.get_base_url() << ")" << clr::RESET << "\n";
+    
+    // 4. Hybrid database — unified layer combining all caching tiers
+    bronx::hybrid::HybridDatabase hybrid_db(&db, bronx::cache::global_cache.get(), 
+                                             &local_db, &write_batch, &api_client);
+    std::cout << clr::BOLD_GREEN << "✔ " << clr::RESET << "Hybrid database layer active " 
+              << clr::DIM << "(local SQLite → memory cache → remote DB)" << clr::RESET << "\n";
+    
+    // PERFORMANCE OPTIMIZATION: Preload ALL guild toggles, prefixes, blacklist into memory
+    // This eliminates the 800+ms cold-start penalty on the first command per guild.
+    // Instead of lazily loading 4 DB queries (200ms each) on first access, we bulk-load
+    // everything at startup so toggle checks are instant (sub-ms in-memory).
+    {
+        auto start = std::chrono::steady_clock::now();
+        hybrid_db.refresh_all_settings();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        std::cout << clr::GREEN << "✔ " << clr::RESET << "Preloaded guild settings into cache "
+                  << clr::DIM << "(" << elapsed << "ms)" << clr::RESET << "\n";
+    }
     
     // PERFORMANCE OPTIMIZATION: Optimal shard count based on guild count
     // Discord recommends ~1 shard per 1000-2500 guilds
@@ -342,7 +397,9 @@ int main(int argc, char* argv[]) {
 
     // PERFORMANCE OPTIMIZATION: Use optimized command handler with caching
     OptimizedCommandHandler cmd_handler(PREFIX, &db);
-    std::cout << clr::GREEN << "✔ " << clr::RESET << "Initialized optimized command handler with comprehensive caching\n";
+    cmd_handler.set_async_stat_writer(&async_stat_writer);
+    cmd_handler.set_hybrid_database(&hybrid_db);
+    std::cout << clr::GREEN << "✔ " << clr::RESET << "Initialized optimized command handler with hybrid caching\n";
 
     // Register commands (unchanged)
     for (auto* cmd : commands::get_utility_commands(&cmd_handler, &db)) {
@@ -431,6 +488,14 @@ int main(int argc, char* argv[]) {
             // Performance stats
             auto perf_stats = cmd_handler.get_performance_stats();
             std::cout << clr::MAGENTA << "📊" << clr::RESET << " Cache initialized with " << clr::BOLD << perf_stats.total_cache_entries << clr::RESET << " total cache slots\n";
+            
+            // Warm cache: bulk-fetch all server settings from remote DB once at startup
+            try {
+                cmd_handler.refresh_settings();
+                std::cout << clr::GREEN << "✔ " << clr::RESET << "Server settings synced into cache\n";
+            } catch (const std::exception& e) {
+                std::cerr << clr::RED << "⚠ " << clr::RESET << "Initial settings sync failed: " << e.what() << "\n";
+            }
             
             // Register slash commands (unchanged)
             auto slash_commands = cmd_handler.get_slash_commands();
@@ -631,6 +696,20 @@ int main(int argc, char* argv[]) {
             bot.start_timer([](dpp::timer timer) {
                 leveling::cleanup_xp_cooldown_cache(3600);
             }, 1800);
+
+            // SETTINGS SYNC: Bulk-refresh dashboard-editable settings every 60s.
+            // The bot runs off its in-memory cache for guild prefixes, module
+            // toggles, and command toggles.  This timer is the only thing that
+            // hits the remote DB for those tables, keeping per-message latency
+            // low while still picking up dashboard edits within ~1 minute.
+            bot.start_timer([&cmd_handler](dpp::timer timer) {
+                try {
+                    cmd_handler.refresh_settings();
+                } catch (const std::exception& e) {
+                    std::cerr << clr::RED << "⚠ " << clr::RESET
+                              << "Settings sync failed: " << e.what() << "\n";
+                }
+            }, 60);
             
             // AUTOFISHER: Background loop to run autofishing for active users
             // Runs every 2 minutes and checks if each autofisher is due for a run
@@ -842,16 +921,22 @@ int main(int argc, char* argv[]) {
     // Note: signal handlers can't capture references, so we use a static pointer
     // for the batch writer flush-on-exit.
     static bronx::xp::XpBatchWriter* g_shutdown_writer = &xp_batch_writer;
+    static bronx::perf::AsyncStatWriter* g_shutdown_stat_writer = &async_stat_writer;
+    static bronx::batch::WriteBatchQueue* g_shutdown_batch = &write_batch;
     std::signal(SIGINT, [](int) {
         std::cout << "\n" << clr::BOLD_YELLOW << "⚠ Received SIGINT, shutting down gracefully..." << clr::RESET << "\n";
+        if (g_shutdown_batch) g_shutdown_batch->stop();
         if (g_shutdown_writer) g_shutdown_writer->stop();
+        if (g_shutdown_stat_writer) g_shutdown_stat_writer->stop();
         bronx::cache::shutdown_cache();
         exit(0);
     });
 
     std::signal(SIGTERM, [](int) {
         std::cout << "\n" << clr::BOLD_YELLOW << "⚠ Received SIGTERM, shutting down gracefully..." << clr::RESET << "\n";
+        if (g_shutdown_batch) g_shutdown_batch->stop();
         if (g_shutdown_writer) g_shutdown_writer->stop();
+        if (g_shutdown_stat_writer) g_shutdown_stat_writer->stop();
         bronx::cache::shutdown_cache();
         exit(0);
     });
@@ -870,13 +955,22 @@ int main(int argc, char* argv[]) {
     std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " TTL caches for prefixes/toggles" << std::string(8, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
     std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " Per-shard performance monitoring" << std::string(8, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
     std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " XP batch writer (non-blocking)" << std::string(9, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
+    std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " Async stat/log writer" << std::string(18, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
+    std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " ensure_user_exists cache" << std::string(15, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
+    std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " Idle-based pool health (no ping)" << std::string(7, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
+    std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " Local SQLite cache (sub-ms reads)" << std::string(6, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
+    std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " Write batch queue (2s flush)" << std::string(11, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
+    std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " API cache client (site API)" << std::string(12, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
+    std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " Hybrid DB (3-tier read/write)" << std::string(10, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
     std::cout << clr::BOLD_BLUE << "└───────────────────────────────────────────────┘" << clr::RESET << "\n\n";
     
     // Start bot
     bot.start(dpp::st_wait);
     
-    // Cleanup — flush any remaining XP before exit
+    // Cleanup — flush any remaining data before exit
+    write_batch.stop();
     xp_batch_writer.stop();
+    async_stat_writer.stop();
     bronx::cache::shutdown_cache();
     return 0;
 }

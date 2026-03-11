@@ -206,6 +206,9 @@ static std::string normalize_category(std::string cat) {
     if (cat == "lootbox" || cat == "lootboxes" || cat == "crate" || cat == "crates" || cat == "box" || cat == "boxes") {
         return "lootbox";
     }
+    if (cat == "automation" || cat == "autofisher" || cat == "auto") {
+        return "automation";
+    }
     
     return cat;
 }
@@ -541,6 +544,9 @@ static dpp::message build_shop_main_menu(Database* db, const std::string& user_i
     if (cat_counts.count("bag")) {
         description += "🎒 **bags** — " + std::to_string(cat_counts["bag"]) + " available\n";
     }
+    if (cat_counts.count("automation")) {
+        description += "🤖 **automation** — " + std::to_string(cat_counts["automation"]) + " available\n";
+    }
     
     // Lootbox count (from code catalog, not DB)
     int lootbox_count = 0;
@@ -586,6 +592,10 @@ static dpp::message build_shop_main_menu(Database* db, const std::string& user_i
     if (cat_counts.count("bag")) {
         select_menu.add_select_option(dpp::select_option(
             "🎒 bags (" + std::to_string(cat_counts["bag"]) + ")", "bag", "bags for ore storage capacity"));
+    }
+    if (cat_counts.count("automation")) {
+        select_menu.add_select_option(dpp::select_option(
+            "🤖 automation (" + std::to_string(cat_counts["automation"]) + ")", "automation", "autofishers and automation tools"));
     }
     if (lootbox_count > 0) {
         select_menu.add_select_option(dpp::select_option(
@@ -1135,6 +1145,163 @@ static dpp::message build_shop_main_menu(Database* db, const std::string& user_i
         });
     cmds.push_back(buy);
     
+    // Sell command - sell items back for 40% of original price
+    static Command* sell_item = new Command("sellitem", "sell shop items back for 40% of original value", "shop", {"si", "sellback"}, true,
+        [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+            if (args.empty()) {
+                bronx::send_message(bot, event, bronx::error("usage: sellitem <item> [amount]\nsells items for 40% of their shop price"));
+                return;
+            }
+            
+            // Parse item
+            std::string item_name = args[0];
+            auto maybe = find_shop_item(db, item_name);
+            if (!maybe) {
+                bronx::send_message(bot, event, bronx::error("item not found in shop — only purchasable items can be sold back"));
+                return;
+            }
+            
+            const ShopItem& item = *maybe;
+            if (item.price <= 0) {
+                bronx::send_message(bot, event, bronx::error("this item cannot be sold"));
+                return;
+            }
+            
+            // Parse amount (default 1)
+            int amount = 1;
+            if (args.size() >= 2) {
+                std::string amt_str = args[1];
+                std::transform(amt_str.begin(), amt_str.end(), amt_str.begin(), ::tolower);
+                if (amt_str == "all" || amt_str == "max") {
+                    amount = db->get_item_quantity(event.msg.author.id, item.item_id);
+                } else {
+                    try {
+                        amount = std::stoi(amt_str);
+                    } catch (...) {
+                        bronx::send_message(bot, event, bronx::error("invalid amount"));
+                        return;
+                    }
+                }
+            }
+            
+            if (amount <= 0) {
+                bronx::send_message(bot, event, bronx::error("amount must be at least 1"));
+                return;
+            }
+            
+            // Check inventory
+            int owned = db->get_item_quantity(event.msg.author.id, item.item_id);
+            if (owned < amount) {
+                bronx::send_message(bot, event, bronx::error("you only have **" + std::to_string(owned) + "** " + item.name));
+                return;
+            }
+            
+            // Calculate sell price (40% of original)
+            int64_t sell_price = static_cast<int64_t>(item.price * 0.40) * amount;
+            if (sell_price <= 0) {
+                bronx::send_message(bot, event, bronx::error("this item has no sell value"));
+                return;
+            }
+            
+            // Remove from inventory and add money
+            if (!db->remove_item(event.msg.author.id, item.item_id, amount)) {
+                bronx::send_message(bot, event, bronx::error("failed to remove item from inventory"));
+                return;
+            }
+            
+            if (!db->update_wallet(event.msg.author.id, sell_price)) {
+                // Attempt to restore item
+                db->add_item(event.msg.author.id, item.item_id, item.category, amount, item.metadata, item.level);
+                bronx::send_message(bot, event, bronx::error("failed to add money to wallet"));
+                return;
+            }
+            
+            // Log sale to history
+            int64_t new_balance = db->get_wallet(event.msg.author.id);
+            std::string log_desc = "sold " + item.name;
+            if (amount > 1) log_desc += " x" + std::to_string(amount);
+            log_desc += " ($" + format_number(sell_price) + ")";
+            bronx::db::history_operations::log_shop(db, event.msg.author.id, log_desc, sell_price, new_balance);
+            
+            std::string desc = "sold **" + item.name + "**";
+            if (amount > 1) desc += " x" + std::to_string(amount);
+            desc += " for $" + format_number(sell_price);
+            desc += "\n*(40% of shop price)*";
+            
+            auto embed = bronx::success(desc);
+            bronx::add_invoker_footer(embed, event.msg.author);
+            bronx::send_message(bot, event, embed);
+        },
+        // Slash handler
+        [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            std::string item_name = std::get<std::string>(event.get_parameter("item"));
+            int amount = 1;
+            
+            if (std::holds_alternative<int64_t>(event.get_parameter("amount"))) {
+                amount = static_cast<int>(std::get<int64_t>(event.get_parameter("amount")));
+            }
+            
+            auto maybe = find_shop_item(db, item_name);
+            if (!maybe) {
+                event.reply(dpp::message().add_embed(bronx::error("item not found in shop — only purchasable items can be sold back")));
+                return;
+            }
+            
+            const ShopItem& item = *maybe;
+            if (item.price <= 0) {
+                event.reply(dpp::message().add_embed(bronx::error("this item cannot be sold")));
+                return;
+            }
+            
+            if (amount <= 0) {
+                event.reply(dpp::message().add_embed(bronx::error("amount must be at least 1")));
+                return;
+            }
+            
+            int owned = db->get_item_quantity(event.command.get_issuing_user().id, item.item_id);
+            if (owned < amount) {
+                event.reply(dpp::message().add_embed(bronx::error("you only have **" + std::to_string(owned) + "** " + item.name)));
+                return;
+            }
+            
+            int64_t sell_price = static_cast<int64_t>(item.price * 0.40) * amount;
+            if (sell_price <= 0) {
+                event.reply(dpp::message().add_embed(bronx::error("this item has no sell value")));
+                return;
+            }
+            
+            if (!db->remove_item(event.command.get_issuing_user().id, item.item_id, amount)) {
+                event.reply(dpp::message().add_embed(bronx::error("failed to remove item from inventory")));
+                return;
+            }
+            
+            if (!db->update_wallet(event.command.get_issuing_user().id, sell_price)) {
+                db->add_item(event.command.get_issuing_user().id, item.item_id, item.category, amount, item.metadata, item.level);
+                event.reply(dpp::message().add_embed(bronx::error("failed to add money to wallet")));
+                return;
+            }
+            
+            int64_t new_balance = db->get_wallet(event.command.get_issuing_user().id);
+            std::string log_desc = "sold " + item.name;
+            if (amount > 1) log_desc += " x" + std::to_string(amount);
+            log_desc += " ($" + format_number(sell_price) + ")";
+            bronx::db::history_operations::log_shop(db, event.command.get_issuing_user().id, log_desc, sell_price, new_balance);
+            
+            std::string desc = "sold **" + item.name + "**";
+            if (amount > 1) desc += " x" + std::to_string(amount);
+            desc += " for $" + format_number(sell_price);
+            desc += "\n*(40% of shop price)*";
+            
+            auto embed = bronx::success(desc);
+            bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+            event.reply(dpp::message().add_embed(embed));
+        },
+        {
+            dpp::command_option(dpp::co_string, "item", "item to sell", true),
+            dpp::command_option(dpp::co_integer, "amount", "quantity to sell (default: 1)", false)
+        });
+    cmds.push_back(sell_item);
+    
     // Owner-only item management
     static Command* itemadmin = new Command("item", "manage shop items (owner only)", "shop", {}, true,
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
@@ -1431,6 +1598,51 @@ void register_shop_interactions(dpp::cluster& bot, Database* db) {
         std::string item_id = event.values[0];
         auto maybe_item = db->get_shop_item(item_id);
         if (!maybe_item) {
+            // Title fallback: titles are in a hardcoded catalog, not shop_items table
+            auto title_def = find_title(db, item_id);
+            if (title_def) {
+                uint64_t uid = event.command.get_issuing_user().id;
+                // Check availability
+                bool available = false;
+                for (const auto& avail : get_available_titles(db)) {
+                    if (avail.item_id == title_def->item_id) { available = true; break; }
+                }
+                if (!available) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("that title isn't in the shop this week")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+                if (is_title_sold_out(db, *title_def)) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("that title is sold out")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+                if (db->has_item(uid, title_def->item_id)) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("you already own that title")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+                auto user = db->get_user(uid);
+                if (!user || user->wallet < title_def->price) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("you can't afford this title ($" + format_number(title_def->price) + ")")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+                std::string short_id = title_def->item_id;
+                if (short_id.rfind("title_", 0) == 0) short_id = short_id.substr(6);
+                if (db->update_wallet(uid, -title_def->price) &&
+                    db->add_item(uid, title_def->item_id, "title", 1,
+                                 title_display_to_json(title_def->display), 1)) {
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::success("purchased title **" + title_def->display + "** for $" + format_number(title_def->price) +
+                            "\nuse `title equip " + short_id + "` to equip it")).set_flags(dpp::m_ephemeral));
+                } else {
+                    db->update_wallet(uid, title_def->price); // refund
+                    event.reply(dpp::ir_channel_message_with_source,
+                        dpp::message().add_embed(bronx::error("purchase failed")).set_flags(dpp::m_ephemeral));
+                }
+                return;
+            }
             event.reply(dpp::ir_channel_message_with_source,
                 dpp::message().add_embed(bronx::error("item not found in shop")).set_flags(dpp::m_ephemeral));
             return;

@@ -758,10 +758,135 @@ std::vector<Database::ScopedSettingRow> Database::get_all_command_scope_settings
     return out;
 }
 
+// ========================================================================
+// BULK SETTINGS FETCH — one query per table, all guilds at once
+// ========================================================================
+
+std::vector<Database::GuildPrefixRow> Database::get_all_guild_prefixes_bulk() {
+    std::vector<GuildPrefixRow> out;
+    auto conn = pool_->acquire();
+    const char* query = "SELECT guild_id, prefix FROM guild_prefixes";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_all_guild_prefixes_bulk prepare");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return out;
+    }
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_all_guild_prefixes_bulk execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return out;
+    }
+    uint64_t gid = 0;
+    char prefix_buf[64]; unsigned long prefix_len = 0;
+    MYSQL_BIND result[2];
+    memset(result, 0, sizeof(result));
+    result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[0].buffer = (char*)&gid;
+    result[0].is_unsigned = 1;
+    result[1].buffer_type = MYSQL_TYPE_STRING;
+    result[1].buffer = prefix_buf;
+    result[1].buffer_length = sizeof(prefix_buf);
+    result[1].length = &prefix_len;
+    mysql_stmt_bind_result(stmt, result);
+    while (mysql_stmt_fetch(stmt) == 0) {
+        out.push_back({gid, std::string(prefix_buf, prefix_len)});
+    }
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return out;
+}
+
+std::vector<Database::GuildModuleRow> Database::get_all_module_settings_bulk() {
+    std::vector<GuildModuleRow> out;
+    auto conn = pool_->acquire();
+    const char* query = "SELECT guild_id, module, enabled FROM guild_module_settings";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_all_module_settings_bulk prepare");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return out;
+    }
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_all_module_settings_bulk execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return out;
+    }
+    uint64_t gid = 0;
+    char name_buf[128]; unsigned long name_len = 0;
+    bool enabled_val = false;
+    MYSQL_BIND result[3];
+    memset(result, 0, sizeof(result));
+    result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[0].buffer = (char*)&gid;
+    result[0].is_unsigned = 1;
+    result[1].buffer_type = MYSQL_TYPE_STRING;
+    result[1].buffer = name_buf;
+    result[1].buffer_length = sizeof(name_buf);
+    result[1].length = &name_len;
+    result[2].buffer_type = MYSQL_TYPE_TINY;
+    result[2].buffer = (char*)&enabled_val;
+    mysql_stmt_bind_result(stmt, result);
+    while (mysql_stmt_fetch(stmt) == 0) {
+        out.push_back({gid, std::string(name_buf, name_len), enabled_val});
+    }
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return out;
+}
+
+std::vector<Database::GuildCommandRow> Database::get_all_command_settings_bulk() {
+    std::vector<GuildCommandRow> out;
+    auto conn = pool_->acquire();
+    const char* query = "SELECT guild_id, command, enabled FROM guild_command_settings";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_all_command_settings_bulk prepare");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return out;
+    }
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_all_command_settings_bulk execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return out;
+    }
+    uint64_t gid = 0;
+    char name_buf[128]; unsigned long name_len = 0;
+    bool enabled_val = false;
+    MYSQL_BIND result[3];
+    memset(result, 0, sizeof(result));
+    result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[0].buffer = (char*)&gid;
+    result[0].is_unsigned = 1;
+    result[1].buffer_type = MYSQL_TYPE_STRING;
+    result[1].buffer = name_buf;
+    result[1].buffer_length = sizeof(name_buf);
+    result[1].length = &name_len;
+    result[2].buffer_type = MYSQL_TYPE_TINY;
+    result[2].buffer = (char*)&enabled_val;
+    mysql_stmt_bind_result(stmt, result);
+    while (mysql_stmt_fetch(stmt) == 0) {
+        out.push_back({gid, std::string(name_buf, name_len), enabled_val});
+    }
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return out;
+}
+
 } // namespace db
 } // namespace bronx
-
-// C-style wrappers
 namespace bronx {
 namespace db {
 namespace permission_operations {

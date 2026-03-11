@@ -100,6 +100,9 @@ namespace server_economy_operations {
     int64_t get_networth_unified(Database* db, uint64_t user_id, std::optional<uint64_t> guild_id);
     std::optional<int64_t> update_wallet_unified(Database* db, uint64_t user_id, std::optional<uint64_t> guild_id, int64_t amount);
     std::optional<int64_t> update_bank_unified(Database* db, uint64_t user_id, std::optional<uint64_t> guild_id, int64_t amount);
+
+    // Per-guild command tracking for dashboard stats
+    bool log_server_command(Database* db, uint64_t guild_id, uint64_t user_id, const std::string& command_name);
 }
 
 } // namespace db

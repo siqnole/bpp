@@ -269,7 +269,7 @@ inline void process_shot(dpp::cluster& bot, Database* db, uint64_t game_id,
                 .set_title("🔫 russian roulette — game over!")
                 .set_description("🏆 winner: <@" + ::std::to_string(winner_id) + ">"));
             clear_msg.components = {};
-            bot.message_edit(clear_msg);
+            bronx::safe_message_edit(bot, clear_msg);
 
             active_russian_roulette_games.erase(game_id);
             return;

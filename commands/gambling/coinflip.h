@@ -118,6 +118,8 @@ inline Command* get_coinflip_command(Database* db) {
                 db->increment_stat(event.msg.author.id, "gambling_profit", winnings);
                 // Check gambling profit achievements
                 track_gambling_profit(bot, db, event.msg.channel_id, event.msg.author.id);
+                // Track daily challenge stat
+                ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coinflip_wins_today", 1);
             } else {
                 db->increment_stat(event.msg.author.id, "gambling_losses", -winnings);
             }
@@ -216,6 +218,8 @@ inline Command* get_coinflip_command(Database* db) {
                 db->increment_stat(user_id, "gambling_profit", winnings);
                 // Check gambling profit achievements
                 track_gambling_profit(bot, db, event.command.channel_id, user_id);
+                // Track daily challenge stat
+                ::commands::daily_challenges::track_daily_stat(db, user_id, "coinflip_wins_today", 1);
             } else {
                 db->increment_stat(user_id, "gambling_losses", -winnings);
             }

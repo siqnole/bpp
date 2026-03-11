@@ -85,7 +85,7 @@ static void update_lobby_message(dpp::cluster& bot, const BlackTeaGame& game) {
     msg.id = game.message_id;
     msg.channel_id = game.channel_id;
     msg.add_embed(embed);
-    bot.message_edit(msg);
+    bronx::safe_message_edit(bot, msg);
 }
 
 // Called when the lobby timer expires and the game should start (runs on background thread)

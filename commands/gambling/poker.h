@@ -411,7 +411,7 @@ static void do_showdown(dpp::cluster& bot, Database* db, uint64_t chan_id) {
     msg.channel_id = chan_id;
     msg.id = g.msg_id;
     lk.unlock();
-    bot.message_edit(msg);
+    bronx::safe_message_edit(bot, msg);
 
     // Remove game after 30 seconds
     std::thread([chan_id]() {
@@ -455,7 +455,7 @@ static void award_fold_win(dpp::cluster& bot, Database* db, uint64_t chan_id) {
     msg.id = g.msg_id;
     g.phase = PokerPhase::Showdown;
     lk.unlock();
-    bot.message_edit(msg);
+    bronx::safe_message_edit(bot, msg);
 
     std::thread([chan_id]() {
         std::this_thread::sleep_for(std::chrono::seconds(30));

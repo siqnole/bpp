@@ -1,6 +1,7 @@
 #pragma once
 #include "helpers.h"
 #include "../../database/operations/economy/history_operations.h"
+#include "../title_utils.h"
 
 using namespace bronx::db::history_operations;
 
@@ -42,11 +43,11 @@ struct RebirthRequirement {
 };
 
 static const std::vector<RebirthRequirement> REBIRTH_REQUIREMENTS = {
-    {1, 20, 50000000000LL,    0,      0,     0,     1.1,  "Reborn",        "title_reborn"},
-    {2, 20, 100000000000LL,   10000,  5000,  0,     1.1,  "Twice Reborn",  "title_twice_reborn"},
-    {3, 20, 250000000000LL,   25000,  15000, 5000,  1.1,  "Thrice Reborn", "title_thrice_reborn"},
-    {4, 20, 500000000000LL,   50000,  30000, 15000, 1.1,  "Ascended",      "title_ascended"},
-    {5, 20, 1000000000000LL,  100000, 50000, 25000, 1.1,  "Transcendent",  "title_transcendent"},
+    {1, 20, 50000000000LL,    0,      0,     0,     1.1,  "\xF0\x9F\x94\x84 Reborn",        "title_reborn"},
+    {2, 20, 100000000000LL,   10000,  5000,  0,     1.1,  "\xF0\x9F\x94\x84 Twice Reborn",  "title_twice_reborn"},
+    {3, 20, 250000000000LL,   25000,  15000, 5000,  1.1,  "\xF0\x9F\x94\x84 Thrice Reborn", "title_thrice_reborn"},
+    {4, 20, 500000000000LL,   50000,  30000, 15000, 1.1,  "\xF0\x9F\x94\x84 Ascended",      "title_ascended"},
+    {5, 20, 1000000000000LL,  100000, 50000, 25000, 1.1,  "\xF0\x9F\x94\x84 Transcendent",  "title_transcendent"},
 };
 
 static const int MAX_REBIRTHS = 5;
@@ -204,10 +205,32 @@ static bool perform_rebirth(Database* db, uint64_t user_id) {
     // Grant the rebirth title to the user's inventory
     if (ok) {
         const auto* req = &REBIRTH_REQUIREMENTS[new_level - 1];
+        // Store proper JSON metadata so the title displays correctly
+        // Inline the JSON encoding to avoid include-order issues with titles.h
+        std::string meta = "{\"display\":\"";
+        for (char c : req->title) {
+            if      (c == '"')  meta += "\\\"";
+            else if (c == '\\') meta += "\\\\";
+            else                meta += c;
+        }
+        meta += "\"}";
+        // Escape single quotes in meta for SQL
+        std::string escaped_meta;
+        for (char c : meta) {
+            if (c == '\'') escaped_meta += "\\'";
+            else escaped_meta += c;
+        }
         std::string grant_sql = "INSERT INTO inventory (user_id, item_id, item_type, quantity, metadata, level) "
-                                "VALUES (" + uid + ", '" + req->title_item_id + "', 'title', 1, '', 1) "
+                                "VALUES (" + uid + ", '" + req->title_item_id + "', 'title', 1, '" + escaped_meta + "', 1) "
                                 "ON DUPLICATE KEY UPDATE quantity = 1";
         mysql_query(conn->get(), grant_sql.c_str()); // best-effort inside the transaction
+        
+        // Auto-equip the rebirth title
+        std::string equip_meta = escaped_meta;
+        std::string equip_sql = "INSERT INTO inventory (user_id, item_id, item_type, quantity, metadata, level) "
+                                "VALUES (" + uid + ", 'active_title', 'title_slot', 1, '" + equip_meta + "', 1) "
+                                "ON DUPLICATE KEY UPDATE metadata = '" + equip_meta + "'";
+        mysql_query(conn->get(), equip_sql.c_str()); // best-effort
     }
 
     if (ok) {
