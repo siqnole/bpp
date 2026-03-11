@@ -73,7 +73,7 @@ namespace bronx {
             "i respond to both slash and text commands!",
             "use suggest if you have any ideas for new commands or features!",
             "use passive to toggle passive mode and avoid being robbed!",
-            "i'm open source! check out the code on github: github.com/siqnole/bronxbot",
+            "i'm open source! check out the code on github: github.com/siqnole/bpp",
             "i have a custom database layer built on top of MySQL!",
             "i'm named after the bronx, the best borough!",
             "my creator's name is siqnole, but you can call them siq :)",

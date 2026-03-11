@@ -331,7 +331,7 @@ static std::pair<std::string, double> get_speed_rating(int reaction_ms) {
     } else if (reaction_ms < SPEED_GREAT_MS) {
         return {"🌟 **Great catch!** (+" + std::to_string((int)((SPEED_GREAT_MULT - 1.0) * 100)) + "% value bonus)", SPEED_GREAT_MULT};
     } else if (reaction_ms < SPEED_GOOD_MS) {
-        return {"✅ **Good catch!**", SPEED_GOOD_MULT};
+        return {"**Good catch!**", SPEED_GOOD_MULT};
     } else {
         return {"🐌 **Slow catch...** (" + std::to_string((int)((1.0 - SPEED_SLOW_MULT) * 100)) + "% value penalty)", SPEED_SLOW_MULT};
     }

@@ -124,7 +124,7 @@ inline Command* get_banner_command() {
 
 // Invite command (text only)
 inline Command* get_invite_command() {
-    static Command invite("invite", "get the bot invite link", "utility", {"oauth", "iwantthisbot"}, false,
+    static Command invite("invite", "get the bot invite link", "utility", {"oauth", "iwantthisbot", "support"}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             auto embed = bronx::create_embed("get bronx")
                 .set_description("bronx is currently in beta, but if you want to do anything go ahead");

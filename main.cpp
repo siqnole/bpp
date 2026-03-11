@@ -139,7 +139,7 @@ int main(int argc, char* argv[]) {
     // If -g flag is present, start the live flamegraph profiler
     pid_t profiler_pid = -1;
     if (enable_flamegraph) {
-        std::cout << clr::BOLD_MAGENTA << "🔥 Starting live flamegraph profiler..." << clr::RESET << "\n";
+        std::cout << clr::BOLD_MAGENTA << "Starting live flamegraph profiler..." << clr::RESET << "\n";
         std::cout.flush();
         
         profiler_pid = fork();
