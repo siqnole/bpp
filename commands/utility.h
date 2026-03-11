@@ -15,6 +15,7 @@
 #include "utility/status.h"
 #include "utility/autorole.h"
 #include "utility/role.h"
+#include "utility/giveaways.h"
 #ifdef HAVE_LIBCURL
 #include "utility/steal.h"
 #endif
@@ -53,6 +54,13 @@ namespace commands {
 #ifdef HAVE_LIBCURL
         cmds.push_back(utility::get_steal_command());
 #endif
+        // Giveaway commands (require db)
+        if (db) {
+            auto giveaway_cmds = utility::get_giveaway_commands(db);
+            for (auto* cmd : giveaway_cmds) {
+                cmds.push_back(cmd);
+            }
+        }
     }
     
     return cmds;
@@ -65,6 +73,7 @@ inline void register_utility_interactions(dpp::cluster& bot, bronx::db::Database
     utility::register_status_interactions(bot);
     if (db) {
         utility::register_bugreport_interactions(bot, db);
+        utility::register_giveaway_interactions(bot, db);
     }
 }
 

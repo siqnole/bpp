@@ -291,7 +291,7 @@ static void update_game_message(dpp::cluster& bot, TicTacToeGame& game) {
     if (!game.interaction_token.empty()) {
         bot.interaction_response_edit(game.interaction_token, msg);
     } else {
-        bot.message_edit(msg);
+        bronx::safe_message_edit(bot, msg);
     }
 }
 

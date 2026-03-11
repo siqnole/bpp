@@ -722,6 +722,56 @@ std::optional<int64_t> update_bank_unified(Database* db, uint64_t user_id, std::
     return db->update_bank(user_id, amount);
 }
 
+bool log_server_command(Database* db, uint64_t guild_id, uint64_t user_id, const std::string& command_name) {
+    // Ensure guild_economy_settings row exists (FK requirement for server_command_stats)
+    create_guild_economy(db, guild_id);
+
+    auto conn = db->get_pool()->acquire();
+
+    const char* query = "INSERT INTO server_command_stats (guild_id, user_id, command_name) VALUES (?, ?, ?)";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        db->log_error("log_server_command prepare");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return false;
+    }
+
+    unsigned long name_len = command_name.size();
+
+    MYSQL_BIND bind[3];
+    memset(bind, 0, sizeof(bind));
+
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&guild_id;
+    bind[0].is_unsigned = 1;
+
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&user_id;
+    bind[1].is_unsigned = 1;
+
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)command_name.c_str();
+    bind[2].buffer_length = name_len;
+    bind[2].length = &name_len;
+
+    if (mysql_stmt_bind_param(stmt, bind) != 0) {
+        db->log_error("log_server_command bind");
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return false;
+    }
+
+    bool success = mysql_stmt_execute(stmt) == 0;
+    if (!success) {
+        // Silently ignore — table may not exist yet for this guild
+    }
+    mysql_stmt_close(stmt);
+    db->get_pool()->release(conn);
+    return success;
+}
+
 } // namespace server_economy_operations
 
 } // namespace db

@@ -334,21 +334,22 @@ inline void ensure_boss_table(Database* db) {
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
 
-    // Migration: add new columns to existing tables (safe if already present)
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS gamble_commands BIGINT NOT NULL DEFAULT 0");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS gamble_profit BIGINT NOT NULL DEFAULT 0");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS goal_mine_commands BIGINT NOT NULL DEFAULT 1000");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS goal_ores_mined BIGINT NOT NULL DEFAULT 10000");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS goal_fish_commands BIGINT NOT NULL DEFAULT 10000");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS goal_fish_caught BIGINT NOT NULL DEFAULT 100000");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS goal_fish_profit BIGINT NOT NULL DEFAULT 5000000000000");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS goal_gamble_commands BIGINT NOT NULL DEFAULT 1500");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS goal_gamble_profit BIGINT NOT NULL DEFAULT 2000000000000");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS archetype VARCHAR(64) NOT NULL DEFAULT 'Balanced'");
-    db->execute("ALTER TABLE global_boss_contributors ADD COLUMN IF NOT EXISTS gamble_commands BIGINT NOT NULL DEFAULT 0");
-    db->execute("ALTER TABLE global_boss_contributors ADD COLUMN IF NOT EXISTS gamble_profit BIGINT NOT NULL DEFAULT 0");
-    db->execute("ALTER TABLE global_boss ADD COLUMN IF NOT EXISTS rewards_distributed BOOLEAN NOT NULL DEFAULT FALSE");
-    db->execute("ALTER TABLE global_boss_contributors DROP FOREIGN KEY IF EXISTS global_boss_contributors_ibfk_1");
+    // Migration: add new columns to existing tables (MySQL-compatible)
+    db->execute("CALL _add_col_if_missing('global_boss','gamble_commands','BIGINT NOT NULL DEFAULT 0')");
+    db->execute("CALL _add_col_if_missing('global_boss','gamble_profit','BIGINT NOT NULL DEFAULT 0')");
+    db->execute("CALL _add_col_if_missing('global_boss','goal_mine_commands','BIGINT NOT NULL DEFAULT 1000')");
+    db->execute("CALL _add_col_if_missing('global_boss','goal_ores_mined','BIGINT NOT NULL DEFAULT 10000')");
+    db->execute("CALL _add_col_if_missing('global_boss','goal_fish_commands','BIGINT NOT NULL DEFAULT 10000')");
+    db->execute("CALL _add_col_if_missing('global_boss','goal_fish_caught','BIGINT NOT NULL DEFAULT 100000')");
+    db->execute("CALL _add_col_if_missing('global_boss','goal_fish_profit','BIGINT NOT NULL DEFAULT 5000000000000')");
+    db->execute("CALL _add_col_if_missing('global_boss','goal_gamble_commands','BIGINT NOT NULL DEFAULT 1500')");
+    db->execute("CALL _add_col_if_missing('global_boss','goal_gamble_profit','BIGINT NOT NULL DEFAULT 2000000000000')");
+    db->execute("CALL _add_col_if_missing('global_boss','archetype','VARCHAR(64) NOT NULL DEFAULT \'Balanced\'')");
+    db->execute("CALL _add_col_if_missing('global_boss_contributors','gamble_commands','BIGINT NOT NULL DEFAULT 0')");
+    db->execute("CALL _add_col_if_missing('global_boss_contributors','gamble_profit','BIGINT NOT NULL DEFAULT 0')");
+    db->execute("CALL _add_col_if_missing('global_boss','rewards_distributed','BOOLEAN NOT NULL DEFAULT FALSE')");
+    // DROP FOREIGN KEY — MySQL-compatible
+    db->execute("CALL _drop_fk_if_exists('global_boss_contributors','global_boss_contributors_ibfk_1')");
 
     created = true;
 }

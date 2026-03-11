@@ -270,8 +270,17 @@ static UserPet* find_user_pet(std::vector<UserPet>& pets_list, const std::string
 static bool adopt_pet(Database* db, uint64_t user_id, const std::string& species_id, const std::string& nickname) {
     std::string esc_species = economy::db_escape(db, species_id);
     std::string esc_nick = economy::db_escape(db, nickname);
+    // Check if user has any pets already
+    MYSQL_RES* existing = economy::db_select(db, "SELECT COUNT(*) FROM user_pets WHERE user_id = " + std::to_string(user_id));
+    bool first_pet = true;
+    if (existing) {
+        MYSQL_ROW r = mysql_fetch_row(existing);
+        if (r && r[0] && std::stoi(r[0]) > 0) first_pet = false;
+        mysql_free_result(existing);
+    }
+    // Auto-equip if this is the user's first pet
     std::string sql = "INSERT INTO user_pets (user_id, species_id, nickname, level, xp, hunger, equipped) "
-                      "VALUES (" + std::to_string(user_id) + ", '" + esc_species + "', '" + esc_nick + "', 1, 0, 100, FALSE)";
+                      "VALUES (" + std::to_string(user_id) + ", '" + esc_species + "', '" + esc_nick + "', 1, 0, 100, " + (first_pet ? "TRUE" : "FALSE") + ")";
     return economy::db_exec(db, sql);
 }
 
@@ -319,10 +328,10 @@ static bool activity_matches_pet(const std::string& bonus_type, const std::strin
         return bonus_type == "gambling_luck_bonus" || bonus_type == "luck_bonus";
     }
     if (activity == "work") {
-        return bonus_type == "work_bonus";
+        return bonus_type == "work_bonus" || bonus_type == "rob_protection";
     }
     if (activity == "daily") {
-        return bonus_type == "daily_bonus";
+        return bonus_type == "daily_bonus" || bonus_type == "rob_protection";
     }
     return false;
 }
@@ -1006,7 +1015,13 @@ inline Command* create_pet_command(Database* db) {
                 desc += (pet.equipped ? "\xF0\x9F\x94\xB9 " : "\xE2\xAC\x9C ") + species->emoji + " **" + pet.nickname + "**";
                 if (pet.equipped) desc += " *(equipped)*";
                 desc += "\n";
-                desc += "   " + rarity_color(species->rarity) + " " + uppercase_first(species->rarity) + " | Lv." + std::to_string(pet.level) + "\n";
+                desc += "   " + rarity_color(species->rarity) + " " + uppercase_first(species->rarity) + " | Lv." + std::to_string(pet.level);
+                if (pet.level < species->max_level) {
+                    desc += " (XP: " + std::to_string(pet.xp) + "/" + std::to_string(xp_for_level(pet.level)) + ")";
+                } else {
+                    desc += " *(MAX)*";
+                }
+                desc += "\n";
                 desc += "   Hunger: " + hunger_bar(hunger) + "\n";
                 desc += "   Bonus: **+" + oss.str() + "% " + format_bonus_name(species->bonus_type) + "**\n\n";
             }

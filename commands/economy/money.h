@@ -5,6 +5,7 @@
 #include "../../database/operations/economy/history_operations.h"
 #include "../economy_core.h"
 #include "../pets/pets.h"
+#include "../daily_challenges/daily_stat_tracker.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <chrono>
@@ -43,6 +44,7 @@ namespace commands {
             if (db->update_wallet(event.msg.author.id, amount)) {
                 log_balance_change(db, event.msg.author.id, "claimed daily reward +$" + format_number(amount));
                 ::commands::pets::pet_hooks::on_daily(db, event.msg.author.id);
+                ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coins_earned_today", amount);
                 
                 auto embed = bronx::success("claimed your daily reward of $" + format_number(amount) + "!\n(8% of your networth: $" + format_number(networth) + ")");
                 bronx::add_invoker_footer(embed, event.msg.author);
@@ -74,6 +76,7 @@ namespace commands {
             if (db->update_wallet(event.command.get_issuing_user().id, amount)) {
                 log_balance_change(db, event.command.get_issuing_user().id, "claimed daily reward +$" + format_number(amount));
                 ::commands::pets::pet_hooks::on_daily(db, event.command.get_issuing_user().id);
+                ::commands::daily_challenges::track_daily_stat(db, event.command.get_issuing_user().id, "coins_earned_today", amount);
                 
                 auto embed = bronx::success("claimed your daily reward of $" + format_number(amount) + "!\n(8% of your networth: $" + format_number(networth) + ")");
                 bronx::add_invoker_footer(embed, event.command.get_issuing_user());
@@ -189,6 +192,8 @@ namespace commands {
             if (db->update_wallet(event.msg.author.id, amount)) {
                 log_balance_change(db, event.msg.author.id, "worked (" + job + ") +$" + format_number(amount));
                 ::commands::pets::pet_hooks::on_work(db, event.msg.author.id);
+                ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "work_count_today", 1);
+                ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coins_earned_today", amount);
                 
                 ::std::string description = "you " + job + " and earned $" + format_number(amount);
                 
@@ -238,6 +243,8 @@ namespace commands {
             if (db->update_wallet(event.command.get_issuing_user().id, amount)) {
                 log_balance_change(db, event.command.get_issuing_user().id, "worked (" + job + ") +$" + format_number(amount));
                 ::commands::pets::pet_hooks::on_work(db, event.command.get_issuing_user().id);
+                ::commands::daily_challenges::track_daily_stat(db, event.command.get_issuing_user().id, "work_count_today", 1);
+                ::commands::daily_challenges::track_daily_stat(db, event.command.get_issuing_user().id, "coins_earned_today", amount);
                 
                 ::std::string description = "you " + job + " and earned $" + format_number(amount);
                 

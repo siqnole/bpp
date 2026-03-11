@@ -144,7 +144,7 @@ inline Command* get_steal_command() {
                     dpp::message edit_msg = status_msg;
                     edit_msg.embeds.clear();
                     edit_msg.add_embed(embed);
-                    bot.message_edit(edit_msg);
+                    bronx::safe_message_edit(bot, edit_msg);
                 };
 
                 for (size_t i = 0; i < items_ptr->size(); ++i) {
@@ -291,7 +291,7 @@ inline Command* get_steal_command() {
                         dpp::message edit_msg = status_msg;
                         edit_msg.embeds.clear();
                         edit_msg.add_embed(embed);
-                        bot.message_edit(edit_msg);
+                        bronx::safe_message_edit(bot, edit_msg);
                     };
 
                     for (size_t i = 0; i < items_ptr->size(); ++i) {

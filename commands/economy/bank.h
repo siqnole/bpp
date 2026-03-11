@@ -284,7 +284,7 @@ inline void update_bank_message(dpp::cluster& bot, uint64_t user_id, uint64_t ch
         msg.add_component(nav_row);
     }
     
-    bot.message_edit(msg);
+    bronx::safe_message_edit(bot, msg);
 }
 
 // Register button handlers for bank UI

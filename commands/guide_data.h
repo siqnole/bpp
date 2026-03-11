@@ -44,6 +44,30 @@ inline std::vector<GuideSection> get_guide_sections() {
     {
         "getting started", "📖", "first time? start here", {
         {
+            "day 1 quick start", "🚀",
+            "**getting started — day 1 quick start**\n\n"
+            "welcome! here's everything you need to do in your first 5 minutes:\n\n"
+            "**step 1: get your starter cash**\n"
+            "> type `.daily` — this gives you coins based on your net worth (min $500)\n\n"
+            "**step 2: bank your money immediately**\n"
+            "> type `.dep all` — this protects your money from robbery\n\n"
+            "**step 3: start fishing**\n"
+            "> type `.equip wooden rod` then `.equip common bait`\n"
+            "> type `.fish` — catch some fish!\n"
+            "> type `.sell` — sell your fish for cash\n\n"
+            "**step 4: check daily challenges**\n"
+            "> type `.challenges` — complete these for bonus rewards\n"
+            "> keep a streak going for multiplied payouts\n\n"
+            "**step 5: upgrade your gear**\n"
+            "> type `.shop` — browse fishing rods, bait, and tools\n"
+            "> type `.buy <item>` — better gear = more money\n\n"
+            "**the loop:** daily → fish → sell → bank → challenges → upgrade → repeat\n\n"
+            "**next steps:**\n"
+            "> • try `.mine` for another income source\n"
+            "> • try `.work` every 30 minutes for free money\n"
+            "> • read the full guide below when you're ready"
+        },
+        {
             "overview", "🌐",
             "**getting started — overview**\n\n"
             "bronx is an economy-driven discord bot built around fishing, mining, gambling, "

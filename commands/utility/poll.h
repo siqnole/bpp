@@ -346,7 +346,7 @@ inline void register_poll_interactions(dpp::cluster& bot) {
                         auto original_msg = get_callback.get<dpp::message>();
                         original_msg.embeds.clear();
                         original_msg.add_embed(embed);
-                        bot.message_edit(original_msg);
+                        bronx::safe_message_edit(bot, original_msg);
                     }
                 });
                 
@@ -488,7 +488,7 @@ inline void register_poll_interactions(dpp::cluster& bot) {
                         auto original_msg = get_callback.get<dpp::message>();
                         original_msg.embeds.clear();
                         original_msg.add_embed(embed);
-                        bot.message_edit(original_msg);
+                        bronx::safe_message_edit(bot, original_msg);
                     }
                 });
                 

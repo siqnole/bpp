@@ -8,9 +8,83 @@
 #include <vector>
 #include <optional>
 #include <memory>
+#include <algorithm>
 
 namespace bronx {
 namespace cache {
+
+// All toggle settings for a single guild, loaded in bulk.
+// This eliminates per-command DB round-trips — the entire guild's toggle
+// configuration is fetched once and evaluated in-memory.
+struct GuildToggleData {
+    struct DefaultSetting { bool enabled; };
+    struct ScopedSetting { std::string scope_type; uint64_t scope_id; bool enabled; bool exclusive; };
+
+    // module_name -> guild-wide default
+    std::unordered_map<std::string, bool> module_defaults;
+    // module_name -> list of scoped overrides
+    std::unordered_map<std::string, std::vector<ScopedSetting>> module_scopes;
+    // command_name -> guild-wide default
+    std::unordered_map<std::string, bool> command_defaults;
+    // command_name -> list of scoped overrides
+    std::unordered_map<std::string, std::vector<ScopedSetting>> command_scopes;
+
+    // Evaluate whether a module is enabled for the given context.
+    // Replicates the exact same priority logic as Database::is_guild_module_enabled.
+    bool is_module_enabled(const std::string& module, uint64_t user_id,
+                           uint64_t channel_id, const std::vector<uint64_t>& roles) const {
+        return evaluate(module_scopes, module_defaults, module, user_id, channel_id, roles);
+    }
+
+    bool is_command_enabled(const std::string& command, uint64_t user_id,
+                            uint64_t channel_id, const std::vector<uint64_t>& roles) const {
+        return evaluate(command_scopes, command_defaults, command, user_id, channel_id, roles);
+    }
+
+private:
+    bool evaluate(const std::unordered_map<std::string, std::vector<ScopedSetting>>& scopes,
+                  const std::unordered_map<std::string, bool>& defaults,
+                  const std::string& name, uint64_t user_id,
+                  uint64_t channel_id, const std::vector<uint64_t>& roles) const {
+        auto scope_it = scopes.find(name);
+        if (scope_it != scopes.end()) {
+            const auto& entries = scope_it->second;
+            // 1) Check exclusive
+            for (const auto& e : entries) {
+                if (e.exclusive && e.enabled) {
+                    if (e.scope_type == "user" && user_id == e.scope_id) return true;
+                    if (e.scope_type == "channel" && channel_id == e.scope_id) return true;
+                    if (e.scope_type == "role") {
+                        for (uint64_t r : roles) { if (r == e.scope_id) return true; }
+                    }
+                    return false; // exclusive exists but caller doesn't match
+                }
+            }
+            // 2) User override
+            if (user_id != 0) {
+                for (const auto& e : entries) {
+                    if (e.scope_type == "user" && e.scope_id == user_id) return e.enabled;
+                }
+            }
+            // 3) Channel override
+            if (channel_id != 0) {
+                for (const auto& e : entries) {
+                    if (e.scope_type == "channel" && e.scope_id == channel_id) return e.enabled;
+                }
+            }
+            // 4) Role overrides
+            for (uint64_t r : roles) {
+                for (const auto& e : entries) {
+                    if (e.scope_type == "role" && e.scope_id == r) return e.enabled;
+                }
+            }
+        }
+        // 5) Guild default
+        auto def_it = defaults.find(name);
+        if (def_it != defaults.end()) return def_it->second;
+        return true; // enabled by default
+    }
+};
 
 // Thread-safe cache with TTL support
 template<typename K, typename V>
@@ -97,6 +171,7 @@ private:
     TTLCache<uint64_t, std::vector<std::string>> guild_prefixes_cache_;
     TTLCache<std::string, bool> guild_module_cache_; // "guild_id:module" -> enabled
     TTLCache<std::string, bool> guild_command_cache_; // "guild_id:command" -> enabled
+    TTLCache<uint64_t, GuildToggleData> guild_toggle_cache_; // guild_id -> ALL toggle data
     
     // Balance caches for frequently accessed data
     TTLCache<uint64_t, int64_t> wallet_cache_;
@@ -111,9 +186,10 @@ public:
         whitelist_cache_(std::chrono::minutes(10)),  // whitelist rarely changes  
         user_prefixes_cache_(std::chrono::minutes(5)), // user prefixes don't change often
         cooldown_cache_(std::chrono::minutes(1)),    // cooldowns are short-lived
-        guild_prefixes_cache_(std::chrono::minutes(5)), // guild prefixes don't change often
-        guild_module_cache_(std::chrono::minutes(15)), // module settings rarely change
-        guild_command_cache_(std::chrono::minutes(15)), // command settings rarely change
+        guild_prefixes_cache_(std::chrono::minutes(5)), // refreshed by periodic sync
+        guild_module_cache_(std::chrono::minutes(5)),    // refreshed by periodic sync
+        guild_command_cache_(std::chrono::minutes(5)),   // refreshed by periodic sync
+        guild_toggle_cache_(std::chrono::seconds(300)),   // bulk guild toggle data (5 min)
         wallet_cache_(std::chrono::seconds(30)),     // balances change frequently
         bank_cache_(std::chrono::seconds(30)),       // bank balances change frequently
         last_cleanup_(std::chrono::steady_clock::now()) {}
@@ -202,6 +278,23 @@ public:
     void invalidate_module(uint64_t guild_id, const std::string& module) {
         guild_module_cache_.invalidate(make_module_key(guild_id, module));
     }
+
+    // Bulk guild toggle cache — stores ALL toggle data per guild
+    void set_guild_toggles(uint64_t guild_id, const GuildToggleData& data) {
+        guild_toggle_cache_.set(guild_id, data);
+    }
+
+    std::optional<GuildToggleData> get_guild_toggles(uint64_t guild_id) {
+        return guild_toggle_cache_.get(guild_id);
+    }
+
+    void invalidate_guild_toggles(uint64_t guild_id) {
+        guild_toggle_cache_.invalidate(guild_id);
+    }
+
+    void invalidate_all_guild_toggles() {
+        guild_toggle_cache_.clear();
+    }
     
     // Cooldown operations
     void set_cooldown_expiry(uint64_t user_id, const std::string& command, std::chrono::steady_clock::time_point expiry) {
@@ -267,6 +360,7 @@ public:
         guild_prefixes_cache_.cleanup();
         guild_module_cache_.cleanup();
         guild_command_cache_.cleanup();
+        guild_toggle_cache_.cleanup();
         wallet_cache_.cleanup();
         bank_cache_.cleanup();
         
@@ -282,6 +376,7 @@ public:
         size_t guild_prefixes_entries;
         size_t module_entries;
         size_t command_entries;
+        size_t guild_toggle_entries;
         size_t wallet_entries;
         size_t bank_entries;
         size_t total_entries;
@@ -296,12 +391,14 @@ public:
         stats.guild_prefixes_entries = guild_prefixes_cache_.size();
         stats.module_entries = guild_module_cache_.size();
         stats.command_entries = guild_command_cache_.size();
+        stats.guild_toggle_entries = guild_toggle_cache_.size();
         stats.wallet_entries = wallet_cache_.size();
         stats.bank_entries = bank_cache_.size();
         stats.total_entries = stats.blacklist_entries + stats.whitelist_entries +
                             stats.user_prefixes_entries + stats.cooldown_entries +
                             stats.guild_prefixes_entries + stats.module_entries +
-                            stats.command_entries + stats.wallet_entries + stats.bank_entries;
+                            stats.command_entries + stats.guild_toggle_entries +
+                            stats.wallet_entries + stats.bank_entries;
         return stats;
     }
 };

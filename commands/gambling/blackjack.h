@@ -396,6 +396,8 @@ void finish_blackjack_game(dpp::cluster& bot, Database* db, const dpp::button_cl
         db->increment_stat(user_id, "gambling_profit", profit);
         // Check gambling profit achievements
         track_gambling_profit(bot, db, event.command.channel_id, user_id);
+        // Track daily challenge stat
+        ::commands::daily_challenges::track_daily_stat(db, user_id, "blackjack_wins_today", 1);
     }
     // Push: no stat change
     
@@ -831,6 +833,8 @@ inline Command* get_blackjack_command(Database* db) {
                     db->increment_stat(event.msg.author.id, "gambling_profit", profit);
                     // Check gambling profit achievements
                     track_gambling_profit(bot, db, event.msg.channel_id, event.msg.author.id);
+                    // Track daily challenge stat
+                    ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "blackjack_wins_today", 1);
                 }
                 
                 // Track milestone
@@ -1042,6 +1046,8 @@ inline Command* get_blackjack_command(Database* db) {
                     db->increment_stat(uid, "gambling_profit", profit);
                     // Check gambling profit achievements
                     track_gambling_profit(bot, db, event.command.channel_id, uid);
+                    // Track daily challenge stat
+                    ::commands::daily_challenges::track_daily_stat(db, uid, "blackjack_wins_today", 1);
                 }
                 
                 // Track milestone

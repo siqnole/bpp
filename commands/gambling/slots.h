@@ -173,7 +173,7 @@ inline Command* get_slots_command(Database* db) {
                 auto msg = ::std::get<dpp::message>(callback.value);
                 dpp::message edit_msg(event.msg.channel_id, final_embed);
                 edit_msg.id = msg.id;
-                bot.message_edit(edit_msg);
+                bronx::safe_message_edit(bot, edit_msg);
             });
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {

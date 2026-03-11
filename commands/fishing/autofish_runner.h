@@ -167,6 +167,27 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
         int total_fish = used_bait + extra_fish;
         int64_t total_value = 0;
 
+        // Pre-fetch stat values that the effect switch reads from DB.
+        // Cache them ONCE before the loop so effects don't trigger extra round-trips.
+        int64_t prefetch_wallet    = db->get_wallet(user_id);
+        int64_t prefetch_bank      = db->get_bank(user_id);
+        int64_t prefetch_fish_caught = db->get_stat(user_id, "fish_caught");
+        int64_t prefetch_fish_sold   = db->get_stat(user_id, "fish_sold");
+        int64_t prefetch_gamble_wins   = db->get_stat(user_id, "gambling_wins");
+        int64_t prefetch_gamble_losses = db->get_stat(user_id, "gambling_losses");
+        std::set<std::string> prefetch_collectible_ids;
+        {
+            auto inv = db->get_inventory(user_id);
+            for (auto& it : inv)
+                if (it.item_type == "collectible") prefetch_collectible_ids.insert(it.item_id);
+        }
+
+        // Batch accumulators — filled in the loop, flushed once after
+        std::vector<Database::AutofishFishRow> af_batch;
+        std::vector<Database::FishCatchRow> fc_batch;
+        af_batch.reserve(total_fish);
+        fc_batch.reserve(total_fish);
+
         for (int i = 0; i < total_fish; ++i) {
             int idx;
             const FishType* fishptr;
@@ -199,27 +220,30 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
                     case FishEffect::Surge:       val += gear_lvl*gear_lvl*50; break;
                     case FishEffect::Diminishing: { double m = 3.0 - luck/50.0; val = (int64_t)(val * std::max(0.5, m)); break; }
                     case FishEffect::Cascading:   { int rolls = 1 + rand()%6; val = (int64_t)(val * std::pow(1.15, rolls)); break; }
-                    case FishEffect::Wealthy: { int64_t w = db->get_wallet(user_id); val = (int64_t)(val * (1.0 + sqrt((double)w)/1000.0)); break; }
-                    case FishEffect::Banker: { int64_t b = db->get_bank(user_id); val = (int64_t)(val * (1.0 + log10((double)b+1)/5.0)); break; }
-                    case FishEffect::Fisher: { int64_t fc = db->get_stat(user_id, "fish_caught"); val = (int64_t)(val * (1.0 + (double)fc/50000.0)); break; }
-                    case FishEffect::Merchant: { int64_t fs = db->get_stat(user_id, "fish_sold"); val += fs/100; break; }
-                    case FishEffect::Gambler: { int64_t wins = db->get_stat(user_id, "gambling_wins"); int64_t losses = db->get_stat(user_id, "gambling_losses"); val = (wins > losses) ? val*2 : (int64_t)(val*0.5); break; }
+                    case FishEffect::Wealthy:     val = (int64_t)(val * (1.0 + sqrt((double)prefetch_wallet)/1000.0)); break;
+                    case FishEffect::Banker:      val = (int64_t)(val * (1.0 + log10((double)prefetch_bank+1)/5.0)); break;
+                    case FishEffect::Fisher:      val = (int64_t)(val * (1.0 + (double)prefetch_fish_caught/50000.0)); break;
+                    case FishEffect::Merchant:    val += prefetch_fish_sold/100; break;
+                    case FishEffect::Gambler:     val = (prefetch_gamble_wins > prefetch_gamble_losses) ? val*2 : (int64_t)(val*0.5); break;
                     case FishEffect::Ascended: { double mult = std::min(10.0, std::pow(1.5, prestige_level)); val = (int64_t)(val * mult); break; }
-                    case FishEffect::Underdog: { int64_t w = db->get_wallet(user_id); double m = 2.0 - (double)w/10000000.0; val = (int64_t)(val * std::max(0.5, m)); break; }
-                    case FishEffect::HotStreak: { int64_t wins = db->get_stat(user_id, "gambling_wins"); int64_t losses = db->get_stat(user_id, "gambling_losses"); val = (int64_t)(val * (1.0 + (double)wins/((double)wins+(double)losses+1.0))); break; }
-                    case FishEffect::Collector: { auto inv = db->get_inventory(user_id); std::set<std::string> unique; for(auto& i : inv) if(i.item_type=="collectible") unique.insert(i.item_id); val += unique.size()*100; break; }
-                    case FishEffect::Persistent: { int64_t fc = db->get_stat(user_id, "fish_caught"); int64_t fs = db->get_stat(user_id, "fish_sold"); val = (int64_t)(val * std::log2((double)(fc+fs)+2.0)); break; }
+                    case FishEffect::Underdog: { double m = 2.0 - (double)prefetch_wallet/10000000.0; val = (int64_t)(val * std::max(0.5, m)); break; }
+                    case FishEffect::HotStreak:   val = (int64_t)(val * (1.0 + (double)prefetch_gamble_wins/((double)prefetch_gamble_wins+(double)prefetch_gamble_losses+1.0))); break;
+                    case FishEffect::Collector:   val += prefetch_collectible_ids.size()*100; break;
+                    case FishEffect::Persistent:  val = (int64_t)(val * std::log2((double)(prefetch_fish_caught+prefetch_fish_sold)+2.0)); break;
                     default: break;
                 }
             }
             total_value += val;
 
             std::string fish_meta = "{\"name\":\"" + fish.name + "\",\"value\":" + std::to_string(val) + "}";
-            db->autofisher_add_fish(user_id, fish.name, val, fish_meta);
-            // Log fish catch for prestige tracking
+            af_batch.push_back({fish.name, val, fish_meta});
             std::string rarity = get_fish_rarity(fish.name);
-            db->add_fish_catch(user_id, rarity, fish.name, 1.0, val, cfg.af_rod_id, cfg.af_bait_id);
+            fc_batch.push_back({rarity, fish.name, 1.0, val, cfg.af_rod_id, cfg.af_bait_id});
         }
+
+        // Flush both batches in just 2 round-trips instead of 2*total_fish
+        db->autofisher_add_fish_batch(user_id, af_batch);
+        db->add_fish_catches_batch(user_id, fc_batch);
 
         // ML log
         int64_t bait_price = 0;

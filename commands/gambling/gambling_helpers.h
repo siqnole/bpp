@@ -8,6 +8,7 @@
 #include "../pets/pets.h"
 #include "../../database/core/database.h"
 #include "../../database/operations/economy/server_economy_operations.h"
+#include "../daily_challenges/daily_stat_tracker.h"
 #include "jackpot.h"
 
 namespace commands {
@@ -57,6 +58,15 @@ inline int64_t track_gambling_result(dpp::cluster& bot, bronx::db::Database* db,
     // Global boss: every game = 1 gamble command, profit only if positive
     global_boss::on_gamble_command(db, user_id, profit);
     ::commands::pets::pet_hooks::on_gamble(db, user_id);
+
+    // Track daily challenge stats for gambling
+    if (won) {
+        ::commands::daily_challenges::track_daily_stat(db, user_id, "gambling_wins_today", 1);
+    }
+    if (profit > 0) {
+        ::commands::daily_challenges::track_daily_stat(db, user_id, "gambling_profit_today", profit);
+        ::commands::daily_challenges::track_daily_stat(db, user_id, "coins_earned_today", profit);
+    }
 
     return jackpot_won;
 }

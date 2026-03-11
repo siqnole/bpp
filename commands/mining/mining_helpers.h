@@ -48,6 +48,8 @@ struct OreType {
 };
 
 // Info about a single mined ore for the receipt
+enum class OreBonusType { Normal = 0, DoubleCatch = 1, Multimine = 2, MultiOre = 3 };
+
 struct MineInfo {
     OreType ore;
     int64_t value;
@@ -56,6 +58,7 @@ struct MineInfo {
     double probability;
     std::string item_id;   // unique DB ID
     bool sold = false;
+    OreBonusType bonus_type = OreBonusType::Normal;
 };
 
 // ============================================================================

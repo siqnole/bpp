@@ -1,6 +1,7 @@
 #pragma once
 #include "helpers.h"
 #include "../../database/operations/economy/server_economy_operations.h"
+#include "../daily_challenges/daily_stat_tracker.h"
 
 using namespace bronx::db::server_economy_operations;
 
@@ -116,6 +117,9 @@ inline Command* create_pay_command(Database* db) {
                 std::string recipient_log = "received $" + format_number(received) + " from <@" + std::to_string(event.msg.author.id) + ">" + (tax > 0 ? " (after " + std::to_string((int)tax_rate) + "% tax)" : "");
                 bronx::db::history_operations::log_payment(db, event.msg.author.id, sender_log, -amount, sender_balance);
                 bronx::db::history_operations::log_payment(db, recipient_id, recipient_log, received, recipient_balance);
+                
+                // Track daily challenge stat
+                ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coins_paid_today", amount);
                 
                 std::string tax_display = "";
                 if (tax > 0) {
@@ -249,6 +253,9 @@ inline Command* create_pay_command(Database* db) {
                 std::string recipient_log = "received $" + format_number(received) + " from <@" + std::to_string(sender_id) + ">" + (tax > 0 ? " (after " + std::to_string((int)tax_rate) + "% tax)" : "");
                 bronx::db::history_operations::log_payment(db, sender_id, sender_log, -amount, sender_balance);
                 bronx::db::history_operations::log_payment(db, recipient_id, recipient_log, received, recipient_balance);
+                
+                // Track daily challenge stat
+                ::commands::daily_challenges::track_daily_stat(db, sender_id, "coins_paid_today", amount);
                 
                 std::string tax_display = "";
                 if (tax > 0) {

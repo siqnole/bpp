@@ -6,6 +6,8 @@
 #include <map>
 #include <string>
 #include <cstdint>
+#include <unordered_set>
+#include <shared_mutex>
 
 // forward declare TitleDef from commands namespace to avoid circular include
 namespace commands { struct TitleDef; }
@@ -174,6 +176,19 @@ public:
     
     uint64_t add_fish_catch(uint64_t user_id, const std::string& rarity, const std::string& fish_name, 
                            double weight, int64_t value, const std::string& rod_id, const std::string& bait_id);
+
+    // Batch insert multiple fish catches in a single multi-row INSERT.
+    // Dramatically reduces round-trips for autofisher and multi-bait casts.
+    struct FishCatchRow {
+        std::string rarity;
+        std::string fish_name;
+        double weight;
+        int64_t value;
+        std::string rod_id;
+        std::string bait_id;
+    };
+    bool add_fish_catches_batch(uint64_t user_id, const std::vector<FishCatchRow>& rows);
+
     std::vector<FishCatch> get_unsold_fish(uint64_t user_id);
     std::vector<FishCatch> get_fish_by_rarity(uint64_t user_id, const std::string& rarity);
     bool sell_fish(uint64_t fish_id);
@@ -230,6 +245,15 @@ public:
     bool autofisher_set_max_bank_draw(uint64_t user_id, int64_t amount);
     bool autofisher_set_autosell(uint64_t user_id, bool enabled, const std::string& trigger, int64_t threshold);
     bool autofisher_add_fish(uint64_t user_id, const std::string& fish_name, int64_t value, const std::string& metadata);
+
+    // Batch insert multiple fish into autofisher storage in one round-trip.
+    struct AutofishFishRow {
+        std::string fish_name;
+        int64_t value;
+        std::string metadata;
+    };
+    bool autofisher_add_fish_batch(uint64_t user_id, const std::vector<AutofishFishRow>& rows);
+
     std::vector<AutofishFish> autofisher_get_fish(uint64_t user_id);
     int autofisher_fish_count(uint64_t user_id);
     // Returns total raw value; does NOT touch wallet (caller applies fee and transfers)
@@ -251,11 +275,23 @@ public:
     
     int64_t get_guild_balance(uint64_t guild_id);
     bool donate_to_guild(uint64_t user_id, uint64_t guild_id, int64_t amount);
+    struct ActiveGiveawayRow {
+        uint64_t id;
+        uint64_t guild_id;
+        uint64_t channel_id;
+        uint64_t message_id;
+        uint64_t created_by;
+        int64_t prize;
+        int max_winners;
+        std::chrono::system_clock::time_point ends_at;
+    };
+    
     uint64_t create_giveaway(uint64_t guild_id, uint64_t channel_id, uint64_t created_by, 
                             int64_t prize, int max_winners, int duration_seconds);
     bool enter_giveaway(uint64_t giveaway_id, uint64_t user_id);
     std::vector<uint64_t> get_giveaway_entries(uint64_t giveaway_id);
     bool end_giveaway(uint64_t giveaway_id, const std::vector<uint64_t>& winner_ids);
+    std::vector<ActiveGiveawayRow> get_active_giveaways();
     
     // ========================================
     // LEADERBOARD OPERATIONS
@@ -443,6 +479,21 @@ public:
     std::vector<ScopedSettingRow> get_all_command_scope_settings(uint64_t guild_id);
 
     // ========================================
+    // BULK SETTINGS FETCH (for periodic sync)
+    // ========================================
+    // Fetch all guild prefixes across ALL guilds in one query
+    struct GuildPrefixRow { uint64_t guild_id; std::string prefix; };
+    std::vector<GuildPrefixRow> get_all_guild_prefixes_bulk();
+
+    // Fetch all module settings across ALL guilds in one query
+    struct GuildModuleRow { uint64_t guild_id; std::string module; bool enabled; };
+    std::vector<GuildModuleRow> get_all_module_settings_bulk();
+
+    // Fetch all command settings across ALL guilds in one query
+    struct GuildCommandRow { uint64_t guild_id; std::string command; bool enabled; };
+    std::vector<GuildCommandRow> get_all_command_settings_bulk();
+
+    // ========================================
     // PROGRESSIVE JACKPOT
     // ========================================
     int64_t get_jackpot_pool();
@@ -489,6 +540,22 @@ private:
     bool inventory_debug_ = false;
     bool connection_debug_ = false; // controls pool verbosity
     mutable std::string last_error_;
+    
+    // In-memory cache of user IDs known to exist, avoiding redundant
+    // INSERT IGNORE round-trips to a remote database.
+    mutable std::shared_mutex known_users_mutex_;
+    std::unordered_set<uint64_t> known_users_;
+    
+public:
+    // Fast check if user is already known to exist in-memory
+    bool is_user_known(uint64_t user_id) const {
+        std::shared_lock lk(known_users_mutex_);
+        return known_users_.count(user_id) > 0;
+    }
+    void mark_user_known(uint64_t user_id) {
+        std::unique_lock lk(known_users_mutex_);
+        known_users_.insert(user_id);
+    }
 };
 
 } // namespace db

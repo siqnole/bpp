@@ -1,0 +1,87 @@
+name: discord notifications
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, closed, reopened]
+  issues:
+    types: [opened, closed, reopened]
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: push notification
+        if: github.event_name == 'push'
+        uses: tsickert/discord-webhook@v7.0.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: "bronx"
+          avatar-url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+          embed-description: |
+            new push to `${{ github.ref_name }}`
+
+            **repo** ${{ github.repository }}
+            **by** ${{ github.actor }}
+            **commit** [`${{ github.event.head_commit.id }}`](${{ github.event.head_commit.url }})
+            > ${{ github.event.head_commit.message }}
+          embed-color: 11838422
+          embed-url: ${{ github.event.head_commit.url }}
+          embed-footer-text: "powered by github actions :)"
+          embed-timestamp: ${{ github.event.head_commit.timestamp }}
+
+      - name: pull request notification
+        if: github.event_name == 'pull_request'
+        uses: tsickert/discord-webhook@v7.0.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: "bronx"
+          avatar-url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+          embed-description: |
+            pr ${{ github.event.action }} — #${{ github.event.pull_request.number }}
+
+            **title** ${{ github.event.pull_request.title }}
+            **by** ${{ github.event.pull_request.user.login }}
+            **branch** `${{ github.event.pull_request.head.ref }}` -> `${{ github.event.pull_request.base.ref }}`
+          embed-color: ${{ github.event.action == 'closed' && github.event.pull_request.merged && 10995943 || github.event.action == 'opened' && 11064762 || 16046534 }}
+          embed-url: ${{ github.event.pull_request.html_url }}
+          embed-footer-text: "powered by github actions"
+          embed-timestamp: ${{ github.event.pull_request.updated_at }}
+
+      - name: issue notification
+        if: github.event_name == 'issues'
+        uses: tsickert/discord-webhook@v7.0.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: "bronx"
+          avatar-url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+          embed-description: |
+            issue ${{ github.event.action }} — #${{ github.event.issue.number }}
+
+            **title** ${{ github.event.issue.title }}
+            **by** ${{ github.event.issue.user.login }}
+          embed-color: ${{ github.event.action == 'opened' && 16046534 || 11064762 }}
+          embed-url: ${{ github.event.issue.html_url }}
+          embed-footer-text: "powered by github actions"
+          embed-timestamp: ${{ github.event.issue.updated_at }}
+
+      - name: release notification
+        if: github.event_name == 'release'
+        uses: tsickert/discord-webhook@v7.0.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: "bronx"
+          avatar-url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+          embed-description: |
+            new release — ${{ github.event.release.tag_name }}
+
+            **name** ${{ github.event.release.name }}
+            **by** ${{ github.event.release.author.login }}
+            > ${{ github.event.release.body }}
+          embed-color: 10995943
+          embed-url: ${{ github.event.release.html_url }}
+          embed-footer-text: "powered by github actions"
+          embed-timestamp: ${{ github.event.release.published_at }}

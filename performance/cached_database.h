@@ -2,6 +2,8 @@
 #include "../database/core/database.h"
 #include "cache_manager.h"
 #include <memory>
+#include <iostream>
+#include <unordered_map>
 
 namespace bronx {
 namespace cache {
@@ -128,39 +130,24 @@ public:
         return result;
     }
     
-    // Module/command enable status with caching
-    // NOTE: The cache stores a simple guild_id:name → bool, but the real result
-    // depends on the caller's channel, user, and roles (scoped overrides).
-    // Therefore the cache is only used as a fast-path when NO context is
-    // provided (guild-wide check).  When context IS provided we always query
-    // the database so that channel/role/user scope overrides are respected.
+    // Module/command enable status — uses guild-level bulk toggle cache
+    // Falls back to per-query DB call if cache not available.
     bool is_guild_module_enabled(uint64_t guild_id, const std::string& module,
                                 uint64_t user_id = 0, uint64_t channel_id = 0,
                                 const std::vector<uint64_t>& roles = {}) {
-        bool has_context = (user_id != 0 || channel_id != 0 || !roles.empty());
-        if (!has_context) {
-            auto cached = cache_->is_module_enabled(guild_id, module);
-            if (cached) return *cached;
-        }
+        auto data = cache_->get_guild_toggles(guild_id);
+        if (data) return data->is_module_enabled(module, user_id, channel_id, roles);
+        // Cache miss — fallback to DB (will be slow but correct)
         bool result = db_->is_guild_module_enabled(guild_id, module, user_id, channel_id, roles);
-        if (!has_context) {
-            cache_->set_module_enabled(guild_id, module, result);
-        }
         return result;
     }
     
     bool is_guild_command_enabled(uint64_t guild_id, const std::string& command,
                                  uint64_t user_id = 0, uint64_t channel_id = 0,
                                  const std::vector<uint64_t>& roles = {}) {
-        bool has_context = (user_id != 0 || channel_id != 0 || !roles.empty());
-        if (!has_context) {
-            auto cached = cache_->is_command_enabled(guild_id, command);
-            if (cached) return *cached;
-        }
+        auto data = cache_->get_guild_toggles(guild_id);
+        if (data) return data->is_command_enabled(command, user_id, channel_id, roles);
         bool result = db_->is_guild_command_enabled(guild_id, command, user_id, channel_id, roles);
-        if (!has_context) {
-            cache_->set_command_enabled(guild_id, command, result);
-        }
         return result;
     }
     
@@ -169,9 +156,8 @@ public:
                                    const std::string& scope_type = "guild", uint64_t scope_id = 0, bool exclusive = false) {
         bool success = db_->set_guild_command_enabled(guild_id, command, enabled, scope_type, scope_id, exclusive);
         if (success) {
-            // Always invalidate so the next lookup goes to DB with full context.
-            // We can only safely cache guild-wide defaults (no scoped overrides).
             cache_->invalidate_command(guild_id, command);
+            cache_->invalidate_guild_toggles(guild_id);
         }
         return success;
     }
@@ -181,6 +167,7 @@ public:
         bool success = db_->set_guild_module_enabled(guild_id, module, enabled, scope_type, scope_id, exclusive);
         if (success) {
             cache_->invalidate_module(guild_id, module);
+            cache_->invalidate_guild_toggles(guild_id);
         }
         return success;
     }
@@ -188,10 +175,12 @@ public:
     // Invalidate cached command/module state (e.g. when state changes externally)
     void invalidate_command_cache(uint64_t guild_id, const std::string& command) {
         cache_->invalidate_command(guild_id, command);
+        cache_->invalidate_guild_toggles(guild_id);
     }
     
     void invalidate_module_cache(uint64_t guild_id, const std::string& module) {
         cache_->invalidate_module(guild_id, module);
+        cache_->invalidate_guild_toggles(guild_id);
     }
     
     // Cooldown operations with caching
@@ -334,6 +323,71 @@ public:
     
     void periodic_cleanup() {
         cache_->periodic_cleanup();
+    }
+    
+    // ================================================================
+    // PERIODIC SETTINGS SYNC — bulk-fetch dashboard-editable settings
+    // from the remote DB and push into cache.  Call this on a timer
+    // (e.g. every 60s) so the bot almost never blocks on individual
+    // settings queries.  The cache TTL for these entries is set to 5
+    // minutes, giving plenty of headroom even if a sync cycle fails.
+    // ================================================================
+    void refresh_all_settings() {
+        try {
+            // 1) Guild prefixes — group rows by guild_id, push into cache
+            {
+                auto rows = db_->get_all_guild_prefixes_bulk();
+                std::unordered_map<uint64_t, std::vector<std::string>> grouped;
+                for (auto& r : rows) {
+                    grouped[r.guild_id].push_back(std::move(r.prefix));
+                }
+                for (auto& [gid, prefixes] : grouped) {
+                    cache_->set_guild_prefixes(gid, prefixes);
+                }
+            }
+
+            // 2) Blacklist — bulk-load all banned users into cache
+            {
+                auto entries = db_->get_global_blacklist();
+                for (auto& e : entries) {
+                    cache_->set_blacklisted(e.user_id, true);
+                }
+            }
+
+            // 3) Whitelist — bulk-load all whitelisted users into cache
+            {
+                auto entries = db_->get_global_whitelist();
+                for (auto& e : entries) {
+                    cache_->set_whitelisted(e.user_id, true);
+                }
+            }
+
+            // 4) Guild module/command toggles — build GuildToggleData per guild
+            {
+                // Collect guild-wide defaults by guild
+                std::unordered_map<uint64_t, bronx::cache::GuildToggleData> guild_data;
+
+                auto mod_rows = db_->get_all_module_settings_bulk();
+                for (auto& r : mod_rows) {
+                    guild_data[r.guild_id].module_defaults[r.module] = r.enabled;
+                    cache_->set_module_enabled(r.guild_id, r.module, r.enabled);
+                }
+
+                auto cmd_rows = db_->get_all_command_settings_bulk();
+                for (auto& r : cmd_rows) {
+                    guild_data[r.guild_id].command_defaults[r.command] = r.enabled;
+                    cache_->set_command_enabled(r.guild_id, r.command, r.enabled);
+                }
+
+                // Push partial GuildToggleData into cache (scope overrides
+                // will be loaded on-demand per guild if needed)
+                for (auto& [gid, data] : guild_data) {
+                    cache_->set_guild_toggles(gid, data);
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[settings-sync] Error refreshing settings: " << e.what() << "\n";
+        }
     }
     
     // Cache statistics

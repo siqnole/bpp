@@ -563,7 +563,7 @@ inline void register_heist_interactions(dpp::cluster& bot, Database* db) {
                     auto msg = build_heist_lobby(s);
                     msg.id = s.lobby_msg_id;
                     msg.channel_id = cid;
-                    bot.message_edit(msg);
+                    bronx::safe_message_edit(bot, msg);
                     return;
                 }
             }
@@ -593,7 +593,7 @@ inline void register_heist_interactions(dpp::cluster& bot, Database* db) {
             auto msg = build_heist_lobby(s);
             msg.id = s.lobby_msg_id;
             msg.channel_id = cid;
-            bot.message_edit(msg);
+            bronx::safe_message_edit(bot, msg);
             
         } else if (id.rfind("heist_start_", 0) == 0) {
             uint64_t cid;
@@ -629,7 +629,7 @@ inline void register_heist_interactions(dpp::cluster& bot, Database* db) {
             disabled_msg.add_embed(start_embed);
             disabled_msg.id = s.lobby_msg_id;
             disabled_msg.channel_id = cid;
-            bot.message_edit(disabled_msg);
+            bronx::safe_message_edit(bot, disabled_msg);
             
             // Start first round after 2 seconds (need to release lock first)
             // Copy channel_id for the timer capture
@@ -672,7 +672,7 @@ inline void register_heist_interactions(dpp::cluster& bot, Database* db) {
             cancel_msg.add_embed(cancel_embed);
             cancel_msg.id = s.lobby_msg_id;
             cancel_msg.channel_id = cid;
-            bot.message_edit(cancel_msg);
+            bronx::safe_message_edit(bot, cancel_msg);
             
             g_heist_sessions.erase(it);
         }

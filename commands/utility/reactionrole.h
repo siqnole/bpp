@@ -309,6 +309,46 @@ static ::std::pair<uint64_t, ::std::string> parse_emoji_raw(const ::std::string&
     return { 0, s };
 }
 
+// ── pending "next message" reaction tracking ──────────────────────────────────
+// Stores pending reaction-role that will be applied to the user's next message
+struct PendingNextReaction {
+    uint64_t user_id;
+    uint64_t channel_id;
+    uint64_t guild_id;
+    uint64_t role_id;
+    uint64_t emoji_id;       // 0 = unicode
+    std::string emoji_str;   // name or unicode codepoint
+    std::string emoji_raw;   // normalized emoji for reaction
+    std::chrono::steady_clock::time_point created_at;
+    bool silent;             // whether to add the bot reaction
+};
+
+// user_id -> pending reaction (only one pending per user)
+static std::map<uint64_t, PendingNextReaction> pending_next_reactions;
+static std::mutex pending_next_mutex;
+
+// Format emoji for display in messages
+static std::string format_emoji_display(uint64_t emoji_id, const std::string& emoji_str) {
+    if (emoji_id != 0) {
+        return "<:" + emoji_str + ":" + std::to_string(emoji_id) + ">";
+    }
+    return emoji_str;
+}
+
+// Check and remove expired pending reactions (30 second timeout)
+static void cleanup_expired_pending_reactions() {
+    std::lock_guard<std::mutex> lock(pending_next_mutex);
+    auto now = std::chrono::steady_clock::now();
+    for (auto it = pending_next_reactions.begin(); it != pending_next_reactions.end(); ) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - it->second.created_at);
+        if (elapsed.count() >= 30) {
+            it = pending_next_reactions.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 // ── rr check session tracking ──────────────────────────────────────────────
 // One PendingRREmoji per unmapped bot-reaction found on the target message.
 struct PendingRREmoji {
@@ -564,14 +604,127 @@ inline Command* get_reactionrole_command() {
                     return;
                 }
             }
-            // consume any number of -s/--silent flags before the message id
-            while (offset < args.size() && (args[offset] == "-s" || args[offset] == "--silent")) {
-                silent = true;
-                offset++;
+            // consume any number of -s/--silent or -n/--next flags before the message id
+            bool next_mode = false;
+            while (offset < args.size()) {
+                if (args[offset] == "-s" || args[offset] == "--silent") {
+                    silent = true;
+                    offset++;
+                } else if (args[offset] == "-n" || args[offset] == "--next") {
+                    next_mode = true;
+                    offset++;
+                } else {
+                    break;
+                }
+            }
+
+            // Handle --next mode: wait for user's next message to add reaction
+            if (next_mode) {
+                if (args.size() < offset + 2) {
+                    bronx::send_message(bot, event, bronx::error("usage: reactionrole -n <emoji> <@role|roleid|role name>"));
+                    return;
+                }
+
+                // Parse emoji
+                ::std::string emoji_raw = args[offset];
+                auto [emoji_id, emoji_str] = parse_emoji_raw(emoji_raw);
+                if (emoji_id != 0) {
+                    std::string prefix = "<";
+                    if (emoji_raw.rfind("<a:", 0) == 0) prefix += "a:";
+                    else prefix += ":";
+                    emoji_raw = prefix + emoji_str + ":" + std::to_string(emoji_id) + ">";
+                } else if (emoji_raw.find(":") != ::std::string::npos) {
+                    bronx::send_message(bot, event, bronx::error("invalid emoji format; please provide a unicode emoji or a custom one with its id"));
+                    return;
+                }
+                emoji_raw = normalize_emoji_for_reaction(emoji_raw);
+
+                // Parse role argument
+                ::std::string role_arg = args[offset + 1];
+                if (args.size() > offset + 2) {
+                    for (size_t i = offset + 2; i < args.size(); ++i) role_arg += " " + args[i];
+                }
+
+                uint64_t role_id = 0;
+                ::std::smatch rm;
+                ::std::regex mention_re("<@&([0-9]+)>");
+                if (::std::regex_search(role_arg, rm, mention_re) && rm.size() >= 2) {
+                    role_id = ::std::stoull(rm[1]);
+                } else {
+                    try { role_id = ::std::stoull(role_arg); } catch (...) { role_id = 0; }
+                    if (role_id == 0) {
+                        dpp::guild* g = dpp::find_guild(event.msg.guild_id);
+                        if (!g) {
+                            bronx::send_message(bot, event, bronx::error("guild not cached; please use a role mention or id"));
+                            return;
+                        }
+                        ::std::string query = role_arg;
+                        ::std::transform(query.begin(), query.end(), query.begin(), ::tolower);
+                        ::std::vector<dpp::role*> exact_matches;
+                        ::std::vector<dpp::role*> partial_matches;
+                        for (const auto& rid : g->roles) {
+                            dpp::role* rr = dpp::find_role(static_cast<uint64_t>(rid));
+                            if (!rr) continue;
+                            ::std::string name = rr->name;
+                            ::std::string lname = name;
+                            ::std::transform(lname.begin(), lname.end(), lname.begin(), ::tolower);
+                            if (lname == query) exact_matches.push_back(rr);
+                            else if (lname.find(query) != ::std::string::npos) partial_matches.push_back(rr);
+                        }
+                        if (exact_matches.size() == 1) role_id = exact_matches[0]->id;
+                        else if (exact_matches.size() > 1) {
+                            bronx::send_message(bot, event, bronx::error("multiple roles match that name; use role mention or id"));
+                            return;
+                        } else if (partial_matches.size() == 1) role_id = partial_matches[0]->id;
+                        else if (partial_matches.size() > 1) {
+                            bronx::send_message(bot, event, bronx::error("multiple roles partially match; use role mention or id"));
+                            return;
+                        } else {
+                            bronx::send_message(bot, event, bronx::error("role not found"));
+                            return;
+                        }
+                    }
+                }
+
+                dpp::role* r = dpp::find_role(role_id);
+                if (!r) {
+                    bronx::send_message(bot, event, bronx::error("role not found"));
+                    return;
+                }
+
+                // Store pending reaction
+                uint64_t user_id = static_cast<uint64_t>(event.msg.author.id);
+                uint64_t channel_id = static_cast<uint64_t>(event.msg.channel_id);
+                uint64_t guild_id = static_cast<uint64_t>(event.msg.guild_id);
+
+                {
+                    std::lock_guard<std::mutex> lock(pending_next_mutex);
+                    PendingNextReaction pending;
+                    pending.user_id = user_id;
+                    pending.channel_id = channel_id;
+                    pending.guild_id = guild_id;
+                    pending.role_id = role_id;
+                    pending.emoji_id = emoji_id;
+                    pending.emoji_str = emoji_str;
+                    pending.emoji_raw = emoji_raw;
+                    pending.created_at = std::chrono::steady_clock::now();
+                    pending.silent = silent;
+                    pending_next_reactions[user_id] = pending;
+                }
+
+                // Build confirmation message
+                std::string emoji_display = format_emoji_display(emoji_id, emoji_str);
+                std::string desc = "waiting to react with\n";
+                desc += "<@&" + std::to_string(role_id) + "> - " + emoji_display + "\n";
+                desc += "to your next message\n\n";
+                desc += "type `cancel` to cancel";
+
+                bronx::send_message(bot, event, bronx::info(desc));
+                return;
             }
 
             if (args.size() < offset + 3) {
-                bronx::send_message(bot, event, bronx::error("usage: reactionrole [add|check] [-s] <messageid|messagelink|^> <emoji> <@role|roleid|role name>\n^ = message above this command"));
+                bronx::send_message(bot, event, bronx::error("usage: reactionrole [add|check] [-s] [-n] <messageid|messagelink|^> <emoji> <@role|roleid|role name>\n^ = message above this command\n-n = react to your next message"));
                 return;
             }
 
@@ -1311,6 +1464,81 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
 
         // remove from memory
         reaction_roles.erase(it);
+    });
+
+    // ── handle pending "next message" reactions ──
+    bot.on_message_create([&bot](const dpp::message_create_t& event) {
+        if (!event.msg.guild_id) return;
+        if (event.msg.author.is_bot()) return;
+
+        uint64_t user_id = static_cast<uint64_t>(event.msg.author.id);
+        uint64_t channel_id = static_cast<uint64_t>(event.msg.channel_id);
+
+        // Check for "cancel" command
+        std::string content = event.msg.content;
+        std::transform(content.begin(), content.end(), content.begin(), ::tolower);
+        if (content == "cancel") {
+            std::lock_guard<std::mutex> lock(pending_next_mutex);
+            auto it = pending_next_reactions.find(user_id);
+            if (it != pending_next_reactions.end() && it->second.channel_id == channel_id) {
+                pending_next_reactions.erase(it);
+                bronx::send_message(bot, event, bronx::info("reaction role setup cancelled"));
+            }
+            return;
+        }
+
+        // Clean up expired pending reactions
+        cleanup_expired_pending_reactions();
+
+        // Check if user has a pending reaction for this channel
+        PendingNextReaction pending;
+        {
+            std::lock_guard<std::mutex> lock(pending_next_mutex);
+            auto it = pending_next_reactions.find(user_id);
+            if (it == pending_next_reactions.end()) return;
+            if (it->second.channel_id != channel_id) return;
+            pending = it->second;
+            pending_next_reactions.erase(it);
+        }
+
+        // Apply the reaction role to this message
+        uint64_t message_id = static_cast<uint64_t>(event.msg.id);
+
+        RREntry e;
+        e.role_id = pending.role_id;
+        e.emoji_id = pending.emoji_id;
+        e.emoji_str = pending.emoji_str;
+        e.raw = pending.emoji_raw;
+        reaction_roles[message_id].channel_id = channel_id;
+        reaction_roles[message_id].entries.push_back(e);
+
+        if (rr_db) {
+            try {
+                if (is_safe_emoji_string(pending.emoji_raw)) {
+                    rr_db->add_reaction_role(message_id, channel_id, pending.emoji_raw, pending.emoji_id, pending.role_id);
+                }
+            } catch (const std::exception& ex) {
+                std::cerr << "DB add error (next message): " << ex.what() << std::endl;
+            }
+        }
+
+        // Sync existing reactions
+        sync_existing_reactions(bot, message_id, channel_id, pending.emoji_raw, pending.role_id, pending.guild_id);
+
+        // Add bot reaction
+        if (!pending.silent) {
+            bot.message_add_reaction(message_id, channel_id, pending.emoji_raw,
+                [&bot, event](const dpp::confirmation_callback_t& cb) {
+                    if (cb.is_error()) {
+                        std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
+                        bronx::send_message(bot, event, bronx::error("could not add reaction: " + cb.get_error().message));
+                    } else {
+                        bronx::send_message(bot, event, bronx::success("reaction role added to your message"));
+                    }
+                });
+        } else {
+            bronx::send_message(bot, event, bronx::success("reaction role added to your message"));
+        }
     });
 }
 

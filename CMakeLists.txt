@@ -5,6 +5,9 @@ project(discord-bot)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Maximum build verbosity — show full compiler/linker commands
+set(CMAKE_VERBOSE_MAKEFILE ON)
+
 # Release-quality optimizations (significant speedup over default -O0)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -31,12 +34,27 @@ else()
     set(MARIADB_LIBRARIES ${MYSQL_LIBRARY})
 endif()
 
-# libcurl for emoji steal command (optional)
+# libcurl for emoji steal command and API cache client (optional)
 find_package(CURL QUIET)
 if (CURL_FOUND)
-    message(STATUS "libcurl found — building `steal` command")
+    message(STATUS "libcurl found — building `steal` command + API cache client")
 else()
-    message(STATUS "libcurl NOT found — `steal` command will be disabled")
+    message(STATUS "libcurl NOT found — `steal` command and API cache will be disabled")
+endif()
+
+# SQLite3 for local cache database (required for hybrid performance layer)
+find_package(PkgConfig)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(SQLITE3 QUIET sqlite3)
+endif()
+if(NOT SQLITE3_FOUND)
+    find_path(SQLITE3_INCLUDE_DIRS sqlite3.h PATHS /usr/include /usr/local/include)
+    find_library(SQLITE3_LIBRARIES NAMES sqlite3 PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu)
+endif()
+if(SQLITE3_LIBRARIES)
+    message(STATUS "SQLite3 found — enabling local cache database")
+else()
+    message(FATAL_ERROR "SQLite3 not found! Install: sudo apt install libsqlite3-dev")
 endif()
 
 if(NOT MARIADB_LIBRARIES)
@@ -92,12 +110,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/performance
     ${MARIADB_INCLUDE_DIRS}
+    ${SQLITE3_INCLUDE_DIRS}
 )
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE
     dpp
     ${MARIADB_LIBRARIES}
+    ${SQLITE3_LIBRARIES}
 )
 
 # If libcurl was found, wire it up and enable the steal command at compile-time

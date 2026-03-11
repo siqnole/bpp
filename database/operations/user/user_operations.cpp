@@ -9,6 +9,11 @@ namespace bronx {
 namespace db {
 
 bool Database::ensure_user_exists(uint64_t user_id) {
+    // Fast path: if we already know this user exists, skip the DB round-trip
+    if (is_user_known(user_id)) {
+        return true;
+    }
+    
     auto conn = pool_->acquire();
     
     const char* query = "INSERT IGNORE INTO users (user_id) VALUES (?)";
@@ -38,6 +43,10 @@ bool Database::ensure_user_exists(uint64_t user_id) {
     bool success = mysql_stmt_execute(stmt) == 0;
     mysql_stmt_close(stmt);
     pool_->release(conn);
+    
+    if (success) {
+        mark_user_known(user_id);
+    }
     
     return success;
 }
@@ -1108,6 +1117,56 @@ uint64_t Database::add_fish_catch(uint64_t user_id, const std::string& rarity, c
     mysql_stmt_close(stmt);
     pool_->release(conn);
     return insert_id;
+}
+
+// ---------------------------------------------------------------------------
+// Batch insert multiple fish catches in a single multi-row INSERT statement.
+// This replaces N individual add_fish_catch() calls with 1 round-trip.
+// ---------------------------------------------------------------------------
+bool Database::add_fish_catches_batch(uint64_t user_id, const std::vector<FishCatchRow>& rows) {
+    if (rows.empty()) return true;
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+
+    // Build multi-row INSERT using string escaping (prepared stmts can't do dynamic row counts)
+    std::string sql = "INSERT INTO fish_catches (user_id, rarity, fish_name, weight, value, rod_id, bait_id, caught_at) VALUES ";
+    
+    std::string uid_str = std::to_string(user_id);
+    
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (i > 0) sql += ',';
+        
+        // Escape strings to prevent SQL injection
+        char esc_rarity[201], esc_name[201], esc_rod[201], esc_bait[201];
+        mysql_real_escape_string(conn->get(), esc_rarity, rows[i].rarity.c_str(), rows[i].rarity.size());
+        mysql_real_escape_string(conn->get(), esc_name, rows[i].fish_name.c_str(), rows[i].fish_name.size());
+        mysql_real_escape_string(conn->get(), esc_rod, rows[i].rod_id.c_str(), rows[i].rod_id.size());
+        mysql_real_escape_string(conn->get(), esc_bait, rows[i].bait_id.c_str(), rows[i].bait_id.size());
+        
+        sql += '(';
+        sql += uid_str;
+        sql += ",'";
+        sql += esc_rarity;
+        sql += "','";
+        sql += esc_name;
+        sql += "',";
+        sql += std::to_string(rows[i].weight);
+        sql += ',';
+        sql += std::to_string(rows[i].value);
+        sql += ",'";
+        sql += esc_rod;
+        sql += "','";
+        sql += esc_bait;
+        sql += "',NOW())";
+    }
+
+    bool ok = (mysql_real_query(conn->get(), sql.c_str(), sql.size()) == 0);
+    if (!ok) {
+        last_error_ = mysql_error(conn->get());
+        log_error("add_fish_catches_batch");
+    }
+    pool_->release(conn);
+    return ok;
 }
 
 int64_t Database::count_fish_caught_by_rarity(uint64_t user_id, const std::string& rarity) {

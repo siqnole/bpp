@@ -89,6 +89,10 @@ bool is_channel_blacklisted(Database* db, uint64_t guild_id, uint64_t channel_id
     
     const char* query = "SELECT COUNT(*) FROM xp_blacklist_channels WHERE guild_id = ? AND channel_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt) {
+        db->get_pool()->release(conn);
+        return false;
+    }
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         mysql_stmt_close(stmt);
@@ -297,6 +301,10 @@ bool is_role_blacklisted(Database* db, uint64_t guild_id, uint64_t role_id) {
     
     const char* query = "SELECT COUNT(*) FROM xp_blacklist_roles WHERE guild_id = ? AND role_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt) {
+        db->get_pool()->release(conn);
+        return false;
+    }
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         mysql_stmt_close(stmt);
@@ -505,6 +513,10 @@ bool is_user_blacklisted(Database* db, uint64_t guild_id, uint64_t user_id) {
     
     const char* query = "SELECT COUNT(*) FROM xp_blacklist_users WHERE guild_id = ? AND user_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt) {
+        db->get_pool()->release(conn);
+        return false;
+    }
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         mysql_stmt_close(stmt);
