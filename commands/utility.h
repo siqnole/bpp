@@ -47,8 +47,8 @@ namespace commands {
         cmds.push_back(utility::get_commands_status_command(handler, db));
         if (db) {
             cmds.push_back(utility::get_suggestion_command(db));
-            cmds.push_back(utility::get_bugreport_command(db));
         }
+        cmds.push_back(utility::get_bugreport_command());
         cmds.push_back(utility::get_autorole_command());
         cmds.push_back(utility::get_role_command());
 #ifdef HAVE_LIBCURL
@@ -71,8 +71,8 @@ inline void register_utility_interactions(dpp::cluster& bot, bronx::db::Database
     utility::register_poll_interactions(bot);
     utility::register_reactionrole_interactions(bot);
     utility::register_status_interactions(bot);
+    utility::register_bugreport_interactions(bot);
     if (db) {
-        utility::register_bugreport_interactions(bot, db);
         utility::register_giveaway_interactions(bot, db);
     }
 }

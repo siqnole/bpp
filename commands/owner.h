@@ -5,7 +5,6 @@
 #include "../database/core/database.h"
 #include "economy_core.h"
 #include "../database/operations/community/suggestion_operations.h"
-#include "../database/operations/community/bugreport_operations.h"
 #include "../database/operations/economy/history_operations.h"
 #include "titles.h"  // dynamic title definitions
 #include <dpp/dpp.h>
@@ -49,15 +48,6 @@ struct CmdHistoryState {
     std::string filter = "";    // optional filter by entry_type (CMD, BAL, FSH, etc)
 };
 static std::map<uint64_t, CmdHistoryState> cmdhistory_states;
-
-// Pagination state for bug reports view
-struct BugReportState {
-    int current_page = 0;
-    std::string order_by = "submitted_at"; // column name
-    bool asc = false;
-    bool show_resolved = false; // whether to show resolved reports
-};
-static std::map<uint64_t, BugReportState> bugreport_states;
 
 // Helper to format a history entry for display
 static std::string format_history_entry(const bronx::db::HistoryEntry& e) {
@@ -288,159 +278,6 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
         .set_id("suggest_sort_alpha");
     nav_row2.add_component(sort_alpha);
 
-    msg.add_component(nav_row2);
-    return msg;
-}
-
-// Helper for building paginated bug reports message
-// Similar layout to suggestions: 1 report per page with action buttons
-static constexpr int BUGREPORTS_PER_PAGE = 1;
-static dpp::message build_bugreports_message(bronx::db::Database* db, uint64_t owner_id) {
-    BugReportState& state = bugreport_states[owner_id];
-    
-    // determine order clause
-    std::string clause = state.order_by + (state.asc ? " ASC" : " DESC");
-    auto all_reports = bronx::db::bugreport_operations::fetch_bug_reports(db, clause);
-    
-    // filter by resolved status
-    std::vector<bronx::db::BugReport> reports;
-    for (const auto& r : all_reports) {
-        if (state.show_resolved || !r.resolved) {
-            reports.push_back(r);
-        }
-    }
-    
-    int per_page = BUGREPORTS_PER_PAGE;
-    int total = reports.size();
-    int pages = std::max(1, (total + per_page - 1) / per_page);
-    if (state.current_page < 0) state.current_page = 0;
-    if (state.current_page >= pages) state.current_page = pages - 1;
-    
-    int start = state.current_page * per_page;
-    int end = std::min(start + per_page, total);
-    
-    std::string desc;
-    if (total == 0) {
-        desc = "no bug reports yet";
-    } else {
-        for (int i = start; i < end; ++i) {
-            const auto& r = reports[i];
-            desc += "**#" + std::to_string(r.id) + "** ";
-            if (r.resolved) desc += bronx::EMOJI_CHECK + " ";
-            else if (r.read) desc += "👀 ";
-            else desc += "🆕 ";
-            desc += "<@" + std::to_string(r.user_id) + "> ";
-            desc += "(`" + commands::format_number(r.networth) + "`)\n";
-            desc += "**Command/Feature:** " + r.command_or_feature + "\n\n";
-            desc += "**How to Reproduce:**\n" + r.reproduction_steps + "\n\n";
-            desc += "**Expected:**\n" + r.expected_behavior + "\n\n";
-            desc += "**Actual:**\n" + r.actual_behavior;
-            desc += "\n_" + format_relative_time(r.submitted_at) + "_";
-            if (i < end - 1) desc += "\n\n---\n\n";
-        }
-    }
-    desc += "\n\n_page " + std::to_string(state.current_page + 1) + " of " + std::to_string(pages) + "_";
-    desc += " • _" + std::to_string(total) + " reports" + (state.show_resolved ? "" : " (unresolved)") + "_";
-    
-    auto embed = bronx::create_embed(desc).set_title("Bug Reports");
-    embed.set_color(0xED4245); // Red for bugs
-    
-    dpp::message msg;
-    msg.add_embed(embed);
-    
-    // build action rows: one per report for read/resolve/delete
-    for (int i = start; i < end; ++i) {
-        const auto& r = reports[i];
-        dpp::component row;
-        row.set_type(dpp::cot_action_row);
-        
-        // mark read button
-        dpp::component read_btn;
-        read_btn.set_type(dpp::cot_button)
-            .set_label("Mark Read")
-            .set_style(dpp::cos_primary)
-            .set_id("bugrep_read_" + std::to_string(r.id))
-            .set_disabled(r.read);
-        row.add_component(read_btn);
-        
-        // mark resolved button
-        dpp::component resolve_btn;
-        resolve_btn.set_type(dpp::cot_button)
-            .set_label("Resolve")
-            .set_style(dpp::cos_success)
-            .set_id("bugrep_resolve_" + std::to_string(r.id))
-            .set_disabled(r.resolved);
-        row.add_component(resolve_btn);
-        
-        // delete button
-        dpp::component del_btn;
-        del_btn.set_type(dpp::cot_button)
-            .set_label("Delete")
-            .set_style(dpp::cos_danger)
-            .set_id("bugrep_del_" + std::to_string(r.id));
-        row.add_component(del_btn);
-        
-        msg.add_component(row);
-    }
-    
-    // navigation row
-    dpp::component nav_row1;
-    nav_row1.set_type(dpp::cot_action_row);
-    
-    dpp::component prev_btn;
-    prev_btn.set_type(dpp::cot_button)
-        .set_label("◀ Previous")
-        .set_style(dpp::cos_secondary)
-        .set_id("bugrep_nav_prev");
-    nav_row1.add_component(prev_btn);
-    
-    dpp::component next_btn;
-    next_btn.set_type(dpp::cot_button)
-        .set_label("Next ▶")
-        .set_style(dpp::cos_secondary)
-        .set_id("bugrep_nav_next");
-    nav_row1.add_component(next_btn);
-    
-    // toggle resolved view
-    dpp::component toggle_resolved;
-    toggle_resolved.set_type(dpp::cot_button)
-        .set_label(state.show_resolved ? "Hide Resolved" : "Show Resolved")
-        .set_style(dpp::cos_secondary)
-        .set_id("bugrep_toggle_resolved");
-    nav_row1.add_component(toggle_resolved);
-    
-    // delete page button
-    dpp::component delete_page_btn;
-    delete_page_btn.set_type(dpp::cot_button)
-        .set_label("Delete Page")
-        .set_style(dpp::cos_danger)
-        .set_id("bugrep_delete_page")
-        .set_disabled(total == 0);
-    nav_row1.add_component(delete_page_btn);
-    
-    msg.add_component(nav_row1);
-    
-    // sort row
-    std::string date_label = "Date" + std::string(state.order_by == "submitted_at" ? (state.asc ? " ▲" : " ▼") : "");
-    std::string cmd_label = "Command" + std::string(state.order_by == "command_or_feature" ? (state.asc ? " ▲" : " ▼") : "");
-    
-    dpp::component nav_row2;
-    nav_row2.set_type(dpp::cot_action_row);
-    
-    dpp::component sort_date;
-    sort_date.set_type(dpp::cot_button)
-        .set_label(date_label)
-        .set_style(dpp::cos_success)
-        .set_id("bugrep_sort_date");
-    nav_row2.add_component(sort_date);
-    
-    dpp::component sort_cmd;
-    sort_cmd.set_type(dpp::cot_button)
-        .set_label(cmd_label)
-        .set_style(dpp::cos_success)
-        .set_id("bugrep_sort_command");
-    nav_row2.add_component(sort_cmd);
-    
     msg.add_component(nav_row2);
     return msg;
 }
@@ -1422,28 +1259,6 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             bot.message_create(msg);
         });
     cmds.push_back(&suggestions_cmd);
-
-    // Bug reports management (owner only)
-    static Command bugreports_cmd("bugreports", "view and manage user bug reports (owner only)", "owner", {"bugs", "reports"}, false,
-        [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
-            if (!is_owner(event.msg.author.id)) {
-                bot.message_create(dpp::message(event.msg.channel_id,
-                    bronx::error("This command is restricted to the bot owner only.")));
-                return;
-            }
-
-            uint64_t owner_id = event.msg.author.id;
-            // initialize state if missing
-            if (bugreport_states.find(owner_id) == bugreport_states.end()) {
-                bugreport_states[owner_id] = {};
-            }
-
-            // build and send the bug reports list
-            dpp::message msg = build_bugreports_message(db, owner_id);
-            msg.set_channel_id(event.msg.channel_id);
-            bot.message_create(msg);
-        });
-    cmds.push_back(&bugreports_cmd);
 
     // Command history viewer (owner only)
     static Command cmdhistory_cmd("cmdh", "view command history and balance changes for a user (owner only)", "owner", {"cmdhistory", "history"}, false,
@@ -2803,9 +2618,9 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
             }
             return;
         }
-        // only handle suggestion-related, bugreport-related, serverlist, and cmdhistory buttons; otherwise ignore entirely so they
+        // only handle suggestion-related, serverlist, and cmdhistory buttons; otherwise ignore entirely so they
         // don't collide with other modules (e.g. gambling interactions)
-        if (custom_id.rfind("suggest_", 0) != 0 && custom_id.rfind("bugrep_", 0) != 0 && custom_id.rfind("serverlist_", 0) != 0 && custom_id.rfind("cmdh_", 0) != 0) {
+        if (custom_id.rfind("suggest_", 0) != 0 && custom_id.rfind("serverlist_", 0) != 0 && custom_id.rfind("cmdh_", 0) != 0) {
             return;
         }
         uint64_t user_id = event.command.get_issuing_user().id;
@@ -2914,125 +2729,6 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
             bronx::db::suggestion_operations::delete_suggestion(db, sid);
             // if the item was on a page, we might need to adjust current_page
             dpp::message msg = build_suggestions_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
-            return;
-        }
-        
-        // Bug report navigation handlers
-        if (custom_id == "bugrep_nav_prev" || custom_id == "bugrep_nav_next") {
-            if (bugreport_states.find(user_id) == bugreport_states.end()) {
-                bugreport_states[user_id] = {};
-            }
-            BugReportState& br_state = bugreport_states[user_id];
-            
-            // fetch reports to compute pages
-            std::string clause = br_state.order_by + (br_state.asc ? " ASC" : " DESC");
-            auto all_reports = bronx::db::bugreport_operations::fetch_bug_reports(db, clause);
-            std::vector<bronx::db::BugReport> reports;
-            for (const auto& r : all_reports) {
-                if (br_state.show_resolved || !r.resolved) reports.push_back(r);
-            }
-            int total = reports.size();
-            int pages = std::max(1, (total + BUGREPORTS_PER_PAGE - 1) / BUGREPORTS_PER_PAGE);
-            
-            if (custom_id == "bugrep_nav_prev") {
-                if (br_state.current_page > 0) br_state.current_page--;
-                else br_state.current_page = pages - 1;
-            } else {
-                if (br_state.current_page < pages - 1) br_state.current_page++;
-                else br_state.current_page = 0;
-            }
-            
-            dpp::message msg = build_bugreports_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
-            return;
-        }
-        
-        // Bug report toggle resolved view
-        if (custom_id == "bugrep_toggle_resolved") {
-            if (bugreport_states.find(user_id) == bugreport_states.end()) {
-                bugreport_states[user_id] = {};
-            }
-            BugReportState& br_state = bugreport_states[user_id];
-            br_state.show_resolved = !br_state.show_resolved;
-            br_state.current_page = 0;
-            dpp::message msg = build_bugreports_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
-            return;
-        }
-        
-        // Bug report delete page
-        if (custom_id == "bugrep_delete_page") {
-            if (bugreport_states.find(user_id) == bugreport_states.end()) {
-                bugreport_states[user_id] = {};
-            }
-            BugReportState& br_state = bugreport_states[user_id];
-            
-            std::string clause = br_state.order_by + (br_state.asc ? " ASC" : " DESC");
-            auto all_reports = bronx::db::bugreport_operations::fetch_bug_reports(db, clause);
-            std::vector<bronx::db::BugReport> reports;
-            for (const auto& r : all_reports) {
-                if (br_state.show_resolved || !r.resolved) reports.push_back(r);
-            }
-            int total = reports.size();
-            int start = br_state.current_page * BUGREPORTS_PER_PAGE;
-            int end = std::min(start + BUGREPORTS_PER_PAGE, total);
-            for (int i = start; i < end; ++i) {
-                bronx::db::bugreport_operations::delete_bug_report(db, reports[i].id);
-            }
-            dpp::message msg = build_bugreports_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
-            return;
-        }
-        
-        // Bug report sort handlers
-        if (custom_id == "bugrep_sort_date" || custom_id == "bugrep_sort_command") {
-            if (bugreport_states.find(user_id) == bugreport_states.end()) {
-                bugreport_states[user_id] = {};
-            }
-            BugReportState& br_state = bugreport_states[user_id];
-            
-            std::string field;
-            if (custom_id == "bugrep_sort_date") field = "submitted_at";
-            else if (custom_id == "bugrep_sort_command") field = "command_or_feature";
-            
-            if (!field.empty()) {
-                if (br_state.order_by == field) {
-                    br_state.asc = !br_state.asc;
-                } else {
-                    br_state.order_by = field;
-                    br_state.asc = false;
-                    br_state.current_page = 0;
-                }
-            }
-            dpp::message msg = build_bugreports_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
-            return;
-        }
-        
-        // Bug report mark read
-        if (custom_id.find("bugrep_read_") == 0) {
-            uint64_t rid = std::stoull(custom_id.substr(strlen("bugrep_read_")));
-            bronx::db::bugreport_operations::mark_read(db, rid);
-            dpp::message msg = build_bugreports_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
-            return;
-        }
-        
-        // Bug report mark resolved
-        if (custom_id.find("bugrep_resolve_") == 0) {
-            uint64_t rid = std::stoull(custom_id.substr(strlen("bugrep_resolve_")));
-            bronx::db::bugreport_operations::mark_resolved(db, rid);
-            dpp::message msg = build_bugreports_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
-            return;
-        }
-        
-        // Bug report delete
-        if (custom_id.find("bugrep_del_") == 0) {
-            uint64_t rid = std::stoull(custom_id.substr(strlen("bugrep_del_")));
-            bronx::db::bugreport_operations::delete_bug_report(db, rid);
-            dpp::message msg = build_bugreports_message(db, user_id);
             event.reply(dpp::ir_update_message, msg);
             return;
         }
