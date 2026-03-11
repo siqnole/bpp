@@ -129,11 +129,11 @@ inline Command* get_finv_command(Database* db) {
                 // build components
                 std::vector<dpp::component> rows;
                 dpp::component nav_row;
-                // Row 1: ◀️ | page count | ▶️ (shop.h style)
+                // Row 1: ◀ | page count | ▶ (shop.h style)
                 {
                     dpp::component prev_btn;
                     prev_btn.set_type(dpp::cot_button);
-                    prev_btn.set_emoji("◀️");
+                    prev_btn.set_emoji("◀");
                     prev_btn.set_style(dpp::cos_secondary);
                     prev_btn.set_id("finv_nav_" + ::std::to_string(page) + "_" + ::std::to_string(event.msg.author.id) + "_prev");
                     prev_btn.set_disabled(page <= 0);
@@ -149,7 +149,7 @@ inline Command* get_finv_command(Database* db) {
 
                     dpp::component next_btn;
                     next_btn.set_type(dpp::cot_button);
-                    next_btn.set_emoji("▶️");
+                    next_btn.set_emoji("▶");
                     next_btn.set_style(dpp::cos_secondary);
                     next_btn.set_id("finv_nav_" + ::std::to_string(page) + "_" + ::std::to_string(event.msg.author.id) + "_next");
                     next_btn.set_disabled(page >= total_pages - 1);
@@ -364,11 +364,11 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
         description += " (" + std::to_string(fish_items.size()) + " fish)";
         std::vector<dpp::component> rows;
         dpp::component nav_row;
-        // Row 1: ◀️ | page count | ▶️ (shop.h style)
+        // Row 1: ◀ | page count | ▶ (shop.h style)
         {
             dpp::component prev_btn;
             prev_btn.set_type(dpp::cot_button);
-            prev_btn.set_emoji("◀️");
+            prev_btn.set_emoji("◀");
             prev_btn.set_style(dpp::cos_secondary);
             prev_btn.set_id("finv_nav_" + std::to_string(page) + "_" + std::to_string(uid) + "_prev");
             prev_btn.set_disabled(page <= 0);
@@ -384,7 +384,7 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
 
             dpp::component next_btn;
             next_btn.set_type(dpp::cot_button);
-            next_btn.set_emoji("▶️");
+            next_btn.set_emoji("▶");
             next_btn.set_style(dpp::cos_secondary);
             next_btn.set_id("finv_nav_" + std::to_string(page) + "_" + std::to_string(uid) + "_next");
             next_btn.set_disabled(page >= total_pages - 1);
@@ -547,11 +547,11 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
             }
             description += "\n\n**total unlocked value:** $" + format_number(tv);
             description += " (" + std::to_string(fish_items.size()) + " fish)";
-            // Row 1: ◀️ | page count | ▶️ (shop.h style)
+            // Row 1: ◀ | page count | ▶ (shop.h style)
             {
                 dpp::component prev_btn;
                 prev_btn.set_type(dpp::cot_button);
-                prev_btn.set_emoji("◀️");
+                prev_btn.set_emoji("◀");
                 prev_btn.set_style(dpp::cos_secondary);
                 prev_btn.set_id("finv_nav_" + std::to_string(page) + "_" + std::to_string(uid) + "_prev");
                 prev_btn.set_disabled(page <= 0);
@@ -567,7 +567,7 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
 
                 dpp::component next_btn;
                 next_btn.set_type(dpp::cot_button);
-                next_btn.set_emoji("▶️");
+                next_btn.set_emoji("▶");
                 next_btn.set_style(dpp::cos_secondary);
                 next_btn.set_id("finv_nav_" + std::to_string(page) + "_" + std::to_string(uid) + "_next");
                 next_btn.set_disabled(page >= total_pages - 1);
