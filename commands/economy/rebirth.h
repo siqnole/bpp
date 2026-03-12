@@ -29,6 +29,18 @@ namespace economy {
 //   /rebirth confirm    — execute rebirth
 // ============================================================================
 
+// Progressive rebirth emojis based on level
+static inline std::string get_rebirth_emoji(int level) {
+    switch (level) {
+        case 1: return "<:rebirth:1481426459200327720>";
+        case 2: return "<:rebirth2:1481426460517601340>";
+        case 3: return "<:rebirth3:1481427415195451452>";
+        case 4: return "<:rebirth4:1481427416038510622>";
+        case 5: return "<:rebirth5:1481427838400856197>";
+        default: return "<:rebirth:1481426459200327720>"; // fallback to level 1
+    }
+}
+
 // Requirements per rebirth level
 struct RebirthRequirement {
     int level;                  // rebirth # (1-5)
@@ -42,12 +54,13 @@ struct RebirthRequirement {
     std::string title_item_id;  // inventory item_id for the title
 };
 
+// Note: titles use get_rebirth_emoji(level) + " Title" format dynamically
 static const std::vector<RebirthRequirement> REBIRTH_REQUIREMENTS = {
-    {1, 20, 50000000000LL,    0,      0,     0,     1.1,  "\xF0\x9F\x94\x84 Reborn",        "title_reborn"},
-    {2, 20, 100000000000LL,   10000,  5000,  0,     1.1,  "\xF0\x9F\x94\x84 Twice Reborn",  "title_twice_reborn"},
-    {3, 20, 250000000000LL,   25000,  15000, 5000,  1.1,  "\xF0\x9F\x94\x84 Thrice Reborn", "title_thrice_reborn"},
-    {4, 20, 500000000000LL,   50000,  30000, 15000, 1.1,  "\xF0\x9F\x94\x84 Ascended",      "title_ascended"},
-    {5, 20, 1000000000000LL,  100000, 50000, 25000, 1.1,  "\xF0\x9F\x94\x84 Transcendent",  "title_transcendent"},
+    {1, 20, 50000000000LL,    0,      0,     0,     1.1,  "<:rebirth:1481426459200327720> Reborn",        "title_reborn"},
+    {2, 20, 100000000000LL,   10000,  5000,  0,     1.1,  "<:rebirth2:1481426460517601340> Twice Reborn",  "title_twice_reborn"},
+    {3, 20, 250000000000LL,   25000,  15000, 5000,  1.1,  "<:rebirth3:1481427415195451452> Thrice Reborn", "title_thrice_reborn"},
+    {4, 20, 500000000000LL,   50000,  30000, 15000, 1.1,  "<:rebirth4:1481427416038510622> Ascended",      "title_ascended"},
+    {5, 20, 1000000000000LL,  100000, 50000, 25000, 1.1,  "<:rebirth5:1481427838400856197> Transcendent",  "title_transcendent"},
 };
 
 static const int MAX_REBIRTHS = 5;
@@ -278,8 +291,9 @@ inline Command* create_rebirth_command(Database* db) {
             bool confirmed = !args.empty() && (args[0] == "confirm" || args[0] == "yes");
             
             if (!confirmed) {
-                // Show rebirth info
-                std::string desc = "\xF0\x9F\x94\x84 **Rebirth System**\n\n";
+                // Show rebirth info - use dynamic emoji based on next rebirth level
+                int display_level = (state.current_rebirths < MAX_REBIRTHS) ? state.current_rebirths + 1 : MAX_REBIRTHS;
+                std::string desc = get_rebirth_emoji(display_level) + " **Rebirth System**\n\n";
                 
                 // Current status
                 desc += "\xE2\xAD\x90 **Current Rebirth:** " + rebirth_numeral(state.current_rebirths) + " / " + rebirth_numeral(MAX_REBIRTHS) + "\n";
@@ -296,7 +310,7 @@ inline Command* create_rebirth_command(Database* db) {
                     desc += "Your permanent multiplier: **" + mult_oss.str() + "x** to all earnings.";
                     
                     auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
-                    embed.set_title("\xF0\x9F\x94\x84 Rebirth");
+                    embed.set_title(get_rebirth_emoji(MAX_REBIRTHS) + " Rebirth");
                     bronx::add_invoker_footer(embed, event.msg.author);
                     bronx::send_message(bot, event, embed);
                     return;
@@ -347,7 +361,7 @@ inline Command* create_rebirth_command(Database* db) {
                 }
                 
                 auto embed = bronx::create_embed(desc);
-                embed.set_title("\xF0\x9F\x94\x84 Rebirth " + rebirth_numeral(next_level));
+                embed.set_title(get_rebirth_emoji(next_level) + " Rebirth " + rebirth_numeral(next_level));
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
                 return;
@@ -376,7 +390,7 @@ inline Command* create_rebirth_command(Database* db) {
                 
                 log_balance_change(db, user_id, "REBIRTH " + rebirth_numeral(new_level) + " — multiplier now " + oss.str() + "x");
                 
-                std::string desc = "\xF0\x9F\x94\x84 **REBIRTH COMPLETE!**\n\n";
+                std::string desc = get_rebirth_emoji(new_level) + " **REBIRTH COMPLETE!**\n\n";
                 desc += rebirth_star_visual(new_level) + "\n\n";
                 desc += "You are now **Rebirth " + rebirth_numeral(new_level) + "**!\n";
                 desc += "Title earned: **\"" + req->title + "\"**\n";
@@ -384,7 +398,7 @@ inline Command* create_rebirth_command(Database* db) {
                 desc += "Your progress has been reset. The journey begins anew... but stronger.";
                 
                 auto embed = bronx::create_embed(desc, 0xFFD700); // Gold color
-                embed.set_title("\xF0\x9F\x94\x84 REBIRTH " + rebirth_numeral(new_level));
+                embed.set_title(get_rebirth_emoji(new_level) + " REBIRTH " + rebirth_numeral(new_level));
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
             } else {
@@ -406,7 +420,9 @@ inline Command* create_rebirth_command(Database* db) {
             } catch (...) {}
             
             if (!confirmed) {
-                std::string desc = "\xF0\x9F\x94\x84 **Rebirth System**\n\n";
+                // Use dynamic emoji based on next rebirth level
+                int display_level = (state.current_rebirths < MAX_REBIRTHS) ? state.current_rebirths + 1 : MAX_REBIRTHS;
+                std::string desc = get_rebirth_emoji(display_level) + " **Rebirth System**\n\n";
                 
                 desc += "\xE2\xAD\x90 **Current Rebirth:** " + rebirth_numeral(state.current_rebirths) + " / " + rebirth_numeral(MAX_REBIRTHS) + "\n";
                 desc += rebirth_star_visual(state.current_rebirths) + "\n";
@@ -420,7 +436,7 @@ inline Command* create_rebirth_command(Database* db) {
                 if (state.current_rebirths >= MAX_REBIRTHS) {
                     desc += "\xF0\x9F\x91\x91 **Maximum rebirth reached!** Multiplier: **" + mult_oss.str() + "x**";
                     auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
-                    embed.set_title("\xF0\x9F\x94\x84 Rebirth");
+                    embed.set_title(get_rebirth_emoji(MAX_REBIRTHS) + " Rebirth");
                     event.reply(dpp::message().add_embed(embed));
                     return;
                 }
@@ -452,7 +468,7 @@ inline Command* create_rebirth_command(Database* db) {
                     desc += bronx::EMOJI_DENY + " **Requirements not yet met.**";
                 
                 auto embed = bronx::create_embed(desc);
-                embed.set_title("\xF0\x9F\x94\x84 Rebirth " + rebirth_numeral(next_level));
+                embed.set_title(get_rebirth_emoji(next_level) + " Rebirth " + rebirth_numeral(next_level));
                 event.reply(dpp::message().add_embed(embed));
                 return;
             }
@@ -479,7 +495,7 @@ inline Command* create_rebirth_command(Database* db) {
                 
                 log_balance_change(db, user_id, "REBIRTH " + rebirth_numeral(new_level) + " — multiplier now " + oss.str() + "x");
                 
-                std::string desc = "\xF0\x9F\x94\x84 **REBIRTH COMPLETE!**\n\n";
+                std::string desc = get_rebirth_emoji(new_level) + " **REBIRTH COMPLETE!**\n\n";
                 desc += rebirth_star_visual(new_level) + "\n\n";
                 desc += "**Rebirth " + rebirth_numeral(new_level) + "** achieved!\n";
                 desc += "Title: **\"" + req->title + "\"**\n";
@@ -487,7 +503,7 @@ inline Command* create_rebirth_command(Database* db) {
                 desc += "The journey begins anew...";
                 
                 auto embed = bronx::create_embed(desc, 0xFFD700);
-                embed.set_title("\xF0\x9F\x94\x84 REBIRTH " + rebirth_numeral(new_level));
+                embed.set_title(get_rebirth_emoji(new_level) + " REBIRTH " + rebirth_numeral(new_level));
                 event.reply(dpp::message().add_embed(embed));
             } else {
                 event.reply(dpp::message().add_embed(bronx::error("rebirth failed!")));

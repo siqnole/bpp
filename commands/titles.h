@@ -62,12 +62,12 @@ inline const std::vector<TitleDef>& title_catalog() {
         // automatically awarded titles (not purchasable)
         { "title_global_top10", "🌍 Top 10 Global",      "granted daily to the top-10 global networth users", 0, 0, 0 },        
         { "title_earlygrinder", "🏋️ Early Grinder",     "awarded to early prestige players", 0, 0, 0 },
-        { "title_betatester",     "🧪 Beta Tester",       "awarded to users who helped test and improve the bot", 0, 0, 0 },        { "title_fishforever",    "🎣 Fish Forever",      "awarded for catching every single fish in existence", 0, 0, 0 },        // rebirth titles (awarded automatically on rebirth)
-        { "title_reborn",          "🔄 Reborn",            "completed rebirth I",       0, 0, 0 },
-        { "title_twice_reborn",    "🔄 Twice Reborn",      "completed rebirth II",      0, 0, 0 },
-        { "title_thrice_reborn",   "🔄 Thrice Reborn",     "completed rebirth III",     0, 0, 0 },
-        { "title_ascended",        "🔄 Ascended",          "completed rebirth IV",      0, 0, 0 },
-        { "title_transcendent",    "🔄 Transcendent",      "completed rebirth V",       0, 0, 0 },        // LIMITED titles – purchase_limit > 0, gone forever once all copies are claimed
+        { "title_betatester",     "🧪 Beta Tester",       "awarded to users who helped test and improve the bot", 0, 0, 0 },        { "title_fishforever",    "🎣 Fish Forever",      "awarded for catching every single fish in existence", 0, 0, 0 },        // rebirth titles (awarded automatically on rebirth) - uses progressive custom emojis
+        { "title_reborn",          "<:rebirth:1481426459200327720> Reborn",            "completed rebirth I",       0, 0, 0 },
+        { "title_twice_reborn",    "<:rebirth2:1481426460517601340> Twice Reborn",      "completed rebirth II",      0, 0, 0 },
+        { "title_thrice_reborn",   "<:rebirth3:1481427415195451452> Thrice Reborn",     "completed rebirth III",     0, 0, 0 },
+        { "title_ascended",        "<:rebirth4:1481427416038510622> Ascended",          "completed rebirth IV",      0, 0, 0 },
+        { "title_transcendent",    "<:rebirth5:1481427838400856197> Transcendent",      "completed rebirth V",       0, 0, 0 },        // LIMITED titles – purchase_limit > 0, gone forever once all copies are claimed
         { "title_first",       "🥇 First",               "first in line, first in life — only 1 ever",      999999999,  0, 1  },
         { "title_femboy",     "*femboy :3*",                "got my programmer socks on rn",       50000000,   0, 10 },
         { "title_chad",       "***chad***",                     "stare directly into the sun with these shades on, 10 copies only",       50000000,   0, 10 },

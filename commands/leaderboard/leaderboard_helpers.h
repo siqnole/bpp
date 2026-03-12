@@ -3,6 +3,7 @@
 #include "../../embed_style.h"
 #include "../titles.h"
 #include "../economy/helpers.h"
+#include "../economy/rebirth.h"
 #include <dpp/dpp.h>
 #include <string>
 #include <vector>
@@ -135,7 +136,7 @@ inline ::std::string get_prestige_display(bronx::db::Database* db, uint64_t user
     return "[" + prestige_to_roman(prestige) + "] ";
 }
 
-// Get rebirth display string (e.g., "\xF0\x9F\x94\x84II " for rebirth 2)
+// Get rebirth display string (e.g., "<:rebirth2:...>II " for rebirth 2)
 // Queries the user_rebirths table; returns empty if no rebirths or table missing.
 inline ::std::string get_rebirth_display(bronx::db::Database* db, uint64_t user_id) {
     if (!db) return "";
@@ -150,7 +151,7 @@ inline ::std::string get_rebirth_display(bronx::db::Database* db, uint64_t user_
     if (level <= 0) return "";
     static const char* roman[] = {"", "I", "II", "III", "IV", "V"};
     ::std::string numeral = (level >= 1 && level <= 5) ? roman[level] : ::std::to_string(level);
-    return "\xF0\x9F\x94\x84" + numeral + " "; // 🔄 + roman numeral
+    return commands::economy::get_rebirth_emoji(level) + numeral + " "; // progressive emoji + roman numeral
 }
 
 // Filter leaderboard entries to only include members of a specific guild

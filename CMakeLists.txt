@@ -42,6 +42,14 @@ else()
     message(STATUS "libcurl NOT found — `steal` command and API cache will be disabled")
 endif()
 
+# Cairo for chart rendering (stats commands)
+pkg_check_modules(CAIRO REQUIRED cairo)
+if(CAIRO_FOUND)
+    message(STATUS "Cairo found — enabling chart rendering for stats commands")
+else()
+    message(FATAL_ERROR "Cairo not found! Install: sudo apt install libcairo2-dev")
+endif()
+
 # SQLite3 for local cache database (required for hybrid performance layer)
 find_package(PkgConfig)
 if(PKG_CONFIG_FOUND)
@@ -111,6 +119,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/performance
     ${MARIADB_INCLUDE_DIRS}
     ${SQLITE3_INCLUDE_DIRS}
+    ${CAIRO_INCLUDE_DIRS}
 )
 
 # Link libraries
@@ -118,6 +127,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     dpp
     ${MARIADB_LIBRARIES}
     ${SQLITE3_LIBRARIES}
+    ${CAIRO_LIBRARIES}
 )
 
 # If libcurl was found, wire it up and enable the steal command at compile-time

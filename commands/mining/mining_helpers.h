@@ -216,6 +216,18 @@ inline int parse_mine_meta_int(const std::string& meta, const std::string& key, 
     return def;
 }
 
+// 64-bit version for large ore values (billions+)
+inline int64_t parse_mine_meta_int64(const std::string& meta, const std::string& key, int64_t def = 0) {
+    size_t pos = meta.find("\"" + key + "\":");
+    if (pos == std::string::npos) return def;
+    pos = meta.find_first_of("0123456789-", pos + key.size() + 3);
+    if (pos == std::string::npos) return def;
+    size_t end = pos;
+    while (end < meta.size() && (std::isdigit(meta[end]) || meta[end] == '-')) end++;
+    try { return std::stoll(meta.substr(pos, end - pos)); } catch (...) {}
+    return def;
+}
+
 inline double parse_mine_meta_double(const std::string& meta, const std::string& key, double def = 0.0) {
     size_t pos = meta.find("\"" + key + "\":");
     if (pos == std::string::npos) return def;

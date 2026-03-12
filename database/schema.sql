@@ -273,6 +273,7 @@ CREATE TABLE IF NOT EXISTS bazaar_state (
 
 -- Reaction roles persistence (message -> emoji -> role)
 CREATE TABLE IF NOT EXISTS reaction_roles (
+    guild_id BIGINT UNSIGNED NOT NULL,
     message_id BIGINT UNSIGNED NOT NULL,
     channel_id BIGINT UNSIGNED NOT NULL,
     emoji_raw VARCHAR(255) NOT NULL,
@@ -280,6 +281,7 @@ CREATE TABLE IF NOT EXISTS reaction_roles (
     role_id BIGINT UNSIGNED NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (message_id, emoji_raw),
+    INDEX idx_guild (guild_id),
     INDEX idx_message (message_id),
     INDEX idx_channel (channel_id),
     INDEX idx_role (role_id)

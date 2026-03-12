@@ -10,7 +10,7 @@ namespace commands {
 namespace gambling {
 
 inline Command* get_stats_command(bronx::db::Database* db) {
-    static Command stats("stats", "view your gambling and game statistics", "gambling", {"gamestats", "gstats"}, true,
+    static Command gstats("gstats", "view your gambling and game statistics", "gambling", {"gamestats"}, true,
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             uint64_t target_id = event.msg.author.id;
             
@@ -74,7 +74,6 @@ inline Command* get_stats_command(bronx::db::Database* db) {
             description += "• net profit: **" + profit_color + "$" + format_number(net_profit) + "**\n";
             
             auto embed = bronx::create_embed(description);
-            embed.set_title("📊 Game Statistics");
             
             // Color based on net profit
             if (net_profit > 0) {
@@ -141,7 +140,6 @@ inline Command* get_stats_command(bronx::db::Database* db) {
             description += "• net profit: **" + profit_color + "$" + format_number(net_profit) + "**\n";
             
             auto embed = bronx::create_embed(description);
-            embed.set_title("📊 Game Statistics");
             
             // Color based on net profit
             if (net_profit > 0) {
@@ -157,7 +155,7 @@ inline Command* get_stats_command(bronx::db::Database* db) {
         { dpp::command_option(dpp::co_user, "user", "user to view stats for", false) }
     );
     
-    return &stats;
+    return &gstats;
 }
 
 } // namespace gambling
