@@ -455,6 +455,88 @@ INSERT INTO shop_items (item_id, name, description, category, price, max_quantit
 ON DUPLICATE KEY UPDATE price=VALUES(price),name=VALUES(name),description=VALUES(description),metadata=VALUES(metadata),level=VALUES(level)
 )SQL");
 
+            // ─── GUILD STATS TABLES ─────────────────────────────────────────
+            // Track member joins/leaves
+            migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS guild_member_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    event_type ENUM('join','leave') NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_guild_type (guild_id, event_type),
+    INDEX idx_guild_date (guild_id, created_at)
+) ENGINE=InnoDB
+)SQL");
+            // Track message events (message, edit, delete)
+            migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS guild_message_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    channel_id BIGINT UNSIGNED NOT NULL,
+    event_type ENUM('message','edit','delete') NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_guild_type (guild_id, event_type),
+    INDEX idx_guild_date (guild_id, created_at),
+    INDEX idx_guild_user (guild_id, user_id)
+) ENGINE=InnoDB
+)SQL");
+            // Track command usage per day per channel
+            migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS guild_command_usage (
+    guild_id BIGINT UNSIGNED NOT NULL,
+    command_name VARCHAR(64) NOT NULL,
+    channel_id BIGINT UNSIGNED NOT NULL,
+    usage_date DATE NOT NULL,
+    use_count INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, command_name, channel_id, usage_date),
+    INDEX idx_guild_date (guild_id, usage_date)
+) ENGINE=InnoDB
+)SQL");
+            // Daily aggregated stats for faster dashboard queries (optional rollup table)
+            migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS guild_daily_stats (
+    guild_id BIGINT UNSIGNED NOT NULL,
+    channel_id VARCHAR(32) NOT NULL DEFAULT '__guild__',
+    stat_date DATE NOT NULL,
+    messages INT NOT NULL DEFAULT 0,
+    edits INT NOT NULL DEFAULT 0,
+    deletes INT NOT NULL DEFAULT 0,
+    joins INT NOT NULL DEFAULT 0,
+    leaves INT NOT NULL DEFAULT 0,
+    active_users INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, channel_id, stat_date),
+    INDEX idx_guild_date (guild_id, stat_date)
+) ENGINE=InnoDB
+)SQL");
+            // Track voice channel join/leave events
+            migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS guild_voice_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    channel_id BIGINT UNSIGNED NOT NULL,
+    event_type VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_guild_type (guild_id, event_type),
+    INDEX idx_guild_date (guild_id, created_at)
+) ENGINE=InnoDB
+)SQL");
+            // Track server boost/unboost events
+            migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS guild_boost_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    event_type ENUM('boost','unboost') NOT NULL,
+    boost_id VARCHAR(32) NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_guild_type (guild_id, event_type),
+    INDEX idx_guild_date (guild_id, created_at)
+) ENGINE=InnoDB
+)SQL");
+
             // Run all migrations on a single connection for speed
             int ok = execute_batch(migrations);
             auto migration_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

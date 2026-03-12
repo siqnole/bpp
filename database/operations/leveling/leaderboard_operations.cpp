@@ -6,6 +6,18 @@
 namespace bronx {
 namespace db {
 
+// Progressive rebirth emojis based on level
+static inline std::string get_rebirth_emoji_for_level(int level) {
+    switch (level) {
+        case 1: return "<:rebirth:1481426459200327720>";
+        case 2: return "<:rebirth2:1481426460517601340>";
+        case 3: return "<:rebirth3:1481427415195451452>";
+        case 4: return "<:rebirth4:1481427416038510622>";
+        case 5: return "<:rebirth5:1481427838400856197>";
+        default: return "<:rebirth:1481426459200327720>"; // fallback to level 1
+    }
+}
+
 std::vector<LeaderboardEntry> Database::get_networth_leaderboard(uint64_t guild_id, int limit) {
     std::vector<LeaderboardEntry> entries;
     auto conn = pool_->acquire();
@@ -367,7 +379,7 @@ std::vector<LeaderboardEntry> Database::get_prestige_leaderboard(uint64_t guild_
                 entry.value = rebirth * 100 + prestige;
                 entry.rank = rank++;
                 if (rebirth > 0) {
-                    entry.extra_info = "\xF0\x9F\x94\x84 R" + std::to_string(rebirth) + " \xC2\xB7 P" + std::to_string(prestige) + " " + bronx::EMOJI_STAR;
+                    entry.extra_info = get_rebirth_emoji_for_level(rebirth) + " R" + std::to_string(rebirth) + " \xC2\xB7 P" + std::to_string(prestige) + " " + bronx::EMOJI_STAR;
                 } else {
                     entry.extra_info = std::to_string(prestige) + " " + bronx::EMOJI_STAR;
                 }

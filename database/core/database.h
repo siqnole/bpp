@@ -394,7 +394,7 @@ public:
     // ========================================
     
     // Reaction roles persistence
-    bool add_reaction_role(uint64_t message_id, uint64_t channel_id, const std::string& emoji_raw, uint64_t emoji_id, uint64_t role_id);
+    bool add_reaction_role(uint64_t guild_id, uint64_t message_id, uint64_t channel_id, const std::string& emoji_raw, uint64_t emoji_id, uint64_t role_id);
     bool remove_reaction_role(uint64_t message_id, const std::string& emoji_raw);
     std::vector<ReactionRoleRow> get_all_reaction_roles();
 

@@ -125,6 +125,7 @@ struct LeaderboardEntry {
 
 // Reaction role persistent row
 struct ReactionRoleRow {
+    uint64_t guild_id;
     uint64_t message_id;
     uint64_t channel_id;
     std::string emoji_raw;

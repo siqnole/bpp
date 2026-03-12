@@ -12,6 +12,7 @@
 #include <mutex>
 #include "command.h"
 #include "embed_style.h"
+#include "performance/async_stat_writer.h"
 #include "database/operations/economy/history_operations.h"
 #include "database/operations/economy/server_economy_operations.h"
 #include "commands/daily_challenges/daily_stat_tracker.h"
@@ -260,6 +261,11 @@ public:
                     // Per-guild command tracking for dashboard
                     if (event.msg.guild_id != 0) {
                         bronx::db::server_economy_operations::log_server_command(db_, event.msg.guild_id, event.msg.author.id, it->second->name);
+                        // Stats: per-command per-channel usage tracking
+                        if (bronx::perf::g_stat_writer) {
+                            bronx::perf::g_stat_writer->enqueue_command_usage(
+                                event.msg.guild_id, it->second->name, event.msg.channel_id);
+                        }
                     }
                 }
                 
@@ -342,6 +348,11 @@ public:
                     // Per-guild command tracking for dashboard
                     if (event.command.guild_id != 0) {
                         bronx::db::server_economy_operations::log_server_command(db_, event.command.guild_id, event.command.get_issuing_user().id, it->second->name);
+                        // Stats: per-command per-channel usage tracking
+                        if (bronx::perf::g_stat_writer) {
+                            bronx::perf::g_stat_writer->enqueue_command_usage(
+                                event.command.guild_id, it->second->name, event.command.channel_id);
+                        }
                     }
                 }
                 

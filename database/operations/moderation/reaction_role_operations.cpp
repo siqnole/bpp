@@ -5,7 +5,7 @@
 namespace bronx {
 namespace db {
 
-bool Database::add_reaction_role(uint64_t message_id, uint64_t channel_id, const std::string& emoji_raw, uint64_t emoji_id, uint64_t role_id) {
+bool Database::add_reaction_role(uint64_t guild_id, uint64_t message_id, uint64_t channel_id, const std::string& emoji_raw, uint64_t emoji_id, uint64_t role_id) {
     // normalize the emoji string here as a safety net so callers don't need to
     // remember. strips surrounding <> and a leading colon if present.
     std::string norm = emoji_raw;
@@ -18,8 +18,8 @@ bool Database::add_reaction_role(uint64_t message_id, uint64_t channel_id, const
 
     auto conn = pool_->acquire();
 
-    const char* query = "INSERT INTO reaction_roles (message_id, channel_id, emoji_raw, emoji_id, role_id) VALUES (?, ?, ?, ?, ?)"
-                        " ON DUPLICATE KEY UPDATE channel_id = VALUES(channel_id), emoji_id = VALUES(emoji_id), role_id = VALUES(role_id)";
+    const char* query = "INSERT INTO reaction_roles (guild_id, message_id, channel_id, emoji_raw, emoji_id, role_id) VALUES (?, ?, ?, ?, ?, ?)"
+                        " ON DUPLICATE KEY UPDATE guild_id = VALUES(guild_id), channel_id = VALUES(channel_id), emoji_id = VALUES(emoji_id), role_id = VALUES(role_id)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         last_error_ = mysql_stmt_error(stmt);
@@ -29,28 +29,32 @@ bool Database::add_reaction_role(uint64_t message_id, uint64_t channel_id, const
         return false;
     }
 
-    MYSQL_BIND bind[5];
+    MYSQL_BIND bind[6];
     memset(bind, 0, sizeof(bind));
 
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&message_id;
+    bind[0].buffer = (char*)&guild_id;
     bind[0].is_unsigned = 1;
 
     bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&channel_id;
+    bind[1].buffer = (char*)&message_id;
     bind[1].is_unsigned = 1;
 
-    bind[2].buffer_type = MYSQL_TYPE_STRING;
-    bind[2].buffer = (char*)norm.c_str();
-    bind[2].buffer_length = norm.length();
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&channel_id;
+    bind[2].is_unsigned = 1;
 
-    bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[3].buffer = (char*)&emoji_id;
-    bind[3].is_unsigned = 1;
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)norm.c_str();
+    bind[3].buffer_length = norm.length();
 
     bind[4].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[4].buffer = (char*)&role_id;
+    bind[4].buffer = (char*)&emoji_id;
     bind[4].is_unsigned = 1;
+
+    bind[5].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[5].buffer = (char*)&role_id;
+    bind[5].is_unsigned = 1;
 
     mysql_stmt_bind_param(stmt, bind);
 
@@ -106,7 +110,7 @@ std::vector<ReactionRoleRow> Database::get_all_reaction_roles() {
     std::vector<ReactionRoleRow> out;
     auto conn = pool_->acquire();
 
-    const char* query = "SELECT message_id, channel_id, emoji_raw, emoji_id, role_id FROM reaction_roles";
+    const char* query = "SELECT guild_id, message_id, channel_id, emoji_raw, emoji_id, role_id FROM reaction_roles";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         last_error_ = mysql_stmt_error(stmt);
@@ -125,40 +129,46 @@ std::vector<ReactionRoleRow> Database::get_all_reaction_roles() {
     }
 
     // result buffers
+    uint64_t guild_id;
     uint64_t message_id;
     uint64_t channel_id;
     char emoji_buf[256]; unsigned long emoji_len = 0;
     uint64_t emoji_id;
     uint64_t role_id;
 
-    MYSQL_BIND result_bind[5];
+    MYSQL_BIND result_bind[6];
     memset(result_bind, 0, sizeof(result_bind));
 
     result_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    result_bind[0].buffer = (char*)&message_id;
+    result_bind[0].buffer = (char*)&guild_id;
     result_bind[0].is_unsigned = 1;
 
     result_bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    result_bind[1].buffer = (char*)&channel_id;
+    result_bind[1].buffer = (char*)&message_id;
     result_bind[1].is_unsigned = 1;
 
-    result_bind[2].buffer_type = MYSQL_TYPE_STRING;
-    result_bind[2].buffer = emoji_buf;
-    result_bind[2].buffer_length = sizeof(emoji_buf);
-    result_bind[2].length = &emoji_len;
+    result_bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    result_bind[2].buffer = (char*)&channel_id;
+    result_bind[2].is_unsigned = 1;
 
-    result_bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
-    result_bind[3].buffer = (char*)&emoji_id;
-    result_bind[3].is_unsigned = 1;
+    result_bind[3].buffer_type = MYSQL_TYPE_STRING;
+    result_bind[3].buffer = emoji_buf;
+    result_bind[3].buffer_length = sizeof(emoji_buf);
+    result_bind[3].length = &emoji_len;
 
     result_bind[4].buffer_type = MYSQL_TYPE_LONGLONG;
-    result_bind[4].buffer = (char*)&role_id;
+    result_bind[4].buffer = (char*)&emoji_id;
     result_bind[4].is_unsigned = 1;
+
+    result_bind[5].buffer_type = MYSQL_TYPE_LONGLONG;
+    result_bind[5].buffer = (char*)&role_id;
+    result_bind[5].is_unsigned = 1;
 
     mysql_stmt_bind_result(stmt, result_bind);
 
     while (mysql_stmt_fetch(stmt) == 0) {
         ReactionRoleRow r;
+        r.guild_id = guild_id;
         r.message_id = message_id;
         r.channel_id = channel_id;
         r.emoji_raw = std::string(emoji_buf, emoji_len);
@@ -179,8 +189,8 @@ std::vector<ReactionRoleRow> Database::get_all_reaction_roles() {
 namespace bronx {
 namespace db {
 namespace reaction_role_operations {
-    bool add_reaction_role(Database* db, uint64_t message_id, uint64_t channel_id, const std::string& emoji_raw, uint64_t emoji_id, uint64_t role_id) {
-        return db->add_reaction_role(message_id, channel_id, emoji_raw, emoji_id, role_id);
+    bool add_reaction_role(Database* db, uint64_t guild_id, uint64_t message_id, uint64_t channel_id, const std::string& emoji_raw, uint64_t emoji_id, uint64_t role_id) {
+        return db->add_reaction_role(guild_id, message_id, channel_id, emoji_raw, emoji_id, role_id);
     }
     bool remove_reaction_role(Database* db, uint64_t message_id, const std::string& emoji_raw) {
         return db->remove_reaction_role(message_id, emoji_raw);

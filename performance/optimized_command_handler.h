@@ -269,6 +269,11 @@ public:
             if (async_stat_writer_) {
                 async_stat_writer_->enqueue_log_command(event.msg.author.id, it->second->name);
                 async_stat_writer_->enqueue_increment_stat(event.msg.author.id, "commands_used", 1);
+                // Per-guild command tracking for dashboard stats
+                if (guild_id != 0) {
+                    async_stat_writer_->enqueue_command_usage(
+                        guild_id, it->second->name, event.msg.channel_id);
+                }
             } else if (cached_db_) {
                 // Fallback to synchronous if no async writer
                 bronx::db::history_operations::log_command(cached_db_->get_raw_db(), event.msg.author.id, it->second->name);
@@ -396,6 +401,11 @@ public:
             if (async_stat_writer_) {
                 async_stat_writer_->enqueue_log_command(event.command.get_issuing_user().id, it->second->name);
                 async_stat_writer_->enqueue_increment_stat(event.command.get_issuing_user().id, "commands_used", 1);
+                // Per-guild command tracking for dashboard stats
+                if (guild_id != 0) {
+                    async_stat_writer_->enqueue_command_usage(
+                        guild_id, it->second->name, event.command.channel_id);
+                }
             } else if (cached_db_) {
                 bronx::db::history_operations::log_command(cached_db_->get_raw_db(), event.command.get_issuing_user().id, it->second->name);
                 cached_db_->increment_stat(event.command.get_issuing_user().id, "commands_used", 1);

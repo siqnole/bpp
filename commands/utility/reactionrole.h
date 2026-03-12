@@ -126,6 +126,7 @@ inline void load_persistent_reaction_roles(dpp::cluster& bot) {
     if (!rr_db) return;
     // make sure the table exists (migrations may not have been applied)
     rr_db->execute("CREATE TABLE IF NOT EXISTS reaction_roles ("
+                   "guild_id BIGINT UNSIGNED NOT NULL,"
                    "message_id BIGINT UNSIGNED NOT NULL,"
                    "channel_id BIGINT UNSIGNED NOT NULL,"
                    "emoji_raw VARCHAR(255) NOT NULL,"
@@ -133,10 +134,15 @@ inline void load_persistent_reaction_roles(dpp::cluster& bot) {
                    "role_id BIGINT UNSIGNED NOT NULL,"
                    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
                    "PRIMARY KEY (message_id, emoji_raw),"
+                   "INDEX idx_guild (guild_id),"
                    "INDEX idx_message (message_id),"
                    "INDEX idx_channel (channel_id),"
                    "INDEX idx_role (role_id)"
                    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+    // add guild_id column if it doesn't exist (for tables created before this fix)
+    // use a try-catch via execute which will silently fail if column already exists
+    rr_db->execute("ALTER TABLE reaction_roles ADD COLUMN guild_id BIGINT UNSIGNED NOT NULL DEFAULT 0 FIRST;");
+    rr_db->execute("CREATE INDEX idx_guild ON reaction_roles (guild_id);");
     // make sure the column charset is utf8mb4 as well (existing tables may have
     // latin1 defaults). this will convert any existing data in-place.
     rr_db->execute("ALTER TABLE reaction_roles CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;");
@@ -163,7 +169,7 @@ inline void load_persistent_reaction_roles(dpp::cluster& bot) {
         std::string norm = normalize_emoji_for_reaction(r.emoji_raw);
         if (norm != r.emoji_raw) {
             // add normalized row then remove old one so we don't end up with duplicates
-            rr_db->add_reaction_role(r.message_id, r.channel_id, norm, r.emoji_id, r.role_id);
+            rr_db->add_reaction_role(r.guild_id, r.message_id, r.channel_id, norm, r.emoji_id, r.role_id);
             rr_db->remove_reaction_role(r.message_id, r.emoji_raw);
         }
         RREntry e;
@@ -204,13 +210,46 @@ inline void load_persistent_reaction_roles(dpp::cluster& bot) {
                 return;
             }
             const auto& item = (*sync_items)[*idx];
-            // re-add bot reaction
-            try { bot.message_add_reaction(item.message_id, item.channel_id, item.emoji); } catch (...) {}
-            // sync existing user reactions
-            if (item.guild_id != 0) {
-                sync_existing_reactions(bot, item.message_id, item.channel_id, item.emoji, item.role_id, item.guild_id);
-            }
             (*idx)++;
+            
+            // Fetch the message to check if bot reaction already exists
+            bot.message_get(item.message_id, item.channel_id, [&bot, item](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) {
+                    // Message might be deleted, skip silently
+                    return;
+                }
+                auto msg = std::get<dpp::message>(cb.value);
+                
+                // Check if bot already has this reaction
+                bool bot_already_reacted = false;
+                for (const auto& r : msg.reactions) {
+                    if (!r.me) continue;
+                    // Match emoji: custom emoji by ID, unicode by name
+                    if (r.emoji_id != 0) {
+                        // Custom emoji - check if item.emoji contains the ID
+                        if (item.emoji.find(std::to_string(static_cast<uint64_t>(r.emoji_id))) != std::string::npos) {
+                            bot_already_reacted = true;
+                            break;
+                        }
+                    } else {
+                        // Unicode emoji - direct comparison
+                        if (r.emoji_name == item.emoji) {
+                            bot_already_reacted = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Only add reaction if bot hasn't already reacted
+                if (!bot_already_reacted) {
+                    try { bot.message_add_reaction(item.message_id, item.channel_id, item.emoji); } catch (...) {}
+                }
+                
+                // sync existing user reactions (grants roles to users who already reacted)
+                if (item.guild_id != 0) {
+                    sync_existing_reactions(bot, item.message_id, item.channel_id, item.emoji, item.role_id, item.guild_id);
+                }
+            });
         }, 2); // 2-second interval between each reaction-role sync
     }
 }
@@ -847,7 +886,7 @@ inline Command* get_reactionrole_command() {
                     if (rr_db) {
                         try {
                             if (is_safe_emoji_string(emoji_raw_local)) {
-                                rr_db->add_reaction_role(target_message_id, channel_id, emoji_raw_local, emoji_id, role_id);
+                                rr_db->add_reaction_role(guild_id, target_message_id, channel_id, emoji_raw_local, emoji_id, role_id);
                             } else {
                                 std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
                             }
@@ -987,7 +1026,7 @@ inline Command* get_reactionrole_command() {
                                 rr_db->remove_reaction_role(message_id, bracket);
                             }
                             if (is_safe_emoji_string(norm)) {
-                                rr_db->add_reaction_role(message_id, channel_id, norm, emoji_id, role_id);
+                                rr_db->add_reaction_role(guild_id_cap, message_id, channel_id, norm, emoji_id, role_id);
                             } else {
                                 std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
                             }
@@ -1117,7 +1156,9 @@ inline Command* get_reactionrole_command() {
                     if (rr_db) {
                         try {
                             if (is_safe_emoji_string(emoji_raw_local)) {
-                                rr_db->add_reaction_role(target_message_id, channel_id, emoji_raw_local, emoji_id, role_id);
+                                dpp::channel* ch = dpp::find_channel(channel_id);
+                                uint64_t gid = ch ? static_cast<uint64_t>(ch->guild_id) : 0;
+                                rr_db->add_reaction_role(gid, target_message_id, channel_id, emoji_raw_local, emoji_id, role_id);
                             } else {
                                 std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
                             }
@@ -1204,7 +1245,7 @@ inline Command* get_reactionrole_command() {
                                     rr_db->remove_reaction_role(message_id, bracket);
                                 }
                                 if (is_safe_emoji_string(norm)) {
-                                    rr_db->add_reaction_role(message_id, channel_id, norm, emoji_id, role_id);
+                                    rr_db->add_reaction_role(slash_guild_id, message_id, channel_id, norm, emoji_id, role_id);
                                 } else {
                                     std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
                                 }
@@ -1364,7 +1405,7 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
             if (rr_db) {
                 try {
                     if (is_safe_emoji_string(em.emoji_raw)) {
-                        rr_db->add_reaction_role(s.message_id, s.channel_id, em.emoji_raw, em.emoji_id, em.assigned_role);
+                        rr_db->add_reaction_role(s.guild_id, s.message_id, s.channel_id, em.emoji_raw, em.emoji_id, em.assigned_role);
                     }
                 } catch (const std::exception& ex) {
                     std::cerr << "DB add error (rr check confirm): " << ex.what() << std::endl;
@@ -1515,7 +1556,7 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
         if (rr_db) {
             try {
                 if (is_safe_emoji_string(pending.emoji_raw)) {
-                    rr_db->add_reaction_role(message_id, channel_id, pending.emoji_raw, pending.emoji_id, pending.role_id);
+                    rr_db->add_reaction_role(pending.guild_id, message_id, channel_id, pending.emoji_raw, pending.emoji_id, pending.role_id);
                 }
             } catch (const std::exception& ex) {
                 std::cerr << "DB add error (next message): " << ex.what() << std::endl;

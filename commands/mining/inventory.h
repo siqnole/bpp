@@ -61,7 +61,7 @@ static dpp::message build_minv_message(uint64_t uid, Database* db) {
             size_t nend = item.metadata.find('"', npos);
             if (nend != std::string::npos) name = item.metadata.substr(npos, nend - npos);
         }
-        val = parse_mine_meta_int(item.metadata, "value", 0);
+        val = parse_mine_meta_int64(item.metadata, "value", 0);
         size_t lpos = item.metadata.find("\"locked\":true");
         locked = (lpos != std::string::npos);
 
@@ -208,7 +208,7 @@ inline Command* get_sellore_command(Database* db) {
                         }
                     }
                     if (!is_ore) continue;
-                    int64_t val = parse_mine_meta_int(item.metadata, "value", 0);
+                    int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
                     if (db->remove_item(uid, item.item_id, 1)) {
                         total += val;
                         count++;
@@ -236,7 +236,7 @@ inline Command* get_sellore_command(Database* db) {
                             bronx::send_message(bot, event, bronx::error("that ore is locked! unlock it first"));
                             return;
                         }
-                        int64_t val = parse_mine_meta_int(item.metadata, "value", 0);
+                        int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
                         if (db->remove_item(uid, ore_id, 1)) {
                             db->update_wallet(uid, val);
                             db->increment_stat(uid, "ores_sold", 1);
@@ -287,7 +287,7 @@ inline Command* get_sellore_command(Database* db) {
                         }
                     }
                     if (!is_ore) continue;
-                    int64_t val = parse_mine_meta_int(item.metadata, "value", 0);
+                    int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
                     if (db->remove_item(uid, item.item_id, 1)) {
                         total += val;
                         count++;
@@ -313,7 +313,7 @@ inline Command* get_sellore_command(Database* db) {
                             event.reply(dpp::message().add_embed(bronx::error("that ore is locked!")));
                             return;
                         }
-                        int64_t val = parse_mine_meta_int(item.metadata, "value", 0);
+                        int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
                         if (db->remove_item(uid, target, 1)) {
                             db->update_wallet(uid, val);
                             db->increment_stat(uid, "ores_sold", 1);

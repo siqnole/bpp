@@ -46,7 +46,9 @@
 #include "commands/social.h"
 #include "commands/world_events.h"
 #include "commands/server_economy.h"
+#include "commands/stats_cmd.h"
 #include "database/core/database.h"
+#include "database/operations/stats/stats_operations.h"
 #include "config_loader.h"
 #include "commands/gambling/russian_roulette.h"
 #ifdef HAVE_LIBCURL
@@ -130,10 +132,17 @@ static void terminate_handler() {
 int main(int argc, char* argv[]) {
     // Parse command line arguments
     bool enable_flamegraph = false;
+    bool verbose_events = false;
     for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "-g") {
+        std::string arg = argv[i];
+        if (arg == "-g") {
             enable_flamegraph = true;
+        } else if (arg == "-v" || arg == "--verbose") {
+            verbose_events = true;
         }
+    }
+    if (verbose_events) {
+        std::cout << clr::BOLD_MAGENTA << "verbose mode enabled — all events will be logged" << clr::RESET << "\n";
     }
     
     // If -g flag is present, start the live flamegraph profiler
@@ -277,9 +286,12 @@ int main(int argc, char* argv[]) {
     // PERFORMANCE FIX: Async stat/log writer — moves synchronous log_command()
     // and increment_stat() calls off the gateway threads.  These were doing
     // 3 blocking DB round-trips per command, adding 150-300ms to every response.
-    bronx::perf::AsyncStatWriter async_stat_writer(&db, std::chrono::milliseconds(3000));
+    // Pass Aiven config for dual-write: local DB for bot, Aiven for dashboard
+    std::string aiven_config_path = "data/db_config_aiven.json";
+    bronx::perf::AsyncStatWriter async_stat_writer(&db, std::chrono::milliseconds(3000), verbose_events, aiven_config_path);
     async_stat_writer.start();
-    std::cout << clr::GREEN << "✔ " << clr::RESET << "Async stat writer started " << clr::DIM << "(flush interval: 3s)" << clr::RESET << "\n";
+    bronx::perf::g_stat_writer = &async_stat_writer;  // expose for command_handler.h
+    std::cout << clr::GREEN << "✔ " << clr::RESET << "Async stat writer started " << clr::DIM << "(flush interval: 3s" << (verbose_events ? ", verbose" : "") << ")" << clr::RESET << "\n";
     
     // ========================================================================
     // HYBRID PERFORMANCE LAYER — Local SQLite + batch writes + API cache
@@ -340,9 +352,79 @@ int main(int argc, char* argv[]) {
                      false,
                      dpp::cache_policy::cpol_default);
     
-    bot.on_log([](const dpp::log_t& event) {
+    bot.on_log([&async_stat_writer](const dpp::log_t& event) {
         // Skip TRACE — raw websocket frames are too noisy for normal operation
         if (event.severity == dpp::ll_trace) return;
+
+        // Intercept GUILD_APPLIED_BOOSTS_UPDATE from DPP's "Unhandled event" debug messages
+        if (event.severity == dpp::ll_debug && event.message.find("GUILD_APPLIED_BOOSTS_UPDATE") != std::string::npos) {
+            // Parse the raw JSON payload: {"d":{"ended":bool,"guild_id":"...","id":"...","user_id":"..."},...}
+            auto json_start = event.message.find('{');
+            if (json_start != std::string::npos) {
+                try {
+                    auto raw = event.message.substr(json_start);
+                    // extract guild_id
+                    auto extract = [&raw](const std::string& key) -> std::string {
+                        auto pos = raw.find("\"" + key + "\":");
+                        if (pos == std::string::npos) return "";
+                        pos = raw.find('"', pos + key.size() + 3);
+                        if (pos == std::string::npos) return "";
+                        auto end = raw.find('"', pos + 1);
+                        if (end == std::string::npos) return "";
+                        return raw.substr(pos + 1, end - pos - 1);
+                    };
+                    std::string guild_id_str = extract("guild_id");
+                    std::string user_id_str  = extract("user_id");
+                    std::string boost_id_str = extract("id");
+                    bool ended = (raw.find("\"ended\":true") != std::string::npos);
+
+                    if (!guild_id_str.empty() && !user_id_str.empty()) {
+                        uint64_t gid = std::stoull(guild_id_str);
+                        uint64_t uid = std::stoull(user_id_str);
+                        async_stat_writer.enqueue_boost_event(
+                            gid, uid, ended ? "unboost" : "boost", boost_id_str);
+                    }
+                } catch (...) {
+                    // silently ignore parse failures
+                }
+            }
+        }
+
+        // Intercept VOICE_CHANNEL_START_TIME_UPDATE for precise voice start/end timing
+        // {"d":{"guild_id":"...","id":"...","voice_start_time":1234567890|null},...}
+        if (event.severity == dpp::ll_debug && event.message.find("VOICE_CHANNEL_START_TIME_UPDATE") != std::string::npos) {
+            auto json_start = event.message.find('{');
+            if (json_start != std::string::npos) {
+                try {
+                    auto raw = event.message.substr(json_start);
+                    auto extract = [&raw](const std::string& key) -> std::string {
+                        auto pos = raw.find("\"" + key + "\":");
+                        if (pos == std::string::npos) return "";
+                        pos = raw.find('"', pos + key.size() + 3);
+                        if (pos == std::string::npos) return "";
+                        auto end = raw.find('"', pos + 1);
+                        if (end == std::string::npos) return "";
+                        return raw.substr(pos + 1, end - pos - 1);
+                    };
+                    std::string guild_id_str   = extract("guild_id");
+                    std::string channel_id_str = extract("id");
+                    bool is_start = (raw.find("\"voice_start_time\":null") == std::string::npos
+                                     && raw.find("voice_start_time") != std::string::npos);
+
+                    if (!guild_id_str.empty() && !channel_id_str.empty()) {
+                        uint64_t gid = std::stoull(guild_id_str);
+                        uint64_t cid = std::stoull(channel_id_str);
+                        // We log channel-level voice activity (not user-specific here)
+                        // User-specific voice is already tracked via voice_state_update
+                        // This event indicates channel voice activity started/stopped
+                        async_stat_writer.enqueue_voice_event(
+                            gid, 0, cid, is_start ? "channel_active" : "channel_inactive");
+                    }
+                } catch (...) {
+                    // silently ignore parse failures
+                }
+            }
+        }
 
         // Severity label + color
         const char* severity_str = "???";
@@ -475,6 +557,11 @@ int main(int argc, char* argv[]) {
     cmd_handler.register_command(commands::create_guide_command(&db));
     cmd_handler.register_command(commands::gambling::get_russian_roulette_command(&db));
     cmd_handler.register_command(commands::setup::create_setup_command(&db));
+
+    // Stats commands (visual chart-based server statistics)
+    for (auto* cmd : commands::get_stats_commands(&db)) {
+        cmd_handler.register_command(cmd);
+    }
 
     // Populate extended help data (subcommands, flags, examples) on registered commands
     commands::populate_extended_help(&cmd_handler);
@@ -812,9 +899,22 @@ int main(int argc, char* argv[]) {
     });
 
     // PERFORMANCE OPTIMIZATION: Use optimized message handler
-    bot.on_message_create([&bot, &cmd_handler, &db](const dpp::message_create_t& event) {
+    bot.on_message_create([&bot, &cmd_handler, &db, &async_stat_writer, verbose_events](const dpp::message_create_t& event) {
         // Track XP for leveling system (before command processing)
         leveling::handle_message_xp(bot, event, &db);
+
+        // Stats: track message event (skip bots)
+        if (!event.msg.author.is_bot() && event.msg.guild_id != 0) {
+            if (verbose_events) {
+                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::CYAN << "message_create" << clr::RESET
+                          << " guild=" << event.msg.guild_id
+                          << " user=" << event.msg.author.id
+                          << " ch=" << event.msg.channel_id
+                          << " len=" << event.msg.content.size() << "\n";
+            }
+            async_stat_writer.enqueue_message_event(
+                event.msg.guild_id, event.msg.author.id, event.msg.channel_id, "message");
+        }
         
         // Check if the bot was mentioned (pinged)
         if (!event.msg.author.is_bot()) {
@@ -869,7 +969,18 @@ int main(int argc, char* argv[]) {
         cmd_handler.handle_message(bot, event);
     });
 
-    bot.on_message_update([&bot, &cmd_handler](const dpp::message_update_t& event) {
+    bot.on_message_update([&bot, &cmd_handler, &async_stat_writer, verbose_events](const dpp::message_update_t& event) {
+        // Stats: track message edit (skip bots)
+        if (!event.msg.author.is_bot() && event.msg.guild_id != 0) {
+            if (verbose_events) {
+                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::YELLOW << "message_update" << clr::RESET
+                          << " guild=" << event.msg.guild_id
+                          << " user=" << event.msg.author.id
+                          << " ch=" << event.msg.channel_id << "\n";
+            }
+            async_stat_writer.enqueue_message_event(
+                event.msg.guild_id, event.msg.author.id, event.msg.channel_id, "edit");
+        }
         // Only re-run command handler on edits, NOT the XP handler
         // (XP should only be awarded on new messages, not edits)
         dpp::message_create_t fake;
@@ -878,7 +989,13 @@ int main(int argc, char* argv[]) {
     });
 
     // PERFORMANCE OPTIMIZATION: Use optimized slash command handler
-    bot.on_slashcommand([&bot, &cmd_handler](const dpp::slashcommand_t& event) {
+    bot.on_slashcommand([&bot, &cmd_handler, verbose_events](const dpp::slashcommand_t& event) {
+        if (verbose_events) {
+            std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::MAGENTA << "slashcommand" << clr::RESET
+                      << " /" << event.command.get_command_name()
+                      << " guild=" << event.command.guild_id
+                      << " user=" << event.command.usr.id << "\n";
+        }
         cmd_handler.handle_slash_command(bot, event);
     });
     
@@ -892,6 +1009,70 @@ int main(int argc, char* argv[]) {
 
     // Auto-role: assign roles to new members on join
     commands::register_autorole_handler(bot);
+
+    // Stats: track member joins (runs after autorole handler which also uses on_guild_member_add)
+    bot.on_guild_member_add([&async_stat_writer, verbose_events](const dpp::guild_member_add_t& event) {
+        if (event.adding_guild.id != 0) {
+            if (verbose_events) {
+                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::GREEN << "member_add" << clr::RESET
+                          << " guild=" << event.adding_guild.id
+                          << " user=" << event.added.user_id << "\n";
+            }
+            async_stat_writer.enqueue_member_event(
+                event.adding_guild.id, event.added.user_id, "join");
+        }
+    });
+
+    // Stats: track member leaves
+    bot.on_guild_member_remove([&async_stat_writer, verbose_events](const dpp::guild_member_remove_t& event) {
+        if (event.removing_guild.id != 0) {
+            if (verbose_events) {
+                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::RED << "member_remove" << clr::RESET
+                          << " guild=" << event.removing_guild.id
+                          << " user=" << event.removed.id << "\n";
+            }
+            async_stat_writer.enqueue_member_event(
+                event.removing_guild.id, event.removed.id, "leave");
+        }
+    });
+
+    // Stats: track message deletes
+    bot.on_message_delete([&async_stat_writer, verbose_events](const dpp::message_delete_t& event) {
+        if (event.guild_id != 0) {
+            if (verbose_events) {
+                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::RED << "message_delete" << clr::RESET
+                          << " guild=" << event.guild_id
+                          << " ch=" << event.channel_id << "\n";
+            }
+            async_stat_writer.enqueue_message_event(
+                event.guild_id, 0, event.channel_id, "delete");
+        }
+    });
+
+    // Stats: track voice channel joins / leaves
+    bot.on_voice_state_update([&async_stat_writer, verbose_events](const dpp::voice_state_update_t& event) {
+        auto& vs = event.state;
+        if (vs.guild_id == 0 || vs.user_id == 0) return;
+
+        if (vs.channel_id != 0) {
+            // User joined or moved to a voice channel
+            if (verbose_events) {
+                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::CYAN << "voice_join" << clr::RESET
+                          << " guild=" << vs.guild_id << " user=" << vs.user_id
+                          << " ch=" << vs.channel_id << "\n";
+            }
+            async_stat_writer.enqueue_voice_event(
+                vs.guild_id, vs.user_id, vs.channel_id, "join");
+        } else {
+            // User left voice (channel_id == 0 means disconnected)
+            if (verbose_events) {
+                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::RED << "voice_leave" << clr::RESET
+                          << " guild=" << vs.guild_id << " user=" << vs.user_id << "\n";
+            }
+            async_stat_writer.enqueue_voice_event(
+                vs.guild_id, vs.user_id, 0, "leave");
+        }
+    });
 
     // Track websocket ping and send welcome message for new guilds
     bot.on_guild_create([&bot, &db](const dpp::guild_create_t& event) {
