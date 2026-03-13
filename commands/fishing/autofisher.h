@@ -368,6 +368,113 @@ static void handle_autofisher_msg(Database* db,
         return;
     }
 
+    // ── diagnose ─────────────────────────────────────────────────────────────
+    if (sub == "diagnose" || sub == "debug" || sub == "check") {
+        if (!require_af()) return;
+        auto cfg = db->get_autofisher_config(uid);
+        if (!cfg) { bronx::send_message(bot, event, bronx::error("config unavailable")); return; }
+
+        std::string s = "🔍 **autofisher diagnostic**\n\n";
+        int issues = 0;
+
+        // 1. Active flag
+        if (!cfg->active) {
+            s += "❌ **not activated** — run `autofisher start`\n";
+            issues++;
+        } else {
+            s += "✅ active\n";
+        }
+
+        // 2. Tier check
+        int tier = db->get_autofisher_tier(uid);
+        if (tier == 0) {
+            s += "❌ **no autofisher item in inventory** — buy one from the shop\n";
+            issues++;
+        } else {
+            s += "✅ tier " + std::to_string(tier) + "\n";
+        }
+
+        // 3. Rod equipped
+        if (cfg->af_rod_id.empty()) {
+            s += "❌ **no rod equipped** — run `autofisher equip rod <id>`\n";
+            issues++;
+        } else if (!db->has_item(uid, cfg->af_rod_id, 1)) {
+            s += "❌ **rod `" + cfg->af_rod_id + "` not found in inventory** — it may have been sold or consumed\n";
+            issues++;
+        } else {
+            s += "✅ rod: `" + cfg->af_rod_id + "`\n";
+        }
+
+        // 4. Bait equipped
+        if (cfg->af_bait_id.empty()) {
+            s += "❌ **no bait type set** — run `autofisher equip bait <id>`\n";
+            issues++;
+        } else {
+            s += "✅ bait type: `" + cfg->af_bait_id + "`\n";
+        }
+
+        // 5. Bait quantity
+        if (cfg->af_bait_qty <= 0) {
+            if (cfg->max_bank_draw <= 0) {
+                s += "❌ **no bait in hopper and bank draw is disabled** — deposit bait or enable bank draw\n";
+                issues++;
+            } else {
+                int64_t bank = db->get_bank(uid);
+                auto shop_item = db->get_shop_item(cfg->af_bait_id);
+                if (!shop_item || shop_item->price <= 0) {
+                    s += "❌ **no bait and bait type `" + cfg->af_bait_id + "` is not in the shop** — can't auto-buy\n";
+                    issues++;
+                } else if (bank < shop_item->price) {
+                    s += "❌ **no bait and bank balance ($" + format_number(bank) + ") is too low** to buy bait ($" + format_number(shop_item->price) + " each)\n";
+                    issues++;
+                } else {
+                    s += "⚠️ hopper empty but bank draw is on — bait will be auto-purchased\n";
+                }
+            }
+        } else {
+            s += "✅ bait in hopper: " + std::to_string(cfg->af_bait_qty) + "\n";
+        }
+
+        // 6. Gear compatibility
+        if (!cfg->af_rod_id.empty() && !cfg->af_bait_id.empty()) {
+            int rod_lvl = 1;
+            for (auto& it : db->get_inventory(uid))
+                if (it.item_id == cfg->af_rod_id) { rod_lvl = it.level; break; }
+            if (cfg->af_bait_level > 3 && abs(rod_lvl - cfg->af_bait_level) > 2) {
+                s += "❌ **gear incompatible** — rod level " + std::to_string(rod_lvl) +
+                     " vs bait level " + std::to_string(cfg->af_bait_level) + " (gap > 2)\n";
+                issues++;
+            } else {
+                s += "✅ gear levels compatible (rod: " + std::to_string(rod_lvl) + ", bait: " + std::to_string(cfg->af_bait_level) + ")\n";
+            }
+        }
+
+        // 7. Last run / interval
+        auto last = db->get_autofisher_last_run(uid);
+        int interval_min = (cfg->tier == 2) ? 20 : 30;
+        if (last) {
+            auto now = std::chrono::system_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::minutes>(now - *last);
+            auto next = *last + std::chrono::minutes(interval_min);
+            int64_t ts = std::chrono::duration_cast<std::chrono::seconds>(next.time_since_epoch()).count();
+            s += "✅ last run " + std::to_string(elapsed.count()) + "m ago — next cycle <t:" + std::to_string(ts) + ":R>\n";
+        } else {
+            s += "⚠️ never run — will run on next timer cycle (up to 2 min)\n";
+        }
+
+        s += "\n";
+        if (issues == 0) {
+            s += "✅ **all checks passed** — your autofisher should be running correctly";
+        } else {
+            s += "⚠️ **" + std::to_string(issues) + " issue" + (issues > 1 ? "s" : "") + " found** — fix the above to get your autofisher running";
+        }
+
+        auto embed = bronx::create_embed(s);
+        bronx::add_invoker_footer(embed, event.msg.author);
+        bronx::send_message(bot, event, embed);
+        return;
+    }
+
     bronx::send_message(bot, event, bronx::error(
         "unknown subcommand – use `autofisher status` to see all options"));
 }

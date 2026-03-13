@@ -341,7 +341,7 @@ inline uint64_t parse_mention(const std::string& s) {
                     db->get_pool()->release(conn2);
                 }
 
-                std::string desc = "**✅ Trade Accepted!**\n\n"
+                std::string desc = "**" + bronx::EMOJI_CHECK + " Trade Accepted!**\n\n"
                     "**Received:** " + std::to_string(qty) + "x " + trading_post::trade_item_name(item_id) + "\n";
                 if (asking_price > 0) {
                     int64_t tax = (int64_t)(asking_price * 0.05);

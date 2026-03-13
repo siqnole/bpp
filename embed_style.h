@@ -4,8 +4,81 @@
 #include <vector>
 #include <random>
 #include <iostream>
+#include <atomic>
+#include <chrono>
+#include <mutex>
 
 namespace bronx {
+
+    // ========================================================================
+    // REST API Circuit Breaker
+    // When Discord returns repeated 503 / upstream‐overflow errors the bot
+    // should *stop* making new REST calls for a short window.  This prevents
+    // the retry-amplification loop that deepens the overload.
+    //
+    // Usage: call `record_api_failure()` from any callback that sees a 503,
+    //        and check `is_api_healthy()` before issuing optional REST calls.
+    //        Critical paths (gateway, heartbeat) are not affected.
+    // ========================================================================
+
+    struct ApiCircuitBreaker {
+        // Number of consecutive 503 / overload errors seen
+        std::atomic<int>  consecutive_failures{0};
+        // When the circuit was last tripped open
+        std::atomic<int64_t> tripped_at_ms{0};
+        // How long to stay open (back off) — starts at 5s, doubles per trip (max 60s)
+        std::atomic<int>  backoff_seconds{5};
+
+        static constexpr int FAILURE_THRESHOLD = 3;   // trip after 3 consecutive 503s
+        static constexpr int MAX_BACKOFF       = 60;   // cap at 60s
+
+        // Call when a REST callback returns a transient overload error
+        void record_failure() {
+            int prev = consecutive_failures.fetch_add(1);
+            if (prev + 1 == FAILURE_THRESHOLD) {
+                auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                tripped_at_ms.store(now);
+                int bo = backoff_seconds.load();
+                std::cerr << "\033[1;33m⚠ API circuit breaker OPEN — "
+                          << (prev + 1) << " consecutive 503s, backing off " << bo << "s\033[0m\n";
+                if (bo < MAX_BACKOFF) backoff_seconds.store(std::min(bo * 2, MAX_BACKOFF));
+            } else if (prev + 1 > FAILURE_THRESHOLD) {
+                // re-trip: update timestamp and escalate backoff
+                auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                tripped_at_ms.store(now);
+                int bo = backoff_seconds.load();
+                if (bo < MAX_BACKOFF) backoff_seconds.store(std::min(bo * 2, MAX_BACKOFF));
+            }
+        }
+
+        // Call when a REST callback succeeds — resets the breaker
+        void record_success() {
+            if (consecutive_failures.load() > 0) {
+                consecutive_failures.store(0);
+                backoff_seconds.store(5);   // reset backoff
+            }
+        }
+
+        // Returns true if the API appears healthy (circuit closed)
+        bool is_healthy() const {
+            if (consecutive_failures.load() < FAILURE_THRESHOLD) return true;
+            auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            int64_t tripped = tripped_at_ms.load();
+            int bo = backoff_seconds.load();
+            // circuit re-closes after backoff elapses
+            return (now - tripped) > (bo * 1000LL);
+        }
+    };
+
+    // Global singleton — shared by all send_message / safe_message_edit callers
+    inline ApiCircuitBreaker& api_breaker() {
+        static ApiCircuitBreaker instance;
+        return instance;
+    }
+
     // Soft color palette
     const uint32_t COLOR_DEFAULT = 0xB4A7D6;    // Soft lavender
     const uint32_t COLOR_SUCCESS = 0xA8D5BA;    // Soft green
@@ -127,6 +200,26 @@ namespace bronx {
         return err.code == 50001 || err.code == 50013 || err.code == 50008 || err.code == 10003;
     }
 
+    // Detect transient API overload errors (503, 502, JSON parse failures from
+    // non-JSON error bodies).  Retrying these immediately only makes connection
+    // overflow worse, so callers should back off or drop the request.
+    // Also feeds the global circuit breaker so future calls can be skipped.
+    inline bool is_transient_overload(const dpp::confirmation_callback_t& callback) {
+        if (!callback.is_error()) {
+            api_breaker().record_success();
+            return false;
+        }
+        auto msg = callback.get_error().message;
+        bool overload = msg.find("503") != std::string::npos ||
+                        msg.find("502") != std::string::npos ||
+                        msg.find("parse_error") != std::string::npos ||
+                        msg.find("upstream connect error") != std::string::npos;
+        if (overload) {
+            api_breaker().record_failure();
+        }
+        return overload;
+    }
+
     inline bool is_embed_permission_error(const dpp::confirmation_callback_t& callback) {
         if (!callback.is_error()) return false;
         auto err = callback.get_error();
@@ -179,11 +272,13 @@ namespace bronx {
     // Try to send a plain-text fallback (no embed) when embed permission is missing
     inline void try_plain_text_fallback(dpp::cluster& bot, uint64_t user_id, dpp::snowflake channel_id,
                                          const std::string& guild_name = "") {
-        std::string plain = "⚠️ i'm missing the **Embed Links** permission in this channel! "
+        std::string plain = EMOJI_WARNING + " i'm missing the **Embed Links** permission in this channel! "
                             "please ask a server admin to grant it so i can respond properly.";
         dpp::message fallback(channel_id, plain);
         bot.message_create(fallback, [&bot, user_id, channel_id, guild_name](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
+                // Don't escalate to DM during API overload
+                if (is_transient_overload(cb)) return;
                 // Can't even send plain text — DM the user
                 dm_permission_error(bot, user_id, channel_id, guild_name);
             }
@@ -196,6 +291,9 @@ namespace bronx {
 
     // Helper function to send message with reply fallback
     inline void send_message(dpp::cluster& bot, const dpp::message_create_t& event, const dpp::embed& embed) {
+        // Circuit breaker: skip REST calls when the API is known to be overloaded
+        if (!api_breaker().is_healthy()) return;
+
         dpp::message msg(event.msg.channel_id, embed);
         msg.set_reference(event.msg.id);
         uint64_t user_id = event.msg.author.id;
@@ -206,8 +304,16 @@ namespace bronx {
             if (g) guild_name = g->name;
         }
 
-        bot.message_create(msg, [&bot, event, embed, user_id, chan_id, guild_name](const dpp::confirmation_callback_t& callback) {
+        auto _rest_start = std::chrono::steady_clock::now();
+        bot.message_create(msg, [&bot, event, embed, user_id, chan_id, guild_name, _rest_start](const dpp::confirmation_callback_t& callback) {
+            auto _rest_end = std::chrono::steady_clock::now();
+            double rest_ms = std::chrono::duration<double, std::milli>(_rest_end - _rest_start).count();
+            if (rest_ms > 500.0) {
+                std::cerr << "\033[1;33m[rest-slow]\033[0m send_message REST round-trip: " << rest_ms << "ms (channel " << chan_id << ")\n";
+            }
             if (callback.is_error()) {
+                // Don't retry on API overload — it only makes overflow worse
+                if (is_transient_overload(callback)) return;
                 if (is_permission_error(callback)) {
                     // Try plain text first, then DM
                     try_plain_text_fallback(bot, user_id, chan_id, guild_name);
@@ -226,10 +332,18 @@ namespace bronx {
 
     // Helper function to send message with reply fallback (message overload)
     inline void send_message(dpp::cluster& bot, const dpp::message_create_t& event, const dpp::message& message) {
+        // Circuit breaker: skip REST calls when the API is known to be overloaded
+        if (!api_breaker().is_healthy()) return;
+
         // we make a copy so we can mutate the reference and channel id without touching
         // the original message object.
         dpp::message msg = message;
-        msg.set_reference(event.msg.id);
+        // Skip set_reference when message has file attachments — Discord often rejects
+        // replies with files (especially from edit-triggered re-runs where the original
+        // message reference may be stale), causing a noisy fallback cycle.
+        if (msg.file_data.empty()) {
+            msg.set_reference(event.msg.id);
+        }
         msg.channel_id = event.msg.channel_id;          // ensure we target the right channel
         uint64_t user_id = event.msg.author.id;
         dpp::snowflake chan_id = event.msg.channel_id;
@@ -239,8 +353,20 @@ namespace bronx {
             if (g) guild_name = g->name;
         }
 
-        bot.message_create(msg, [&bot, event, message, user_id, chan_id, guild_name](const dpp::confirmation_callback_t& callback) {
+        auto _rest_start = std::chrono::steady_clock::now();
+        bot.message_create(msg, [&bot, event, message, user_id, chan_id, guild_name, _rest_start](const dpp::confirmation_callback_t& callback) {
+            auto _rest_end = std::chrono::steady_clock::now();
+            double rest_ms = std::chrono::duration<double, std::milli>(_rest_end - _rest_start).count();
+            if (rest_ms > 500.0) {
+                std::cerr << "\033[1;33m[rest-slow]\033[0m send_message(msg) REST round-trip: " << rest_ms << "ms (channel " << chan_id << ")\n";
+            }
             if (callback.is_error()) {
+                // Don't retry on API overload (503 / upstream overflow) — retrying
+                // immediately only deepens the connection saturation.
+                if (is_transient_overload(callback)) {
+                    std::cerr << "send_message: API overload, dropping retry (" << callback.get_error().message << ")" << std::endl;
+                    return;
+                }
                 if (is_permission_error(callback)) {
                     try_plain_text_fallback(bot, user_id, chan_id, guild_name);
                     return;
@@ -248,12 +374,17 @@ namespace bronx {
                 // the reply attempt failed (often because the original message was deleted or
                 // references are not permitted). fall back to a plain send of the entire
                 // message object so that embeds *and* components are preserved.
-                std::cerr << "send_message: reply failed, falling back to normal send" << std::endl;
+                std::cerr << "send_message: reply failed (" << callback.get_error().message
+                          << "), falling back to normal send" << std::endl;
                 dpp::message fallback = message;
                 fallback.channel_id = event.msg.channel_id;
                 bot.message_create(fallback, [&bot, user_id, chan_id, guild_name](const dpp::confirmation_callback_t& cb2) {
-                    if (cb2.is_error() && is_permission_error(cb2)) {
-                        try_plain_text_fallback(bot, user_id, chan_id, guild_name);
+                    if (cb2.is_error()) {
+                        if (is_permission_error(cb2)) {
+                            try_plain_text_fallback(bot, user_id, chan_id, guild_name);
+                        } else if (!is_transient_overload(cb2)) {
+                            std::cerr << "send_message: fallback also failed: " << cb2.get_error().message << std::endl;
+                        }
                     }
                 });
             }
@@ -291,13 +422,19 @@ namespace bronx {
     // Edit a message with graceful error handling - silently logs failures instead of crashing
     inline void safe_message_edit(dpp::cluster& bot, const dpp::message& msg,
                                    std::function<void(bool success)> callback = nullptr) {
+        // Circuit breaker: skip REST calls when the API is known to be overloaded
+        if (!api_breaker().is_healthy()) {
+            if (callback) callback(false);
+            return;
+        }
         bot.message_edit(msg, [callback](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
-                // Log the error but don't DM the user for edits - they already saw the original message
+                is_transient_overload(cb);  // feed circuit breaker
                 const auto err = cb.get_error();
                 std::cerr << "[safe_message_edit] Edit failed (code " << err.code << "): " << err.message << "\n";
                 if (callback) callback(false);
             } else {
+                api_breaker().record_success();
                 if (callback) callback(true);
             }
         });

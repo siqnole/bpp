@@ -12,6 +12,7 @@
 #include <set>
 #include <chrono>
 #include <thread>
+#include <atomic>
 #include <iostream> // debug logging
 #include "../../log.h"
 
@@ -52,6 +53,11 @@ struct PlayerResult {
 
 static ::std::map<uint64_t, RouletteGame> active_roulette_games;
 static ::std::map<uint64_t, ::std::pair<::std::vector<PlayerResult>, int>> roulette_pagination_data;
+
+// Debounce state for roulette bet message edits — prevents rate-limiting
+// when multiple bets land within a short window
+static ::std::map<uint64_t, std::chrono::steady_clock::time_point> roulette_last_edit_time;
+static ::std::map<uint64_t, bool> roulette_edit_pending;
 
 ::std::string get_number_color_emoji(int num) {
     if (num == 0 || num == 37) return "🟢"; // Green (0 and 00)
@@ -152,6 +158,26 @@ static ::std::map<uint64_t, ::std::pair<::std::vector<PlayerResult>, int>> roule
 void update_roulette_bet_message(dpp::cluster& bot, Database* db, uint64_t game_id) {
     auto it = active_roulette_games.find(game_id);
     if (it == active_roulette_games.end()) return;
+    
+    // PERFORMANCE FIX: Debounce rapid message edits to prevent rate-limiting.
+    // Multiple bets landing within 2s are coalesced into a single edit.
+    auto _now = std::chrono::steady_clock::now();
+    auto _last_it = roulette_last_edit_time.find(game_id);
+    if (_last_it != roulette_last_edit_time.end()) {
+        auto _elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(_now - _last_it->second).count();
+        if (_elapsed_ms < 2000) {
+            if (!roulette_edit_pending[game_id]) {
+                roulette_edit_pending[game_id] = true;
+                bot.start_timer([&bot, db, game_id](dpp::timer t) {
+                    bot.stop_timer(t);
+                    roulette_edit_pending.erase(game_id);
+                    update_roulette_bet_message(bot, db, game_id);
+                }, 2);
+            }
+            return;
+        }
+    }
+    roulette_last_edit_time[game_id] = _now;
     
     auto& game = it->second;
     
@@ -300,6 +326,205 @@ void update_roulette_bet_message(dpp::cluster& bot, Database* db, uint64_t game_
     });
 }
 
+// PERFORMANCE FIX: Animation + result processing extracted to run in a detached thread,
+// avoiding blocking DPP's thread pool for 3.4s with sleep_for calls.
+// Also adds early-exit when interaction token expires (10062) to avoid wasting REST calls.
+void roulette_spin_worker(dpp::cluster& bot, Database* db, uint64_t game_id, int result,
+                           std::string spin_token, uint64_t message_id, uint64_t channel_id,
+                           ::std::map<uint64_t, PlayerBets> player_bets) {
+    auto token_valid = std::make_shared<std::atomic<bool>>(true);
+    auto check_edit = [token_valid](const dpp::confirmation_callback_t& cb) {
+        if (cb.is_error()) {
+            if (cb.get_error().code == 10062) {
+                token_valid->store(false);
+                std::cout << DBG_ROUL "interaction token expired, skipping remaining frames\n";
+            } else {
+                std::cout << "[ERROR] roulette anim edit: " << cb.get_error().message << std::endl;
+            }
+        }
+    };
+
+    // Frame 1 — initial spin
+    dpp::message anim_msg;
+    anim_msg.id = message_id;
+    anim_msg.channel_id = channel_id;
+    anim_msg.add_embed(dpp::embed()
+        .set_color(0x1E90FF)
+        .set_title("🎰 SPINNING THE WHEEL...")
+        .set_description("The wheel is spinning!\n\n" + get_roulette_display(result, 15)));
+    bot.interaction_response_edit(spin_token, anim_msg, check_edit);
+
+    // Frame 2
+    ::std::this_thread::sleep_for(::std::chrono::milliseconds(800));
+    if (token_valid->load()) {
+        anim_msg.embeds.clear();
+        anim_msg.add_embed(dpp::embed()
+            .set_color(0x1E90FF)
+            .set_title("🎰 SPINNING THE WHEEL...")
+            .set_description("The wheel is spinning!\n\n" + get_roulette_display(result, 10)));
+        bot.interaction_response_edit(spin_token, anim_msg, check_edit);
+    }
+
+    // Frame 3
+    ::std::this_thread::sleep_for(::std::chrono::milliseconds(800));
+    if (token_valid->load()) {
+        anim_msg.embeds.clear();
+        anim_msg.add_embed(dpp::embed()
+            .set_color(0x1E90FF)
+            .set_title("🎰 SPINNING THE WHEEL...")
+            .set_description("The wheel is spinning!\n\n" + get_roulette_display(result, 5)));
+        bot.interaction_response_edit(spin_token, anim_msg, check_edit);
+    }
+
+    // Frame 4 — slowing down
+    ::std::this_thread::sleep_for(::std::chrono::milliseconds(800));
+    if (token_valid->load()) {
+        anim_msg.embeds.clear();
+        anim_msg.add_embed(dpp::embed()
+            .set_color(0x1E90FF)
+            .set_title("🎰 SLOWING DOWN...")
+            .set_description("Almost there...\n\n" + get_roulette_display(result, 2)));
+        bot.interaction_response_edit(spin_token, anim_msg, check_edit);
+    }
+
+    ::std::this_thread::sleep_for(::std::chrono::milliseconds(1000));
+
+    // Determine result properties
+    bool is_red = red_numbers.count(result);
+    bool is_black = black_numbers.count(result);
+    bool is_green = (result == 0 || result == 37);
+    bool is_even = (result != 0 && result != 37 && result % 2 == 0);
+    bool is_odd = (result != 0 && result != 37 && result % 2 == 1);
+
+    // Calculate winnings for all players and create result objects
+    ::std::vector<PlayerResult> player_results;
+
+    for (auto& player_entry : player_bets) {
+        uint64_t player_id = player_entry.first;
+        auto& pbets = player_entry.second;
+
+        int64_t total_winnings = 0;
+        ::std::string result_text = "";
+
+        for (const auto& bet : pbets.bets) {
+            ::std::string bet_type = bet.first;
+            int64_t amount = bet.second;
+            bool won = false;
+            int payout_multiplier = 0;
+
+            if (bet_type == "Red" && is_red) {
+                won = true;
+                payout_multiplier = 2;
+            } else if (bet_type == "Black" && is_black) {
+                won = true;
+                payout_multiplier = 2;
+            } else if (bet_type == "Green" && is_green) {
+                won = true;
+                payout_multiplier = 35;
+            } else if (bet_type == "Even" && is_even) {
+                won = true;
+                payout_multiplier = 2;
+            } else if (bet_type == "Odd" && is_odd) {
+                won = true;
+                payout_multiplier = 2;
+            } else if (bet_type == get_number_display(result)) {
+                won = true;
+                payout_multiplier = 35;
+            }
+
+            if (won) {
+                total_winnings += amount * payout_multiplier;
+                result_text += "  " + bronx::EMOJI_CHECK + " " + bet_type + ": +$" + format_number(amount * payout_multiplier) + "\n";
+            } else {
+                result_text += "  " + bronx::EMOJI_DENY + " " + bet_type + ": -$" + format_number(amount) + "\n";
+            }
+        }
+
+        int64_t net_profit = total_winnings - pbets.total_bet;
+        db->update_wallet(player_id, total_winnings);
+
+        // Track gambling stats
+        if (net_profit > 0) {
+            db->increment_stat(player_id, "gambling_profit", net_profit);
+            track_gambling_profit(bot, db, channel_id, player_id);
+            track_gambling_result(bot, db, channel_id, player_id, true, net_profit);
+        } else if (net_profit < 0) {
+            db->increment_stat(player_id, "gambling_losses", -net_profit);
+            track_gambling_result(bot, db, channel_id, player_id, false, net_profit);
+        }
+
+        // Log gambling history
+        if (net_profit > 0) {
+            log_gambling(db, player_id, "won roulette for $" + format_number(net_profit));
+        } else if (net_profit < 0) {
+            log_gambling(db, player_id, "lost roulette for $" + format_number(-net_profit));
+        } else {
+            log_gambling(db, player_id, "broke even in roulette");
+        }
+
+        PlayerResult pr;
+        pr.user_id = player_id;
+        pr.net_profit = net_profit;
+        pr.result_text = result_text;
+        player_results.push_back(pr);
+    }
+
+    // Sort: Winners first (by smallest win), then losers (by smallest loss)
+    ::std::sort(player_results.begin(), player_results.end(), [](const PlayerResult& a, const PlayerResult& b) {
+        if (a.net_profit > 0 && b.net_profit > 0) return a.net_profit < b.net_profit;
+        if (a.net_profit < 0 && b.net_profit < 0) return a.net_profit > b.net_profit;
+        if (a.net_profit > 0) return true;
+        if (b.net_profit > 0) return false;
+        return false;
+    });
+
+    // Create result embed with pagination if needed
+    ::std::string wheel_display = get_roulette_display(result, 0);
+    int total_pages = player_results.size() <= 2 ? 1 : 1 + ((player_results.size() - 2 + 3) / 4);
+
+    dpp::embed result_embed = dpp::embed()
+        .set_color(is_green ? 0x00FF00 : (is_red ? 0xFF0000 : 0x000000))
+        .set_title("🎰 ROULETTE RESULTS");
+
+    result_embed.set_description(get_paginated_results(player_results, 0, result, wheel_display));
+
+    dpp::message result_msg;
+    result_msg.id = message_id;
+    result_msg.channel_id = channel_id;
+    result_msg.add_embed(result_embed);
+
+    // Add pagination buttons if needed
+    if (total_pages > 1) {
+        dpp::component nav_row;
+        nav_row.add_component(dpp::component()
+            .set_type(dpp::cot_button)
+            .set_label("◀ Previous")
+            .set_style(dpp::cos_secondary)
+            .set_id("roulette_page_prev_" + ::std::to_string(game_id))
+            .set_disabled(true));
+
+        nav_row.add_component(dpp::component()
+            .set_type(dpp::cot_button)
+            .set_label("Next ▶")
+            .set_style(dpp::cos_secondary)
+            .set_id("roulette_page_next_" + ::std::to_string(game_id)));
+
+        result_msg.add_component(nav_row);
+
+        // Store results in the global pagination map
+        roulette_pagination_data[game_id] = {player_results, result};
+    }
+
+    bot.interaction_response_edit(spin_token, result_msg);
+
+    // Clean up game state and debounce maps
+    if (total_pages == 1) {
+        active_roulette_games.erase(game_id);
+    }
+    roulette_last_edit_time.erase(game_id);
+    roulette_edit_pending.erase(game_id);
+}
+
 void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {
     std::cout << DBG_ROUL "handle_roulette_spin game=" << game_id << " user=" << event.command.get_issuing_user().id << "\n";
     auto it = active_roulette_games.find(game_id);
@@ -337,202 +562,15 @@ void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::button_cli
               << " color=" << get_number_color_name(result) << std::endl;
     
     // Initial spinning embed (edit after defer using interaction webhook to avoid 50013)
-    std::string spin_token = event.command.token;
-    dpp::message anim_msg;
-    anim_msg.id = game.message_id;
-    anim_msg.channel_id = game.channel_id;
-    anim_msg.add_embed(dpp::embed()
-        .set_color(0x1E90FF)
-        .set_title("🎰 SPINNING THE WHEEL...")
-        .set_description("The wheel is spinning!\n\n" + get_roulette_display(result, 15)));
-    bot.interaction_response_edit(spin_token, anim_msg, [](const dpp::confirmation_callback_t& cb){
-        if (cb.is_error() && cb.get_error().code != 10062) {
-            std::cout << "[ERROR] Failed to edit roulette message (initial spin): "
-                      << cb.get_error().message << std::endl;
-        }
-    });
-    
-    // Animation frames (wheel spinning)
-    ::std::this_thread::sleep_for(::std::chrono::milliseconds(800));
-    
-    anim_msg.embeds.clear();
-    anim_msg.add_embed(dpp::embed()
-        .set_color(0x1E90FF)
-        .set_title("🎰 SPINNING THE WHEEL...")
-        .set_description("The wheel is spinning!\n\n" + get_roulette_display(result, 10)));
-    bot.interaction_response_edit(spin_token, anim_msg, [](const dpp::confirmation_callback_t& cb){
-        if (cb.is_error() && cb.get_error().code != 10062) {
-            std::cout << "[ERROR] Failed to edit roulette message (frame 2): "
-                      << cb.get_error().message << std::endl;
-        }
-    });
-    ::std::this_thread::sleep_for(::std::chrono::milliseconds(800));
-    
-    anim_msg.embeds.clear();
-    anim_msg.add_embed(dpp::embed()
-        .set_color(0x1E90FF)
-        .set_title("🎰 SPINNING THE WHEEL...")
-        .set_description("The wheel is spinning!\n\n" + get_roulette_display(result, 5)));
-    bot.interaction_response_edit(spin_token, anim_msg, [](const dpp::confirmation_callback_t& cb){
-        if (cb.is_error() && cb.get_error().code != 10062) {
-            std::cout << "[ERROR] Failed to edit roulette message (frame 3): "
-                      << cb.get_error().message << std::endl;
-        }
-    });
-    ::std::this_thread::sleep_for(::std::chrono::milliseconds(800));
-    
-    anim_msg.embeds.clear();
-    anim_msg.add_embed(dpp::embed()
-        .set_color(0x1E90FF)
-        .set_title("🎰 SLOWING DOWN...")
-        .set_description("Almost there...\n\n" + get_roulette_display(result, 2)));
-    bot.interaction_response_edit(spin_token, anim_msg, [](const dpp::confirmation_callback_t& cb){
-        if (cb.is_error() && cb.get_error().code != 10062) {
-            std::cout << "[ERROR] Failed to edit roulette message (slowdown): "
-                      << cb.get_error().message << std::endl;
-        }
-    });
-    ::std::this_thread::sleep_for(::std::chrono::milliseconds(1000));
-    
-    // Determine result properties
-    bool is_red = red_numbers.count(result);
-    bool is_black = black_numbers.count(result);
-    bool is_green = (result == 0 || result == 37);
-    bool is_even = (result != 0 && result != 37 && result % 2 == 0);
-    bool is_odd = (result != 0 && result != 37 && result % 2 == 1);
-    
-    // Calculate winnings for all players and create result objects
-    ::std::vector<PlayerResult> player_results;
-    
-    for (auto& player_entry : game.player_bets) {
-        uint64_t player_id = player_entry.first;
-        auto& player_bets = player_entry.second;
-        
-        int64_t total_winnings = 0;
-        ::std::string result_text = "";
-        
-        for (const auto& bet : player_bets.bets) {
-            ::std::string bet_type = bet.first;
-            int64_t amount = bet.second;
-            bool won = false;
-            int payout_multiplier = 0;
-            
-            if (bet_type == "Red" && is_red) {
-                won = true;
-                payout_multiplier = 2;
-            } else if (bet_type == "Black" && is_black) {
-                won = true;
-                payout_multiplier = 2;
-            } else if (bet_type == "Green" && is_green) {
-                won = true;
-                payout_multiplier = 35;
-            } else if (bet_type == "Even" && is_even) {
-                won = true;
-                payout_multiplier = 2;
-            } else if (bet_type == "Odd" && is_odd) {
-                won = true;
-                payout_multiplier = 2;
-            } else if (bet_type == get_number_display(result)) {
-                won = true;
-                payout_multiplier = 35;
-            }
-            
-            if (won) {
-                total_winnings += amount * payout_multiplier;
-                result_text += "  " + bronx::EMOJI_CHECK + " " + bet_type + ": +$" + format_number(amount * payout_multiplier) + "\n";
-            } else {
-                result_text += "  " + bronx::EMOJI_DENY + " " + bet_type + ": -$" + format_number(amount) + "\n";
-            }
-        }
-        
-        int64_t net_profit = total_winnings - player_bets.total_bet;
-        db->update_wallet(player_id, total_winnings);
-        
-        // Track gambling stats
-        if (net_profit > 0) {
-            db->increment_stat(player_id, "gambling_profit", net_profit);
-            // Check gambling profit achievements
-            track_gambling_profit(bot, db, game.channel_id, player_id);
-            // Track milestone
-            track_gambling_result(bot, db, game.channel_id, player_id, true, net_profit);
-        } else if (net_profit < 0) {
-            db->increment_stat(player_id, "gambling_losses", -net_profit);
-            // Track milestone
-            track_gambling_result(bot, db, game.channel_id, player_id, false, net_profit);
-        }
-        
-        // Log gambling history
-        if (net_profit > 0) {
-            log_gambling(db, player_id, "won roulette for $" + format_number(net_profit));
-        } else if (net_profit < 0) {
-            log_gambling(db, player_id, "lost roulette for $" + format_number(-net_profit));
-        } else {
-            log_gambling(db, player_id, "broke even in roulette");
-        }
-        
-        PlayerResult pr;
-        pr.user_id = player_id;
-        pr.net_profit = net_profit;
-        pr.result_text = result_text;
-        player_results.push_back(pr);
-    }
-    
-    // Sort: Winners first (by smallest win), then losers (by smallest loss)
-    ::std::sort(player_results.begin(), player_results.end(), [](const PlayerResult& a, const PlayerResult& b) {
-        // Both won
-        if (a.net_profit > 0 && b.net_profit > 0) return a.net_profit < b.net_profit;
-        // Both lost
-        if (a.net_profit < 0 && b.net_profit < 0) return a.net_profit > b.net_profit;
-        // One won, one lost - winner goes first
-        if (a.net_profit > 0) return true;
-        if (b.net_profit > 0) return false;
-        // Break even
-        return false;
-    });
-    
-    // Create result embed with pagination if needed
-    ::std::string wheel_display = get_roulette_display(result, 0);
-    int total_pages = player_results.size() <= 2 ? 1 : 1 + ((player_results.size() - 2 + 3) / 4);
-    
-    dpp::embed result_embed = dpp::embed()
-        .set_color(is_green ? 0x00FF00 : (is_red ? 0xFF0000 : 0x000000))
-        .set_title("🎰 ROULETTE RESULTS");
-    
-    result_embed.set_description(get_paginated_results(player_results, 0, result, wheel_display));
-    
-    dpp::message result_msg;
-    result_msg.id = game.message_id;
-    result_msg.channel_id = game.channel_id;
-    result_msg.add_embed(result_embed);
-    
-    // Add pagination buttons if needed
-    if (total_pages > 1) {
-        dpp::component nav_row;
-        nav_row.add_component(dpp::component()
-            .set_type(dpp::cot_button)
-            .set_label("◀ Previous")
-            .set_style(dpp::cos_secondary)
-            .set_id("roulette_page_prev_" + ::std::to_string(game_id))
-            .set_disabled(true));
-        
-        nav_row.add_component(dpp::component()
-            .set_type(dpp::cot_button)
-            .set_label("Next ▶")
-            .set_style(dpp::cos_secondary)
-            .set_id("roulette_page_next_" + ::std::to_string(game_id)));
-        
-        result_msg.add_component(nav_row);
-        
-        // Store results in the global pagination map
-        roulette_pagination_data[game_id] = {player_results, result};
-    }
-    
-    bot.interaction_response_edit(spin_token, result_msg);
-    
-    // Clean up game after a delay if no pagination
-    if (total_pages == 1) {
-        active_roulette_games.erase(game_id);
-    }
+    // PERFORMANCE FIX: Run animation + result processing in a detached thread to
+    // avoid blocking DPP's thread pool for 3.4s with sleep_for calls.
+    std::thread([&bot, db, game_id, result,
+                 spin_token = std::string(event.command.token),
+                 message_id = game.message_id,
+                 channel_id = game.channel_id,
+                 player_bets = game.player_bets]() {
+        roulette_spin_worker(bot, db, game_id, result, spin_token, message_id, channel_id, player_bets);
+    }).detach();
 }
 
 void handle_roulette_cancel(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {

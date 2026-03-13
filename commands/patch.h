@@ -222,7 +222,7 @@ std::vector<Command*> get_patch_commands(bronx::db::Database* db) {
                 success = bronx::db::patch_operations::delete_patch_by_id(db, patch_id);
                 
                 if (success) {
-                    bronx::send_message(bot, event, bronx::success("✅ patch note #" + identifier + " deleted"));
+                    bronx::send_message(bot, event, bronx::success("patch note #" + identifier + " deleted"));
                 } else {
                     bronx::send_message(bot, event, bronx::error("patch note #" + identifier + " not found"));
                 }
@@ -231,7 +231,7 @@ std::vector<Command*> get_patch_commands(bronx::db::Database* db) {
                 success = bronx::db::patch_operations::delete_patch_by_version(db, identifier);
                 
                 if (success) {
-                    bronx::send_message(bot, event, bronx::success("✅ patch note v" + identifier + " deleted"));
+                    bronx::send_message(bot, event, bronx::success("patch note v" + identifier + " deleted"));
                 } else {
                     bronx::send_message(bot, event, bronx::error("patch note v" + identifier + " not found"));
                 }
@@ -266,7 +266,7 @@ inline void handle_patch_buttons(dpp::cluster& bot, const dpp::button_click_t& e
     // Verify user
     if (event.command.usr.id != user_id) {
         event.reply(dpp::ir_channel_message_with_source, 
-            dpp::message("❌ This is not your pagination control!").set_flags(dpp::m_ephemeral));
+            dpp::message(bronx::EMOJI_DENY + " This is not your pagination control!").set_flags(dpp::m_ephemeral));
         return;
     }
     

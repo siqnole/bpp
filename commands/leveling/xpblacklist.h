@@ -96,7 +96,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     bool success = xp_blacklist_operations::add_channel_blacklist(db, guild_id, channel_id, event.msg.author.id, reason);
                     
                     if (success) {
-                        std::string msg = "✅ <#" + std::to_string(channel_id) + "> is now blacklisted from XP";
+                        std::string msg = "<#" + std::to_string(channel_id) + "> is now blacklisted from XP";
                         if (!reason.empty()) msg += "\n**reason:** " + reason;
                         bronx::send_message(bot, event, bronx::success(msg));
                     } else {
@@ -113,7 +113,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     bool success = xp_blacklist_operations::remove_channel_blacklist(db, guild_id, channel_id);
                     
                     if (success) {
-                        bronx::send_message(bot, event, bronx::success("✅ <#" + std::to_string(channel_id) + "> is no longer blacklisted"));
+                        bronx::send_message(bot, event, bronx::success("<#" + std::to_string(channel_id) + "> is no longer blacklisted"));
                     } else {
                         bronx::send_message(bot, event, bronx::error("channel not found in blacklist"));
                     }
@@ -161,7 +161,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     bool success = xp_blacklist_operations::add_role_blacklist(db, guild_id, role_id, event.msg.author.id, reason);
                     
                     if (success) {
-                        std::string msg = "✅ <@&" + std::to_string(role_id) + "> is now blacklisted from XP";
+                        std::string msg = "<@&" + std::to_string(role_id) + "> is now blacklisted from XP";
                         if (!reason.empty()) msg += "\n**reason:** " + reason;
                         bronx::send_message(bot, event, bronx::success(msg));
                     } else {
@@ -178,7 +178,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     bool success = xp_blacklist_operations::remove_role_blacklist(db, guild_id, role_id);
                     
                     if (success) {
-                        bronx::send_message(bot, event, bronx::success("✅ <@&" + std::to_string(role_id) + "> is no longer blacklisted"));
+                        bronx::send_message(bot, event, bronx::success("<@&" + std::to_string(role_id) + "> is no longer blacklisted"));
                     } else {
                         bronx::send_message(bot, event, bronx::error("role not found in blacklist"));
                     }
@@ -226,7 +226,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     bool success = xp_blacklist_operations::add_user_blacklist(db, guild_id, target_id, event.msg.author.id, reason);
                     
                     if (success) {
-                        std::string msg = "✅ <@" + std::to_string(target_id) + "> is now blacklisted from XP";
+                        std::string msg = "<@" + std::to_string(target_id) + "> is now blacklisted from XP";
                         if (!reason.empty()) msg += "\n**reason:** " + reason;
                         bronx::send_message(bot, event, bronx::success(msg));
                     } else {
@@ -243,7 +243,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     bool success = xp_blacklist_operations::remove_user_blacklist(db, guild_id, target_id);
                     
                     if (success) {
-                        bronx::send_message(bot, event, bronx::success("✅ <@" + std::to_string(target_id) + "> is no longer blacklisted"));
+                        bronx::send_message(bot, event, bronx::success("<@" + std::to_string(target_id) + "> is no longer blacklisted"));
                     } else {
                         bronx::send_message(bot, event, bronx::error("user not found in blacklist"));
                     }

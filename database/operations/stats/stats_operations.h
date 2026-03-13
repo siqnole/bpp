@@ -94,6 +94,57 @@ inline bool log_boost_event(Database* db, uint64_t guild_id, uint64_t user_id,
     }
 }
 
+// ── user_activity_daily upsert helpers ──────────────────────────
+
+// increment user message count for today (call on each message event)
+inline bool increment_user_daily_messages(Database* db, uint64_t guild_id, uint64_t user_id,
+                                          const std::string& event_type = "message") {
+    if (!db) return false;
+    try {
+        std::string col = "messages";
+        if (event_type == "edit") col = "edits";
+        else if (event_type == "delete") col = "deletes";
+        std::string sql = "INSERT INTO user_activity_daily (guild_id, user_id, stat_date, " + col + ") VALUES ('"
+            + std::to_string(guild_id) + "', '"
+            + std::to_string(user_id) + "', CURDATE(), 1) "
+            "ON DUPLICATE KEY UPDATE " + col + " = " + col + " + 1";
+        return db->execute(sql);
+    } catch (const std::exception& e) {
+        std::cerr << "[stats] increment_user_daily_messages failed: " << e.what() << "\n";
+        return false;
+    }
+}
+
+// increment user command count for today
+inline bool increment_user_daily_commands(Database* db, uint64_t guild_id, uint64_t user_id) {
+    if (!db) return false;
+    try {
+        std::string sql = "INSERT INTO user_activity_daily (guild_id, user_id, stat_date, commands_used) VALUES ('"
+            + std::to_string(guild_id) + "', '"
+            + std::to_string(user_id) + "', CURDATE(), 1) "
+            "ON DUPLICATE KEY UPDATE commands_used = commands_used + 1";
+        return db->execute(sql);
+    } catch (const std::exception& e) {
+        std::cerr << "[stats] increment_user_daily_commands failed: " << e.what() << "\n";
+        return false;
+    }
+}
+
+// add voice minutes for a user today (call on VC leave, pass computed minutes)
+inline bool add_user_daily_voice_minutes(Database* db, uint64_t guild_id, uint64_t user_id, int minutes) {
+    if (!db || minutes <= 0) return false;
+    try {
+        std::string sql = "INSERT INTO user_activity_daily (guild_id, user_id, stat_date, voice_minutes) VALUES ('"
+            + std::to_string(guild_id) + "', '"
+            + std::to_string(user_id) + "', CURDATE(), " + std::to_string(minutes) + ") "
+            "ON DUPLICATE KEY UPDATE voice_minutes = voice_minutes + " + std::to_string(minutes);
+        return db->execute(sql);
+    } catch (const std::exception& e) {
+        std::cerr << "[stats] add_user_daily_voice_minutes failed: " << e.what() << "\n";
+        return false;
+    }
+}
+
 } // namespace stats_operations
 } // namespace db
 } // namespace bronx

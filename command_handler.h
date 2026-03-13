@@ -15,6 +15,7 @@
 #include "performance/async_stat_writer.h"
 #include "database/operations/economy/history_operations.h"
 #include "database/operations/economy/server_economy_operations.h"
+#include "database/operations/user/privacy_operations.h"
 #include "commands/daily_challenges/daily_stat_tracker.h"
 // forward declare owner helper to avoid circular dependency
 namespace commands { bool is_owner(uint64_t user_id); }
@@ -170,6 +171,43 @@ public:
                 std::cerr << "\033[33m\u26a0 \033[0mBAC: ignoring message from banned user " << user_id << "\n";
                 return;
             }
+            // Privacy opt-out check — completely ignore opted-out users
+            // Exception: allow the privacy command itself so they can opt back in
+            if (db_->is_opted_out(user_id)) {
+                // peek at the command to see if it's the privacy command
+                std::string content = event.msg.content;
+                std::string content_lower = content;
+                std::transform(content_lower.begin(), content_lower.end(), content_lower.begin(), ::tolower);
+                bool is_privacy_cmd = false;
+                // check all possible prefixes
+                std::vector<std::string> pfxs = {prefix};
+                auto gps = db_->get_guild_prefixes(event.msg.guild_id);
+                pfxs.insert(pfxs.end(), gps.begin(), gps.end());
+                auto ups = db_->get_user_prefixes(user_id);
+                pfxs.insert(pfxs.end(), ups.begin(), ups.end());
+                for (auto& p : pfxs) {
+                    std::string pl = p;
+                    std::transform(pl.begin(), pl.end(), pl.begin(), ::tolower);
+                    if (content_lower.rfind(pl, 0) == 0) {
+                        std::string after = content_lower.substr(pl.size());
+                        // trim leading space
+                        while (!after.empty() && after[0] == ' ') after.erase(after.begin());
+                        if (after.rfind("privacy", 0) == 0 || after.rfind("optin", 0) == 0 || after.rfind("opt-in", 0) == 0) {
+                            is_privacy_cmd = true;
+                            break;
+                        }
+                    }
+                }
+                if (!is_privacy_cmd) {
+                    auto embed = bronx::create_embed(
+                        "\xf0\x9f\x94\x92 **you have opted out of data collection**\n\n"
+                        "the bot will not process your commands or collect any data.\n"
+                        "to opt back in, use `b.privacy optin`",
+                        bronx::COLOR_INFO);
+                    bronx::send_message(bot, event, embed);
+                    return;
+                }
+            }
         }
 
         // Prepare mutable content
@@ -278,7 +316,7 @@ public:
                 
                 try {
                     dpp::embed error_embed = dpp::embed()
-                        .set_description("✗ an error occurred while executing this command")
+                        .set_description(bronx::EMOJI_DENY + " an error occurred while executing this command")
                         .set_color(0xE5989B)
                         .set_timestamp(time(0));
                     
@@ -300,6 +338,19 @@ public:
             if (!db_->is_global_whitelisted(user_id) && db_->is_global_blacklisted(user_id)) {
                 std::cerr << "\033[33m\u26a0 \033[0mBAC: ignoring slash command from banned user " << user_id << "\n";
                 return;
+            }
+            // Privacy opt-out check — allow only /privacy command
+            if (db_->is_opted_out(user_id)) {
+                std::string cmd_name = event.command.get_command_name();
+                if (cmd_name != "privacy") {
+                    auto embed = bronx::create_embed(
+                        "\xf0\x9f\x94\x92 **you have opted out of data collection**\n\n"
+                        "the bot will not process your commands or collect any data.\n"
+                        "to opt back in, use `/privacy optin`",
+                        bronx::COLOR_INFO);
+                    event.reply(dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
+                    return;
+                }
             }
         }
         // BAC (Bronx AntiCheat) — timing analysis & graduated strikes
@@ -365,7 +416,7 @@ public:
                 
                 try {
                     dpp::embed error_embed = dpp::embed()
-                        .set_description("✗ an error occurred while executing this command")
+                        .set_description(bronx::EMOJI_DENY + " an error occurred while executing this command")
                         .set_color(0xE5989B)
                         .set_timestamp(time(0));
                     
@@ -702,7 +753,7 @@ private:
                 "🛡️ **Bronx AntiCheat (BAC)**\n\n"
                 "**strike 2/3** — you've been timed out from commands for **10 minutes**.\n"
                 "reason: " + reason + "\n\n"
-                "⚠️ one more strike and you will be **permanently banned**.",
+                + bronx::EMOJI_WARNING + " one more strike and you will be **permanently banned**.",
                 bronx::COLOR_WARNING);
             bot.direct_message_create(user_id, dpp::message().add_embed(dm_embed));
             std::cerr << "\033[1;33m\u26a0 BAC: user " << user_id << " strike 2 (10min timeout) — " << reason << "\033[0m\n";

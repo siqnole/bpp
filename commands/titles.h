@@ -75,7 +75,7 @@ inline const std::vector<TitleDef>& title_catalog() {
         { "title_shy", "||*im shy*||",               "too shy to show their title off, only 10 copies", 50000000, 0, 10 },
         { "title_rarest",      "💠 Ultra Rare",          "extremely limited edition, only 3 copies",        500000000,  0, 3  },
         { "title_chosen",      "⚡ The Chosen",          "not everyone can have this — only 5 exist",       250000000,  0, 5  },
-        { "title_certified",   "✅ Certified",           "certified bronx member, limited to 10",           75000000,   0, 10 },
+        { "title_certified",   bronx::EMOJI_CHECK + " Certified",           "certified bronx member, limited to 10",           75000000,   0, 10 },
         { "title_early",       "🌅 Early Bird",          "got here before everyone else — 15 copies only",  30000000,   0, 15 },
 
         // rotation_slot 1 – week group A

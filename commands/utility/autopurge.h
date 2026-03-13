@@ -194,8 +194,14 @@ static void schedule_autopurge(dpp::cluster& bot, const bronx::db::AutopurgeRow&
             return;
         }
 
-        // recursive helper to page through messages until we've deleted enough or no more messages.
-        // Stored in a shared_ptr so it can safely capture itself by value across async callbacks.
+        // PERFORMANCE FIX: Throttled pagination — each page waits for the
+        // previous delete to finish before fetching the next batch.  Without
+        // this, autopurges fire dozens of REST calls instantly (messages_get +
+        // message_delete_bulk per page) which clogs the REST queue and delays
+        // all other bot responses (commands, etc.) by seconds.
+        //
+        // The delay between pages is implemented via bot.start_timer (1s) so
+        // we never block the event loop.
         auto purge_page_ptr = std::make_shared<std::function<void(dpp::snowflake,int)>>();
         *purge_page_ptr = [&bot, row, purge_page_ptr](dpp::snowflake before, int remaining) {
             if (remaining <= 0) return;
@@ -241,8 +247,16 @@ static void schedule_autopurge(dpp::cluster& bot, const bronx::db::AutopurgeRow&
                     }
                     remaining -= to_delete.size();
                 }
+                // Throttle: wait 1.5s before fetching next page to avoid flooding
+                // the REST queue.  This keeps command responses snappy.
                 if (remaining > 0 && next_before != 0 && !messages.empty()) {
-                    (*purge_page_ptr)(next_before, remaining);
+                    // Capture by value for the timer lambda
+                    auto next_fn = purge_page_ptr;
+                    auto nb = next_before;
+                    auto rem = remaining;
+                    bot.start_timer([next_fn, nb, rem](dpp::timer t) {
+                        (*next_fn)(nb, rem);
+                    }, 2 /* fire once after 2s */, [](dpp::timer){});
                 }
             });
         };

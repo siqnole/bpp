@@ -172,7 +172,7 @@ static dpp::message build_mining_message(MiningSession& s) {
     if (s.rip_chance > 0.01) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.0f%%", s.rip_chance * 100.0);
-        desc += "\n⚠️ Bag rip chance on timeout: **" + std::string(buf) + "**";
+        desc += "\n" + bronx::EMOJI_WARNING + " Bag rip chance on timeout: **" + std::string(buf) + "**";
     }
 
     auto embed = bronx::create_embed(desc);

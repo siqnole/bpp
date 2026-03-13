@@ -69,7 +69,7 @@ std::vector<Command*> get_moderation_commands() {
                         return;
                     }
 
-                    std::string desc = "✓ kicked <@" + std::to_string(target_id) + ">\n";
+                    std::string desc = bronx::EMOJI_CHECK + " kicked <@" + std::to_string(target_id) + ">\n";
                     desc += "**reason:** " + reason;
 
                     auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
@@ -109,7 +109,7 @@ std::vector<Command*> get_moderation_commands() {
                     return;
                 }
 
-                std::string desc = "✓ banned <@" + std::to_string(target_id) + ">\n";
+                std::string desc = bronx::EMOJI_CHECK + " banned <@" + std::to_string(target_id) + ">\n";
                 desc += "**reason:** " + reason;
 
                 auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
@@ -166,7 +166,7 @@ std::vector<Command*> get_moderation_commands() {
                         return;
                     }
 
-                    std::string desc = "✓ timed out <@" + std::to_string(target_id) + ">\n";
+                    std::string desc = bronx::EMOJI_CHECK + " timed out <@" + std::to_string(target_id) + ">\n";
                     desc += "**duration:** " + std::to_string(duration_seconds / 60) + " minutes\n";
                     desc += "**reason:** " + reason;
 

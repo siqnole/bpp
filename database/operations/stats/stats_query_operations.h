@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <iostream>
 
 namespace bronx {
@@ -155,6 +156,32 @@ inline std::vector<DailyCount> daily_command_trend(Database* db, uint64_t guild_
     while ((row = mysql_fetch_row(res))) {
         DailyCount dc;
         dc.date = row[0] ? row[0] : "";
+        dc.value = row[1] ? std::stoll(row[1]) : 0;
+        out.push_back(dc);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── daily message count (from guild_message_events) ───────────
+inline std::vector<DailyCount> daily_message_count(Database* db, uint64_t guild_id, int days = 7) {
+    std::vector<DailyCount> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT DATE(created_at) AS d, COUNT(*) AS cnt "
+        "FROM guild_message_events "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND event_type='message' "
+        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "GROUP BY d ORDER BY d";
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        DailyCount dc;
+        dc.date  = row[0] ? row[0] : "";
         dc.value = row[1] ? std::stoll(row[1]) : 0;
         out.push_back(dc);
     }
@@ -418,6 +445,463 @@ inline int64_t unique_boosters(Database* db, uint64_t guild_id, int days = 7) {
     mysql_free_result(res);
     db->get_pool()->release(conn);
     return val;
+}
+
+// ── enriched voice analytics types ─────────────────────────────
+struct ChannelVoiceStat {
+    uint64_t channel_id;
+    int64_t sessions;
+    int64_t unique_users;
+    int64_t total_minutes;
+};
+struct UserVoiceStat {
+    uint64_t user_id;
+    int64_t sessions;
+    int64_t channels_used;
+    int64_t total_minutes;
+};
+struct HourlyVoice { int hour; int64_t joins; };
+
+// ── user activity leaderboard entry ────────────────────────────
+struct UserActivityEntry {
+    uint64_t user_id;
+    int64_t  total_value;
+};
+
+// ── per-user daily breakdown entry ─────────────────────────────
+struct UserDailyBreakdown {
+    std::string date;
+    int64_t messages;
+    int64_t voice_minutes;
+    int64_t commands_used;
+};
+
+// ── hourly heatmap entry (hour × day_of_week) ─────────────────
+struct HourlyHeatmapEntry {
+    int day_of_week; // 0=Sun, 1=Mon ... 6=Sat
+    int hour;        // 0-23
+    int64_t count;
+};
+
+// ── channel activity stat ──────────────────────────────────────
+struct ChannelActivityStat {
+    uint64_t channel_id;
+    int64_t messages;
+    int64_t commands;
+};
+
+// ── date condition helper (today=0, all-time=-1) ───────────────
+inline std::string date_condition(const std::string& col, int days) {
+    if (days == 0) return col + " = CURDATE()";
+    if (days < 0)  return "1=1"; // all-time
+    return col + " >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
+}
+
+inline std::string timestamp_condition(const std::string& col, int days) {
+    if (days == 0) return col + " >= CURDATE()";
+    if (days < 0)  return "1=1"; // all-time
+    return col + " >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+}
+
+// ── top users by messages (from user_activity_daily) ───────────
+inline std::vector<UserActivityEntry> top_users_messages(Database* db, uint64_t guild_id,
+                                                          int days = 7, int limit = 10) {
+    std::vector<UserActivityEntry> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT user_id, SUM(messages) AS total "
+        "FROM user_activity_daily "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND " + date_condition("stat_date", days) + " "
+        "GROUP BY user_id ORDER BY total DESC LIMIT " + std::to_string(limit);
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        UserActivityEntry e;
+        e.user_id     = row[0] ? std::stoull(row[0]) : 0;
+        e.total_value = row[1] ? std::stoll(row[1]) : 0;
+        out.push_back(e);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── top users by voice minutes (from user_activity_daily) ──────
+inline std::vector<UserActivityEntry> top_users_voice(Database* db, uint64_t guild_id,
+                                                       int days = 7, int limit = 10) {
+    std::vector<UserActivityEntry> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT user_id, SUM(voice_minutes) AS total "
+        "FROM user_activity_daily "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND " + date_condition("stat_date", days) + " "
+        "GROUP BY user_id ORDER BY total DESC LIMIT " + std::to_string(limit);
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        UserActivityEntry e;
+        e.user_id     = row[0] ? std::stoull(row[0]) : 0;
+        e.total_value = row[1] ? std::stoll(row[1]) : 0;
+        out.push_back(e);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── top users by commands used (from user_activity_daily) ──────
+inline std::vector<UserActivityEntry> top_users_commands(Database* db, uint64_t guild_id,
+                                                          int days = 7, int limit = 10) {
+    std::vector<UserActivityEntry> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT user_id, SUM(commands_used) AS total "
+        "FROM user_activity_daily "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND " + date_condition("stat_date", days) + " "
+        "GROUP BY user_id ORDER BY total DESC LIMIT " + std::to_string(limit);
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        UserActivityEntry e;
+        e.user_id     = row[0] ? std::stoull(row[0]) : 0;
+        e.total_value = row[1] ? std::stoll(row[1]) : 0;
+        out.push_back(e);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── per-user daily breakdown ───────────────────────────────────
+inline std::vector<UserDailyBreakdown> user_daily_breakdown(Database* db, uint64_t guild_id,
+                                                              uint64_t user_id, int days = 7) {
+    std::vector<UserDailyBreakdown> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT stat_date, messages, voice_minutes, commands_used "
+        "FROM user_activity_daily "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND user_id='" + std::to_string(user_id) + "' "
+        "AND " + date_condition("stat_date", days) + " "
+        "ORDER BY stat_date";
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        UserDailyBreakdown d;
+        d.date          = row[0] ? row[0] : "";
+        d.messages      = row[1] ? std::stoll(row[1]) : 0;
+        d.voice_minutes = row[2] ? std::stoll(row[2]) : 0;
+        d.commands_used = row[3] ? std::stoll(row[3]) : 0;
+        out.push_back(d);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── hourly activity heatmap (hour × day_of_week) ──────────────
+inline std::vector<HourlyHeatmapEntry> hourly_heatmap(Database* db, uint64_t guild_id,
+                                                        int days = 30) {
+    std::vector<HourlyHeatmapEntry> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT DAYOFWEEK(created_at) - 1 AS dow, HOUR(created_at) AS h, COUNT(*) AS cnt "
+        "FROM guild_message_events "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND event_type='message' "
+        "AND " + timestamp_condition("created_at", days) + " "
+        "GROUP BY dow, h ORDER BY dow, h";
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        HourlyHeatmapEntry e;
+        e.day_of_week = row[0] ? std::stoi(row[0]) : 0;
+        e.hour        = row[1] ? std::stoi(row[1]) : 0;
+        e.count       = row[2] ? std::stoll(row[2]) : 0;
+        out.push_back(e);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── user-specific hourly heatmap ───────────────────────────────
+inline std::vector<HourlyHeatmapEntry> user_hourly_heatmap(Database* db, uint64_t guild_id,
+                                                              uint64_t user_id, int days = 30) {
+    std::vector<HourlyHeatmapEntry> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT DAYOFWEEK(created_at) - 1 AS dow, HOUR(created_at) AS h, COUNT(*) AS cnt "
+        "FROM guild_message_events "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND user_id='" + std::to_string(user_id) + "' "
+        "AND event_type='message' "
+        "AND " + timestamp_condition("created_at", days) + " "
+        "GROUP BY dow, h ORDER BY dow, h";
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        HourlyHeatmapEntry e;
+        e.day_of_week = row[0] ? std::stoi(row[0]) : 0;
+        e.hour        = row[1] ? std::stoi(row[1]) : 0;
+        e.count       = row[2] ? std::stoll(row[2]) : 0;
+        out.push_back(e);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── top channels by messages ───────────────────────────────────
+inline std::vector<ChannelActivityStat> top_channels_messages(Database* db, uint64_t guild_id,
+                                                                int days = 7, int limit = 15) {
+    std::vector<ChannelActivityStat> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT channel_id, COUNT(*) AS cnt "
+        "FROM guild_message_events "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND event_type='message' "
+        "AND " + timestamp_condition("created_at", days) + " "
+        "GROUP BY channel_id ORDER BY cnt DESC LIMIT " + std::to_string(limit);
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        ChannelActivityStat c;
+        c.channel_id = row[0] ? std::stoull(row[0]) : 0;
+        c.messages   = row[1] ? std::stoll(row[1]) : 0;
+        c.commands   = 0;
+        out.push_back(c);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── user totals (messages + vc + commands) for profile ─────────
+struct UserTotals {
+    int64_t total_messages;
+    int64_t total_voice_minutes;
+    int64_t total_commands;
+    std::string most_active_day; // date with highest messages
+};
+
+inline UserTotals user_totals(Database* db, uint64_t guild_id, uint64_t user_id, int days = -1) {
+    UserTotals t = {0, 0, 0, ""};
+    if (!db) return t;
+    std::string sql =
+        "SELECT SUM(messages), SUM(voice_minutes), SUM(commands_used), "
+        "(SELECT stat_date FROM user_activity_daily "
+        " WHERE guild_id='" + std::to_string(guild_id) + "' AND user_id='" + std::to_string(user_id) + "'"
+        " ORDER BY messages DESC LIMIT 1) "
+        "FROM user_activity_daily "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND user_id='" + std::to_string(user_id) + "' "
+        "AND " + date_condition("stat_date", days);
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return t;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    if (row) {
+        t.total_messages      = row[0] ? std::stoll(row[0]) : 0;
+        t.total_voice_minutes = row[1] ? std::stoll(row[1]) : 0;
+        t.total_commands      = row[2] ? std::stoll(row[2]) : 0;
+        t.most_active_day     = row[3] ? row[3] : "";
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return t;
+}
+
+// ── top voice channels by sessions + computed time ─────────────
+inline std::vector<ChannelVoiceStat> top_voice_channels(Database* db, uint64_t guild_id,
+                                                         int days = 7, int limit = 15) {
+    std::vector<ChannelVoiceStat> out;
+    if (!db) return out;
+    std::string gid = std::to_string(guild_id);
+    std::string d   = std::to_string(days);
+    // sessions + unique users per channel
+    std::string sql =
+        "SELECT channel_id, COUNT(*) AS sessions, COUNT(DISTINCT user_id) AS users "
+        "FROM guild_voice_events "
+        "WHERE guild_id='" + gid + "' AND event_type='join' "
+        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+        "GROUP BY channel_id ORDER BY sessions DESC LIMIT " + std::to_string(limit);
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        ChannelVoiceStat cs;
+        cs.channel_id   = row[0] ? std::stoull(row[0]) : 0;
+        cs.sessions     = row[1] ? std::stoll(row[1]) : 0;
+        cs.unique_users = row[2] ? std::stoll(row[2]) : 0;
+        cs.total_minutes = 0;
+        out.push_back(cs);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+
+    // compute time per channel via paired join/leave
+    if (!out.empty()) {
+        std::string time_sql =
+            "SELECT channel_id, COALESCE(SUM(dur),0) AS total_sec FROM ("
+            "  SELECT j.channel_id, "
+            "    TIMESTAMPDIFF(SECOND, j.created_at, MIN(l.created_at)) AS dur "
+            "  FROM guild_voice_events j "
+            "  INNER JOIN guild_voice_events l "
+            "    ON l.guild_id=j.guild_id AND l.user_id=j.user_id "
+            "    AND l.channel_id=j.channel_id AND l.event_type='leave' "
+            "    AND l.created_at > j.created_at "
+            "  WHERE j.guild_id='" + gid + "' AND j.event_type='join' "
+            "  AND j.created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+            "  GROUP BY j.id, j.channel_id, j.created_at"
+            ") paired WHERE dur > 0 AND dur < 86400 GROUP BY channel_id";
+        std::shared_ptr<Connection> conn2;
+        MYSQL_RES* tres = run_query(db->get_pool(), time_sql, conn2);
+        if (tres) {
+            std::unordered_map<uint64_t, int64_t> ctime;
+            MYSQL_ROW tr;
+            while ((tr = mysql_fetch_row(tres))) {
+                uint64_t cid = tr[0] ? std::stoull(tr[0]) : 0;
+                int64_t sec  = tr[1] ? std::stoll(tr[1]) : 0;
+                ctime[cid] = sec;
+            }
+            mysql_free_result(tres);
+            db->get_pool()->release(conn2);
+            for (auto& c : out) c.total_minutes = ctime.count(c.channel_id) ? ctime[c.channel_id] / 60 : 0;
+        }
+    }
+    return out;
+}
+
+// ── top voice users by sessions + computed time ────────────────
+inline std::vector<UserVoiceStat> top_voice_users(Database* db, uint64_t guild_id,
+                                                   int days = 7, int limit = 15) {
+    std::vector<UserVoiceStat> out;
+    if (!db) return out;
+    std::string gid = std::to_string(guild_id);
+    std::string d   = std::to_string(days);
+    std::string sql =
+        "SELECT user_id, COUNT(*) AS sessions, COUNT(DISTINCT channel_id) AS chans "
+        "FROM guild_voice_events "
+        "WHERE guild_id='" + gid + "' AND event_type='join' "
+        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+        "GROUP BY user_id ORDER BY sessions DESC LIMIT " + std::to_string(limit);
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        UserVoiceStat us;
+        us.user_id       = row[0] ? std::stoull(row[0]) : 0;
+        us.sessions      = row[1] ? std::stoll(row[1]) : 0;
+        us.channels_used = row[2] ? std::stoll(row[2]) : 0;
+        us.total_minutes = 0;
+        out.push_back(us);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+
+    if (!out.empty()) {
+        std::string time_sql =
+            "SELECT user_id, COALESCE(SUM(dur),0) AS total_sec FROM ("
+            "  SELECT j.user_id, "
+            "    TIMESTAMPDIFF(SECOND, j.created_at, MIN(l.created_at)) AS dur "
+            "  FROM guild_voice_events j "
+            "  INNER JOIN guild_voice_events l "
+            "    ON l.guild_id=j.guild_id AND l.user_id=j.user_id "
+            "    AND l.channel_id=j.channel_id AND l.event_type='leave' "
+            "    AND l.created_at > j.created_at "
+            "  WHERE j.guild_id='" + gid + "' AND j.event_type='join' "
+            "  AND j.created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+            "  GROUP BY j.id, j.user_id, j.created_at"
+            ") paired WHERE dur > 0 AND dur < 86400 GROUP BY user_id";
+        std::shared_ptr<Connection> conn2;
+        MYSQL_RES* tres = run_query(db->get_pool(), time_sql, conn2);
+        if (tres) {
+            std::unordered_map<uint64_t, int64_t> utime;
+            MYSQL_ROW tr;
+            while ((tr = mysql_fetch_row(tres))) {
+                uint64_t uid = tr[0] ? std::stoull(tr[0]) : 0;
+                int64_t sec  = tr[1] ? std::stoll(tr[1]) : 0;
+                utime[uid] = sec;
+            }
+            mysql_free_result(tres);
+            db->get_pool()->release(conn2);
+            for (auto& u : out) u.total_minutes = utime.count(u.user_id) ? utime[u.user_id] / 60 : 0;
+        }
+    }
+    return out;
+}
+
+// ── voice peak hours (hour-of-day distribution) ────────────────
+inline std::vector<HourlyVoice> voice_peak_hours(Database* db, uint64_t guild_id, int days = 7) {
+    std::vector<HourlyVoice> out(24);
+    for (int h = 0; h < 24; h++) { out[h].hour = h; out[h].joins = 0; }
+    if (!db) return out;
+    std::string sql =
+        "SELECT HOUR(created_at) AS h, COUNT(*) AS cnt "
+        "FROM guild_voice_events "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' AND event_type='join' "
+        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "GROUP BY h ORDER BY h";
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        int h = row[0] ? std::stoi(row[0]) : 0;
+        int64_t cnt = row[1] ? std::stoll(row[1]) : 0;
+        if (h >= 0 && h < 24) out[h].joins = cnt;
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
+}
+
+// ── total voice time in minutes (paired sessions) ──────────────
+inline int64_t total_voice_minutes(Database* db, uint64_t guild_id, int days = 7) {
+    if (!db) return 0;
+    std::string gid = std::to_string(guild_id);
+    std::string d   = std::to_string(days);
+    std::string sql =
+        "SELECT COALESCE(SUM(dur),0) FROM ("
+        "  SELECT TIMESTAMPDIFF(SECOND, j.created_at, MIN(l.created_at)) AS dur "
+        "  FROM guild_voice_events j "
+        "  INNER JOIN guild_voice_events l "
+        "    ON l.guild_id=j.guild_id AND l.user_id=j.user_id "
+        "    AND l.channel_id=j.channel_id AND l.event_type='leave' "
+        "    AND l.created_at > j.created_at "
+        "  WHERE j.guild_id='" + gid + "' AND j.event_type='join' "
+        "  AND j.created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+        "  GROUP BY j.id, j.created_at"
+        ") paired WHERE dur > 0 AND dur < 86400";
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return 0;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    int64_t sec = (row && row[0]) ? std::stoll(row[0]) : 0;
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return sec / 60;
 }
 
 } // namespace stats_queries

@@ -147,7 +147,7 @@ static dpp::message build_raid_round(const RaidSession& s) {
         int hp = s.player_hp.count(mid) ? s.player_hp.at(mid) : 0;
         bool acted = s.round_acted.count(mid) > 0;
         std::string hp_str = (hp <= 0) ? "💀 DEAD" : ("❤️ " + std::to_string(hp) + " HP");
-        desc += (acted ? "✅" : "⏳") + std::string(" <@") + std::to_string(mid) + "> — " + hp_str + "\n";
+        desc += (acted ? bronx::EMOJI_CHECK : std::string("⏳")) + std::string(" <@") + std::to_string(mid) + "> — " + hp_str + "\n";
     }
     desc += "\n*15 seconds to choose your action!*";
 

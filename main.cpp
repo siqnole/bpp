@@ -25,6 +25,7 @@
 #include "commands/utility/autopurge.h"
 #include "commands/fun.h"
 #include "commands/games.h"
+#include "commands/endgame.h"
 #include "commands/help_new.h"
 #include "commands/help_data.h"
 #include "commands/guide.h"
@@ -495,6 +496,10 @@ int main(int argc, char* argv[]) {
     for (auto* cmd : commands::get_games_commands(&db)) {
         cmd_handler.register_command(cmd);
     }
+
+    for (auto* cmd : commands::get_endgame_commands(&db)) {
+        cmd_handler.register_command(cmd);
+    }
     
     for (auto* cmd : commands::get_moderation_commands()) {
         cmd_handler.register_command(cmd);
@@ -571,7 +576,15 @@ int main(int argc, char* argv[]) {
         if (dpp::run_once<struct register_commands>()) {
             std::cout << clr::BOLD_GREEN << "✔ logged in as " << bot.me.username << clr::RESET << " (" << clr::DIM << commands::get_build_version() << clr::RESET << ")!\n";
             std::cout << clr::CYAN << "⚙ " << clr::RESET << "prefix: " << clr::BOLD << cmd_handler.get_prefix() << clr::RESET << "\n";
-            
+
+            // PERFORMANCE FIX: Warm up DPP's HTTPS connection pool so the first
+            // user command doesn't pay for TLS handshake + DNS resolution (~3-4s).
+            bot.current_user_get([](const dpp::confirmation_callback_t& cb) {
+                if (!cb.is_error()) {
+                    std::cout << clr::GREEN << "✔ " << clr::RESET << "HTTPS connection warmed up\n";
+                }
+            });
+
             // Performance stats
             auto perf_stats = cmd_handler.get_performance_stats();
             std::cout << clr::MAGENTA << "📊" << clr::RESET << " Cache initialized with " << clr::BOLD << perf_stats.total_cache_entries << clr::RESET << " total cache slots\n";
@@ -614,19 +627,47 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Use bulk registration to avoid rate limits
+            // Use bulk registration to avoid rate limits — retry on transient failures (e.g. 504)
             if (!commands_to_register.empty()) {
-                bot.global_bulk_command_create(commands_to_register, [](const dpp::confirmation_callback_t& callback) {
-                    if (callback.is_error()) {
-                        auto err = callback.get_error();
-                        std::cerr << clr::RED << "✘ error registering commands: " << err.message << clr::RESET << "\n";
-                        for (const auto& e : err.errors) {
-                            std::cerr << clr::RED << "  ↳ " << e.field << ": " << e.reason << " (code " << e.code << ")" << clr::RESET << "\n";
+                auto attempt = std::make_shared<int>(0);
+                auto cmds    = std::make_shared<std::vector<dpp::slashcommand>>(commands_to_register);
+                constexpr int max_retries = 3;
+                constexpr int backoff_seconds[] = {5, 15, 30};
+
+                std::function<void()> try_register;
+                try_register = [&bot, cmds, attempt, max_retries, try_register]() {
+                    bot.global_bulk_command_create(*cmds, [&bot, cmds, attempt, max_retries, try_register](const dpp::confirmation_callback_t& callback) {
+                        if (callback.is_error()) {
+                            auto err = callback.get_error();
+                            bool is_transient = (err.message.find("504") != std::string::npos ||
+                                                 err.message.find("502") != std::string::npos ||
+                                                 err.message.find("parse_error") != std::string::npos);
+
+                            if (is_transient && *attempt < max_retries) {
+                                constexpr int backoff[] = {5, 15, 30};
+                                int delay = backoff[*attempt];
+                                (*attempt)++;
+                                std::cerr << clr::YELLOW << "⚠ slash command registration failed (" << err.message
+                                          << "), retrying in " << delay << "s (attempt " << *attempt << "/" << max_retries << ")" << clr::RESET << "\n";
+                                bot.start_timer([try_register](dpp::timer) {
+                                    try_register();
+                                }, delay, [](dpp::timer){});
+                            } else {
+                                std::cerr << clr::RED << "✘ error registering commands: " << err.message << clr::RESET << "\n";
+                                for (const auto& e : err.errors) {
+                                    std::cerr << clr::RED << "  ↳ " << e.field << ": " << e.reason << " (code " << e.code << ")" << clr::RESET << "\n";
+                                }
+                            }
+                        } else {
+                            if (*attempt > 0) {
+                                std::cout << clr::BOLD_GREEN << "✔ successfully registered all slash commands (after " << *attempt << " retries)" << clr::RESET << "\n";
+                            } else {
+                                std::cout << clr::BOLD_GREEN << "✔ successfully registered all slash commands" << clr::RESET << "\n";
+                            }
                         }
-                    } else {
-                        std::cout << clr::BOLD_GREEN << "✔ successfully registered all slash commands" << clr::RESET << "\n";
-                    }
-                });
+                    });
+                };
+                try_register();
 
                 // External API calls (unchanged)
                 #ifdef HAVE_LIBCURL
@@ -655,12 +696,26 @@ int main(int argc, char* argv[]) {
             commands::register_boss_raid_interactions(bot, &db);
             commands::register_passive_interactions(bot, &db);
             commands::register_social_interactions(bot, &db);
+            commands::register_stats_interactions(bot, &db);
 
             // PERFORMANCE FIX: Register level-up callback for the XP batch writer.
             // When the batch writer detects a level-up during its periodic flush,
             // it fires this callback (on its own thread) to send announcements.
             xp_batch_writer.set_levelup_callback([&bot, &db](const std::vector<bronx::xp::LevelUpEvent>& events) {
+                // Rate-limit level-up processing: if too many level-ups fire at once
+                // (e.g. after a large XP batch flush), only process a bounded number
+                // to avoid flooding Discord's REST API and causing 503 overflow.
+                constexpr size_t MAX_LEVELUPS_PER_FLUSH = 5;
+                size_t processed = 0;
+                // Collect all role operations and stagger them via timers
+                // to avoid flooding the REST queue (which delays command responses).
+                size_t rest_call_index = 0;
                 for (auto& ev : events) {
+                    if (++processed > MAX_LEVELUPS_PER_FLUSH) {
+                        std::cerr << clr::YELLOW << "⚠ " << clr::RESET << "level-up callback: capped at "
+                                  << MAX_LEVELUPS_PER_FLUSH << " announcements (had " << events.size() << ")\n";
+                        break;
+                    }
                     if (ev.guild_id == 0) continue;  // skip global level-ups (no announcement)
                     
                     // Fetch the server leveling config to check if announcements are enabled
@@ -676,43 +731,54 @@ int main(int argc, char* argv[]) {
                         announcement += "\n\xF0\x9F\x8F\x86 You earned the <@&" +
                             std::to_string(level_role->role_id) + "> role!";
                         
-                        bot.guild_member_add_role(ev.guild_id, ev.user_id, level_role->role_id,
-                            [gid = ev.guild_id, uid = ev.user_id, rid = level_role->role_id](const dpp::confirmation_callback_t& cb) {
-                                if (cb.is_error()) {
-                                    std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to add role " << rid
-                                              << " to user " << uid << " in guild " << gid
-                                              << ": " << cb.get_error().code << " - " << cb.get_error().message << "\n";
-                                }
-                            });
+                        // PERFORMANCE FIX: Stagger role add/remove with 1s delay per
+                        // REST call to avoid flooding the queue (previously fired up
+                        // to 20+ guild_member_remove_role calls in a tight loop).
+                        size_t delay_s = ++rest_call_index;
+                        bot.start_timer([&bot, gid = ev.guild_id, uid = ev.user_id, rid = level_role->role_id](dpp::timer) {
+                            bot.guild_member_add_role(gid, uid, rid,
+                                [gid, uid, rid](const dpp::confirmation_callback_t& cb) {
+                                    if (cb.is_error()) {
+                                        std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to add role " << rid
+                                                  << " to user " << uid << " in guild " << gid
+                                                  << ": " << cb.get_error().code << " - " << cb.get_error().message << "\n";
+                                    }
+                                });
+                        }, delay_s, [](dpp::timer){});
                         
                         if (level_role->remove_previous) {
                             auto all_roles = db.get_level_roles(ev.guild_id);
                             for (auto& r : all_roles) {
                                 if (r.level < ev.new_level) {
-                                    bot.guild_member_remove_role(ev.guild_id, ev.user_id, r.role_id,
-                                        [gid = ev.guild_id, uid = ev.user_id, rid = r.role_id](const dpp::confirmation_callback_t& cb) {
-                                            if (cb.is_error()) {
-                                            std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to remove role " << rid
-                                                          << " from user " << uid << " in guild " << gid
-                                                          << ": " << cb.get_error().code << " - " << cb.get_error().message << "\n";
-                                            }
-                                        });
+                                    size_t role_delay = ++rest_call_index;
+                                    bot.start_timer([&bot, gid = ev.guild_id, uid = ev.user_id, rid = r.role_id](dpp::timer) {
+                                        bot.guild_member_remove_role(gid, uid, rid,
+                                            [gid, uid, rid](const dpp::confirmation_callback_t& cb) {
+                                                if (cb.is_error()) {
+                                                    std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to remove role " << rid
+                                                              << " from user " << uid << " in guild " << gid
+                                                              << ": " << cb.get_error().code << " - " << cb.get_error().message << "\n";
+                                                }
+                                            });
+                                    }, role_delay, [](dpp::timer){});
                                 }
                             }
                         }
                     }
                     
-                    // Use announcement channel or fall back to... nothing (we don't have
-                    // the original channel any more).  If the config specifies a channel, use it.
+                    // PERFORMANCE FIX: Stagger level-up announcements too
                     if (cfg->announcement_channel) {
                         uint64_t ch = *cfg->announcement_channel;
-                        bot.message_create(dpp::message(ch, announcement),
-                            [ch, gid = ev.guild_id, uid = ev.user_id](const dpp::confirmation_callback_t& cb) {
-                                if (cb.is_error()) {
-                                    std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to send level-up in channel " << ch
-                                              << " (guild " << gid << "): " << cb.get_error().message << "\n";
-                                }
-                            });
+                        size_t msg_delay = ++rest_call_index;
+                        bot.start_timer([&bot, ch, announcement, gid = ev.guild_id, uid = ev.user_id](dpp::timer) {
+                            bot.message_create(dpp::message(ch, announcement),
+                                [ch, gid, uid](const dpp::confirmation_callback_t& cb) {
+                                    if (cb.is_error()) {
+                                        std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to send level-up in channel " << ch
+                                                  << " (guild " << gid << "): " << cb.get_error().message << "\n";
+                                    }
+                                });
+                        }, msg_delay, [](dpp::timer){});
                     }
                     // If no announcement channel is configured and level-up announcements are
                     // enabled, we can't send to the original message channel because the batch
@@ -774,9 +840,11 @@ int main(int argc, char* argv[]) {
                 // Perform cache maintenance
                 cmd_handler.periodic_maintenance();
                 
-                // Update presence
-                dpp::activity activity(dpp::activity_type::at_streaming, "b.invite | bronxbot.xyz", "", "https://twitch.tv/siqnole");
-                bot.set_presence(dpp::presence(dpp::presence_status::ps_online, activity));
+                // Update presence (every 10th check = ~200s to reduce API load)
+                if (health_check_counter % 10 == 0) {
+                    dpp::activity activity(dpp::activity_type::at_streaming, "b.invite | bronxbot.xyz", "", "https://twitch.tv/siqnole");
+                    bot.set_presence(dpp::presence(dpp::presence_status::ps_online, activity));
+                }
             }, 20);
             
             // Periodically clean up XP leveling caches (every 30 minutes)
@@ -799,6 +867,8 @@ int main(int argc, char* argv[]) {
             }, 60);
             
             // AUTOFISHER: Background loop to run autofishing for active users
+            // Set bot pointer for DM notifications on autofisher failure
+            commands::fishing::set_autofish_bot(&bot);
             // Runs every 2 minutes and checks if each autofisher is due for a run
             bot.start_timer([&db](dpp::timer timer) {
                 try {
@@ -900,8 +970,16 @@ int main(int argc, char* argv[]) {
 
     // PERFORMANCE OPTIMIZATION: Use optimized message handler
     bot.on_message_create([&bot, &cmd_handler, &db, &async_stat_writer, verbose_events](const dpp::message_create_t& event) {
+        auto _msg_t0 = std::chrono::steady_clock::now();
+
         // Track XP for leveling system (before command processing)
         leveling::handle_message_xp(bot, event, &db);
+
+        auto _msg_t1 = std::chrono::steady_clock::now();
+        double _xp_ms = std::chrono::duration<double, std::milli>(_msg_t1 - _msg_t0).count();
+        if (_xp_ms > 5.0) {
+            std::cerr << "\033[1;33m[pre-cmd-slow]\033[0m handle_message_xp took " << _xp_ms << "ms\n";
+        }
 
         // Stats: track message event (skip bots)
         if (!event.msg.author.is_bot() && event.msg.guild_id != 0) {
@@ -999,12 +1077,15 @@ int main(int argc, char* argv[]) {
         cmd_handler.handle_slash_command(bot, event);
     });
     
-    // Handle patch history pagination buttons, setup buttons, and BAC captcha buttons
+    // Handle patch history pagination buttons, setup buttons, stats buttons, and BAC captcha buttons
     bot.on_button_click([&bot, &db, &cmd_handler](const dpp::button_click_t& event) {
         // BAC (Bronx AntiCheat) captcha button routing
         cmd_handler.bac_on_button_click(bot, event);
         commands::handle_patch_buttons(bot, event, &db);
         commands::setup::handle_setup_button(bot, event, &db);
+        commands::handle_stats_buttons(bot, event, &db);
+        commands::handle_passive_button(bot, event, &db);
+        commands::handle_endgame_button(bot, event, &db);
     });
 
     // Auto-role: assign roles to new members on join
@@ -1145,8 +1226,41 @@ int main(int argc, char* argv[]) {
     std::cout << clr::BOLD_BLUE << "│" << clr::RESET << clr::GREEN << "   ✔" << clr::RESET << " Hybrid DB (3-tier read/write)" << std::string(10, ' ') << clr::BOLD_BLUE << "│" << clr::RESET << "\n";
     std::cout << clr::BOLD_BLUE << "└───────────────────────────────────────────────┘" << clr::RESET << "\n\n";
     
-    // Start bot
-    bot.start(dpp::st_wait);
+    // Start bot with retry on transient 503 / gateway fetch failures.
+    // Discord occasionally returns 503 "upstream connect error" when the
+    // bot calls GET /gateway/bot during startup.  DPP logs it as CRITICAL
+    // and returns from start(), so we simply retry with exponential backoff.
+    {
+        constexpr int max_gateway_retries = 5;
+        constexpr int base_delay_seconds  = 5;   // 5, 10, 20, 40, 80
+
+        for (int attempt = 0; attempt < max_gateway_retries; ++attempt) {
+            if (attempt > 0) {
+                int delay = base_delay_seconds * (1 << (attempt - 1));
+                std::cerr << clr::YELLOW << "⚠ " << clr::RESET
+                          << "Gateway connection failed, retrying in " << delay
+                          << "s (attempt " << (attempt + 1) << "/" << max_gateway_retries << ")\n";
+                std::this_thread::sleep_for(std::chrono::seconds(delay));
+            }
+
+            try {
+                bot.start(dpp::st_wait);
+                break;  // clean exit from start() means the bot ran and then stopped
+            } catch (const dpp::connection_exception& e) {
+                std::cerr << clr::RED << "✘ " << clr::RESET
+                          << "Gateway connection exception: " << e.what() << "\n";
+                if (attempt + 1 >= max_gateway_retries) {
+                    std::cerr << clr::BOLD_RED << "✘ All gateway retries exhausted, giving up." << clr::RESET << "\n";
+                }
+            } catch (const std::exception& e) {
+                std::cerr << clr::RED << "✘ " << clr::RESET
+                          << "bot.start() exception: " << e.what() << "\n";
+                if (attempt + 1 >= max_gateway_retries) {
+                    std::cerr << clr::BOLD_RED << "✘ All gateway retries exhausted, giving up." << clr::RESET << "\n";
+                }
+            }
+        }
+    }
     
     // Cleanup — flush any remaining data before exit
     write_batch.stop();

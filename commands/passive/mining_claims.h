@@ -383,7 +383,7 @@ inline Command* get_claim_command(Database* db) {
                     
                     desc += "**#" + std::to_string(c.id) + "** " + c.ore_emoji + " **" + c.ore_name + "** (" + c.rarity + ")\n";
                     desc += "  📦 " + std::to_string(c.yield_min) + "-" + std::to_string(c.yield_max) + " × $" + economy::format_number(c.ore_value) + "/cycle";
-                    desc += ready ? " ✅" : " ⏳";
+                    desc += ready ? (" " + bronx::EMOJI_CHECK) : std::string(" ⏳");
                     desc += " • expires <t:" + std::to_string(exp_ts) + ":R>\n";
                 }
                 desc += "\n*Claims: " + std::to_string(claims.size()) + "/" + std::to_string(MAX_CLAIMS) + "*";
@@ -499,7 +499,7 @@ inline Command* get_claim_command(Database* db) {
                 for (const auto& c : claims) {
                     auto exp_ts = std::chrono::system_clock::to_time_t(c.expires_at);
                     bool ready = !c.last_collect || (now >= *c.last_collect + std::chrono::hours(4));
-                    desc += "**#" + std::to_string(c.id) + "** " + c.ore_emoji + " **" + c.ore_name + "** (" + c.rarity + ")" + (ready ? " ✅" : " ⏳") + "\n";
+                    desc += "**#" + std::to_string(c.id) + "** " + c.ore_emoji + " **" + c.ore_name + "** (" + c.rarity + ")" + (ready ? (" " + bronx::EMOJI_CHECK) : std::string(" ⏳")) + "\n";
                     desc += "  " + std::to_string(c.yield_min) + "-" + std::to_string(c.yield_max) + " × $" + economy::format_number(c.ore_value) + " • expires <t:" + std::to_string(exp_ts) + ":R>\n";
                 }
                 embed.set_description(desc);

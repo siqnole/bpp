@@ -288,7 +288,7 @@ static ::std::vector<FishType> fish_types = {
     {"complex number",  "𝐂",  2, 6000, 18000,  FishEffect::Wacky,       0.16, 6, 0, "multi-dimensional fish", Season::AllYear},
     
     // Dev/Programming-themed fish (Dev Rod + Segmentation Fault)
-    {"null pointer",    "⚠️", 18, 500,   2048,   FishEffect::Jackpot,     0.35,  6, 0, "points to nothing", Season::AllYear},
+    {"null pointer",    "<:warning:1476717080723063038>", 18, 500,   2048,   FishEffect::Jackpot,     0.35,  6, 0, "points to nothing", Season::AllYear},
     {"stack overflow",  "📚", 10, 1024,  4096,   FishEffect::Exponential, 0.15, 6, 0, "recursion gone wrong", Season::AllYear},
     {"memory leak",     "🕳️", 14, 512,   1536,   FishEffect::Flat,        0.2,  6, 0, "slowly draining resources", Season::AllYear},
     {"race condition",  "⚡", 6, 2048,  8192,   FishEffect::Volatile,    0.22, 6, 0, "timing is everything", Season::AllYear},

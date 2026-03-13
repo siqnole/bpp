@@ -93,6 +93,11 @@ inline std::string fmt_num(int64_t n) {
 struct BarItem  { std::string label; int64_t value; };
 struct LinePoint { std::string label; double value; };
 struct LineSeries { std::string name; RGBA colour; std::vector<double> values; };
+struct PieSlice   { std::string label; double value; RGBA colour; };
+struct ScatterPoint { double x; double y; };
+struct ScatterSeries { std::string name; RGBA colour; std::vector<ScatterPoint> points; };
+struct BarSeries  { std::string name; RGBA colour; std::vector<int64_t> values; };
+struct HeatmapCell { int row; int col; double value; };
 
 // ========================================================================
 //  render_horizontal_bar_chart
@@ -348,6 +353,426 @@ inline std::string render_summary_card(
         set_colour(cr, COL_DIM);
         cairo_move_to(cr, bx + 12, by + 58);
         cairo_show_text(cr, stats[i].first.c_str());
+    }
+
+    PngBuffer buf;
+    cairo_surface_write_to_png_stream(surface, png_write_cb, &buf);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+    return buf.data;
+}
+
+} // namespace chart
+} // namespace bronx
+
+// ========================================================================
+//  New chart renderers added below the original three
+// ========================================================================
+namespace bronx {
+namespace chart {
+
+// ========================================================================
+//  render_pie_chart
+//  circular pie chart with legend — for rarity distributions, proportions
+// ========================================================================
+inline std::string render_pie_chart(
+        const std::string& title,
+        const std::vector<PieSlice>& slices,
+        int width = 500, int height = 400)
+{
+    if (slices.empty()) return {};
+
+    auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    auto* cr = cairo_create(surface);
+
+    // background
+    round_rect(cr, 0, 0, width, height, 12);
+    set_colour(cr, COL_CARD);
+    cairo_fill(cr);
+
+    // title
+    double y_start = 20;
+    if (!title.empty()) {
+        set_font(cr, 14, true);
+        set_colour(cr, COL_TEXT);
+        cairo_move_to(cr, 20, y_start + 14);
+        cairo_show_text(cr, title.c_str());
+        y_start += 36;
+    }
+
+    // compute total
+    double total = 0;
+    for (auto& s : slices) total += s.value;
+    if (total <= 0) { cairo_destroy(cr); cairo_surface_destroy(surface); return {}; }
+
+    // pie geometry
+    double cx = width * 0.35;
+    double cy = y_start + (height - y_start) * 0.5;
+    double radius = std::min(cx - 30, (height - y_start) * 0.5 - 20);
+    if (radius < 30) radius = 30;
+
+    double angle = -M_PI / 2; // start at top
+    for (size_t i = 0; i < slices.size(); ++i) {
+        double sweep = (slices[i].value / total) * 2 * M_PI;
+        RGBA col = slices[i].colour.a > 0 ? slices[i].colour : PALETTE[i % PALETTE.size()];
+        cairo_set_source_rgba(cr, col.r, col.g, col.b, 0.85);
+        cairo_move_to(cr, cx, cy);
+        cairo_arc(cr, cx, cy, radius, angle, angle + sweep);
+        cairo_close_path(cr);
+        cairo_fill(cr);
+        angle += sweep;
+    }
+
+    // legend (right side)
+    double lx = width * 0.65;
+    double ly = y_start + 10;
+    set_font(cr, 10, false);
+    for (size_t i = 0; i < slices.size(); ++i) {
+        RGBA col = slices[i].colour.a > 0 ? slices[i].colour : PALETTE[i % PALETTE.size()];
+        // colour swatch
+        cairo_set_source_rgba(cr, col.r, col.g, col.b, 1.0);
+        round_rect(cr, lx, ly, 12, 12, 2);
+        cairo_fill(cr);
+        // label + percentage
+        set_colour(cr, COL_TEXT);
+        char pct_buf[32];
+        snprintf(pct_buf, sizeof(pct_buf), "%.1f%%", (slices[i].value / total) * 100.0);
+        std::string legend_text = slices[i].label + " " + pct_buf;
+        cairo_move_to(cr, lx + 18, ly + 10);
+        cairo_show_text(cr, legend_text.c_str());
+        ly += 20;
+        if (ly > height - 20) break;
+    }
+
+    PngBuffer buf;
+    cairo_surface_write_to_png_stream(surface, png_write_cb, &buf);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+    return buf.data;
+}
+
+// ========================================================================
+//  render_scatter_chart
+//  scatter plot with optional multiple series
+// ========================================================================
+inline std::string render_scatter_chart(
+        const std::string& title,
+        const std::vector<ScatterSeries>& series,
+        const std::string& x_label = "",
+        const std::string& y_label = "",
+        int width = 600, int height = 400)
+{
+    if (series.empty()) return {};
+
+    auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    auto* cr = cairo_create(surface);
+
+    // background
+    round_rect(cr, 0, 0, width, height, 12);
+    set_colour(cr, COL_CARD);
+    cairo_fill(cr);
+
+    const int pad_l = 58, pad_r = 20, pad_t = 48, pad_b = 50;
+    double chart_w = width - pad_l - pad_r;
+    double chart_h = height - pad_t - pad_b;
+
+    // title
+    if (!title.empty()) {
+        set_font(cr, 14, true);
+        set_colour(cr, COL_TEXT);
+        cairo_move_to(cr, pad_l, 28);
+        cairo_show_text(cr, title.c_str());
+    }
+
+    // find data bounds
+    double x_min = 1e18, x_max = -1e18, y_min = 1e18, y_max = -1e18;
+    for (auto& s : series) {
+        for (auto& p : s.points) {
+            x_min = std::min(x_min, p.x); x_max = std::max(x_max, p.x);
+            y_min = std::min(y_min, p.y); y_max = std::max(y_max, p.y);
+        }
+    }
+    if (x_min == x_max) x_max = x_min + 1;
+    if (y_min == y_max) y_max = y_min + 1;
+    // add 10% padding
+    double x_range = x_max - x_min;
+    double y_range = y_max - y_min;
+    x_min -= x_range * 0.05; x_max += x_range * 0.05;
+    y_min -= y_range * 0.05; y_max += y_range * 0.05;
+    if (y_min > 0) y_min = 0; // include zero
+
+    // grid lines (5 horizontal, 5 vertical)
+    for (int i = 0; i <= 4; ++i) {
+        double gy = pad_t + chart_h * (1.0 - i / 4.0);
+        set_colour(cr, COL_GRID);
+        cairo_set_line_width(cr, 1);
+        cairo_move_to(cr, pad_l, gy);
+        cairo_line_to(cr, width - pad_r, gy);
+        cairo_stroke(cr);
+        // y label
+        set_font(cr, 9, false);
+        set_colour(cr, COL_DIM);
+        double yv = y_min + (y_max - y_min) * i / 4.0;
+        std::string yl = fmt_num(static_cast<int64_t>(yv));
+        cairo_move_to(cr, pad_l - text_width(cr, yl) - 6, gy + 4);
+        cairo_show_text(cr, yl.c_str());
+    }
+
+    // axis labels
+    if (!x_label.empty()) {
+        set_font(cr, 10, false);
+        set_colour(cr, COL_DIM);
+        cairo_move_to(cr, pad_l + chart_w / 2 - text_width(cr, x_label) / 2, height - 8);
+        cairo_show_text(cr, x_label.c_str());
+    }
+    if (!y_label.empty()) {
+        set_font(cr, 10, false);
+        set_colour(cr, COL_DIM);
+        cairo_save(cr);
+        cairo_move_to(cr, 14, pad_t + chart_h / 2);
+        cairo_rotate(cr, -M_PI / 2);
+        cairo_show_text(cr, y_label.c_str());
+        cairo_restore(cr);
+    }
+
+    // draw points
+    for (auto& s : series) {
+        for (auto& p : s.points) {
+            double px = pad_l + (p.x - x_min) / (x_max - x_min) * chart_w;
+            double py = pad_t + chart_h * (1.0 - (p.y - y_min) / (y_max - y_min));
+            cairo_set_source_rgba(cr, s.colour.r, s.colour.g, s.colour.b, 0.8);
+            cairo_arc(cr, px, py, 4, 0, 2 * M_PI);
+            cairo_fill(cr);
+        }
+    }
+
+    // legend
+    if (series.size() > 1) {
+        double lx = pad_l;
+        double ly = height - 8;
+        set_font(cr, 10, false);
+        for (auto& s : series) {
+            cairo_set_source_rgba(cr, s.colour.r, s.colour.g, s.colour.b, 1.0);
+            cairo_arc(cr, lx + 5, ly - 4, 4, 0, 2 * M_PI);
+            cairo_fill(cr);
+            lx += 14;
+            set_colour(cr, COL_DIM);
+            cairo_move_to(cr, lx, ly);
+            cairo_show_text(cr, s.name.c_str());
+            lx += text_width(cr, s.name) + 16;
+        }
+    }
+
+    PngBuffer buf;
+    cairo_surface_write_to_png_stream(surface, png_write_cb, &buf);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+    return buf.data;
+}
+
+// ========================================================================
+//  render_stacked_bar_chart
+//  vertical stacked bar chart with multiple series per category
+// ========================================================================
+inline std::string render_stacked_bar_chart(
+        const std::string& title,
+        const std::vector<std::string>& labels,
+        const std::vector<BarSeries>& series,
+        int width = 600, int height = 400)
+{
+    if (labels.empty() || series.empty()) return {};
+
+    auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    auto* cr = cairo_create(surface);
+
+    // background
+    round_rect(cr, 0, 0, width, height, 12);
+    set_colour(cr, COL_CARD);
+    cairo_fill(cr);
+
+    const int pad_l = 58, pad_r = 20, pad_t = 48, pad_b = 50;
+    double chart_w = width - pad_l - pad_r;
+    double chart_h = height - pad_t - pad_b;
+
+    // title
+    if (!title.empty()) {
+        set_font(cr, 14, true);
+        set_colour(cr, COL_TEXT);
+        cairo_move_to(cr, pad_l, 28);
+        cairo_show_text(cr, title.c_str());
+    }
+
+    // compute stacked max
+    int64_t max_stack = 1;
+    for (size_t c = 0; c < labels.size(); ++c) {
+        int64_t stack = 0;
+        for (auto& s : series) {
+            if (c < s.values.size()) stack += s.values[c];
+        }
+        max_stack = std::max(max_stack, stack);
+    }
+    // nice rounding
+    double nice = std::pow(10, std::floor(std::log10((double)max_stack)));
+    double max_val = std::ceil((double)max_stack / nice) * nice;
+    if (max_val < 5) max_val = 5;
+
+    // grid lines
+    for (int i = 0; i <= 4; ++i) {
+        double gy = pad_t + chart_h * (1.0 - i / 4.0);
+        set_colour(cr, COL_GRID);
+        cairo_set_line_width(cr, 1);
+        cairo_move_to(cr, pad_l, gy);
+        cairo_line_to(cr, width - pad_r, gy);
+        cairo_stroke(cr);
+        set_font(cr, 9, false);
+        set_colour(cr, COL_DIM);
+        std::string yl = fmt_num(static_cast<int64_t>(max_val * i / 4.0));
+        cairo_move_to(cr, pad_l - text_width(cr, yl) - 6, gy + 4);
+        cairo_show_text(cr, yl.c_str());
+    }
+
+    // bars
+    double bar_w = chart_w / labels.size() * 0.7;
+    double gap_w = chart_w / labels.size() * 0.3;
+
+    for (size_t c = 0; c < labels.size(); ++c) {
+        double bx = pad_l + c * (bar_w + gap_w) + gap_w / 2;
+        double stack_y = pad_t + chart_h; // bottom
+
+        for (size_t si = 0; si < series.size(); ++si) {
+            int64_t val = (c < series[si].values.size()) ? series[si].values[c] : 0;
+            if (val <= 0) continue;
+            double bh = (val / max_val) * chart_h;
+            stack_y -= bh;
+            cairo_set_source_rgba(cr, series[si].colour.r, series[si].colour.g, series[si].colour.b, 0.8);
+            round_rect(cr, bx, stack_y, bar_w, bh, 2);
+            cairo_fill(cr);
+        }
+
+        // x-axis label
+        set_font(cr, 9, false);
+        set_colour(cr, COL_DIM);
+        std::string lbl = labels[c];
+        if (lbl.size() > 8) lbl = lbl.substr(0, 6) + "..";
+        double tw = text_width(cr, lbl);
+        cairo_move_to(cr, bx + bar_w / 2 - tw / 2, height - pad_b + 16);
+        cairo_show_text(cr, lbl.c_str());
+    }
+
+    // legend
+    if (series.size() > 1) {
+        double lx = pad_l;
+        double ly = height - 8;
+        set_font(cr, 10, false);
+        for (auto& s : series) {
+            cairo_set_source_rgba(cr, s.colour.r, s.colour.g, s.colour.b, 1.0);
+            round_rect(cr, lx, ly - 10, 12, 12, 2);
+            cairo_fill(cr);
+            lx += 16;
+            set_colour(cr, COL_DIM);
+            cairo_move_to(cr, lx, ly);
+            cairo_show_text(cr, s.name.c_str());
+            lx += text_width(cr, s.name) + 14;
+        }
+    }
+
+    PngBuffer buf;
+    cairo_surface_write_to_png_stream(surface, png_write_cb, &buf);
+    cairo_destroy(cr);
+    cairo_surface_destroy(surface);
+    return buf.data;
+}
+
+// ========================================================================
+//  render_heatmap
+//  colored grid (rows × cols) — for hour-of-day × day-of-week activity
+// ========================================================================
+inline std::string render_heatmap(
+        const std::string& title,
+        const std::vector<std::string>& row_labels,   // e.g. days: Sun..Sat
+        const std::vector<std::string>& col_labels,    // e.g. hours: 0..23
+        const std::vector<std::vector<double>>& matrix, // [row][col] values
+        int width = 700, int height = 0)
+{
+    int rows = (int)row_labels.size();
+    int cols = (int)col_labels.size();
+    if (rows == 0 || cols == 0) return {};
+
+    const int pad = 20;
+    const int title_h = title.empty() ? 0 : 36;
+    const int row_label_w = 50;
+    const int col_label_h = 24;
+    const int cell_w = std::max(18, (width - pad * 2 - row_label_w) / cols);
+    const int cell_h = 22;
+    if (height <= 0) height = pad * 2 + title_h + col_label_h + rows * cell_h + 10;
+
+    auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    auto* cr = cairo_create(surface);
+
+    // background
+    round_rect(cr, 0, 0, width, height, 12);
+    set_colour(cr, COL_CARD);
+    cairo_fill(cr);
+
+    // title
+    double y = pad;
+    if (!title.empty()) {
+        set_font(cr, 14, true);
+        set_colour(cr, COL_TEXT);
+        cairo_move_to(cr, pad, y + 14);
+        cairo_show_text(cr, title.c_str());
+        y += title_h;
+    }
+
+    // find max value for colour scaling
+    double max_val = 1;
+    for (auto& row : matrix)
+        for (auto v : row) max_val = std::max(max_val, v);
+
+    // column labels (hours)
+    set_font(cr, 8, false);
+    for (int c = 0; c < cols; ++c) {
+        double cx_pos = pad + row_label_w + c * cell_w + cell_w / 2;
+        set_colour(cr, COL_DIM);
+        double tw = text_width(cr, col_labels[c]);
+        cairo_move_to(cr, cx_pos - tw / 2, y + 12);
+        cairo_show_text(cr, col_labels[c].c_str());
+    }
+    y += col_label_h;
+
+    // cells
+    for (int r = 0; r < rows; ++r) {
+        // row label
+        set_font(cr, 9, false);
+        set_colour(cr, COL_DIM);
+        cairo_move_to(cr, pad, y + cell_h * 0.7);
+        cairo_show_text(cr, row_labels[r].c_str());
+
+        for (int c = 0; c < cols; ++c) {
+            double val = (r < (int)matrix.size() && c < (int)matrix[r].size()) ? matrix[r][c] : 0;
+            double intensity = val / max_val;
+
+            // colour: lerp from COL_CARD (0) through COL_ACCENT (1)
+            double lr = COL_CARD.r + (COL_ACCENT.r - COL_CARD.r) * intensity;
+            double lg = COL_CARD.g + (COL_ACCENT.g - COL_CARD.g) * intensity;
+            double lb = COL_CARD.b + (COL_ACCENT.b - COL_CARD.b) * intensity;
+            cairo_set_source_rgba(cr, lr, lg, lb, 0.5 + 0.5 * intensity);
+
+            double cx_pos = pad + row_label_w + c * cell_w;
+            round_rect(cr, cx_pos + 1, y + 1, cell_w - 2, cell_h - 2, 3);
+            cairo_fill(cr);
+
+            // show count in bright cells
+            if (intensity > 0.4 && val > 0) {
+                set_font(cr, 7, false);
+                set_colour(cr, COL_TEXT);
+                std::string vs = std::to_string((int)val);
+                double tw = text_width(cr, vs);
+                cairo_move_to(cr, cx_pos + cell_w / 2 - tw / 2, y + cell_h * 0.7);
+                cairo_show_text(cr, vs.c_str());
+            }
+        }
+        y += cell_h;
     }
 
     PngBuffer buf;

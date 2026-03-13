@@ -81,7 +81,7 @@ static const std::vector<HeistPhaseButtons> PHASE_BUTTONS = {
     {}, // phase 0 placeholder
     {"🔓 Click here!", "🔒 Locked!", "🚫 Wrong!"},
     {"⛏️ Dig here!", "🪨 Dead end", "💥 Collapse!"},
-    {"✅ Firewall down", "⚠️ Alarm!", "❌ Rejected!"},
+    {bronx::EMOJI_CHECK + " Firewall down", bronx::EMOJI_WARNING + " Alarm!", bronx::EMOJI_DENY + " Rejected!"},
 };
 
 // ── Build lobby message ──────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ static dpp::message build_phase_message(const HeistSession& s) {
         "**15 seconds to click the right button!**\n\n"
         "Players who respond:\n";
     for (uint64_t mid : s.members)
-        desc += (s.phase_clicked.count(mid) ? "✅" : "⏳") + std::string(" <@") + std::to_string(mid) + ">\n";
+        desc += (s.phase_clicked.count(mid) ? bronx::EMOJI_CHECK : std::string("⏳")) + std::string(" <@") + std::to_string(mid) + ">\n";
 
     // Build 3 buttons in random order, correct_btn position determines which is "correct"
     std::vector<std::pair<std::string, int>> btns = {
@@ -573,7 +573,7 @@ inline void register_heist_handlers(dpp::cluster& bot, Database* db) {
 
         event.reply(dpp::ir_channel_message_with_source,
             dpp::message().add_embed(
-                correct ? bronx::success("✅ correct! contribution +1") : bronx::error("❌ wrong button!")
+                correct ? bronx::success("correct! contribution +1") : bronx::error("wrong button!")
             ).set_flags(dpp::m_ephemeral));
     });
 }

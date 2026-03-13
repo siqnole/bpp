@@ -10,6 +10,7 @@
 #include <chrono>
 #include <random>
 #include <algorithm>
+#include <atomic>
 
 namespace commands {
 namespace games {
@@ -30,6 +31,8 @@ struct BlackTeaGame {
     bool round_active = false;                // whether currently accepting words
     ::std::string current_pattern;              // current 3-letter pattern
     int round = 0;
+
+    bool force_stop = false;                    // admin force-stop flag
 };
 
 static ::std::map<uint64_t, BlackTeaGame> active_blacktea_games;
@@ -72,7 +75,7 @@ static void update_lobby_message(dpp::cluster& bot, const BlackTeaGame& game) {
     dpp::embed embed = dpp::embed()
         .set_color(0x1E90FF)
         .set_title("⏰ BLACKTEA - Lobby")
-        .set_description(":alarm_clock: Waiting for players, react with ✅ to join. The game will begin in 30 seconds.")
+        .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin in 30 seconds.")
         .add_field("Players", ::std::to_string(game.players.size()) + " players joined", true)
         .add_field("Minimum", "3 players to start", true)
         .set_footer("Each player starts with 2 lives. Words must be unique.", "");
@@ -114,6 +117,15 @@ static void run_blacktea_game_loop(dpp::cluster& bot, uint64_t game_id) {
 
     // Game loop
     while (true) {
+        // Check force-stop flag
+        if (game.force_stop) {
+            bot.message_create(dpp::message(game.channel_id,
+                dpp::embed().set_color(0xFF4500).set_title("BLACKTEA - Force Ended")
+                .set_description("this game was ended by a server administrator.")));
+            active_blacktea_games.erase(game_id);
+            return;
+        }
+
         // Check active players
         ::std::vector<uint64_t> alive;
         for (auto uid : game.players) {
@@ -140,6 +152,15 @@ static void run_blacktea_game_loop(dpp::cluster& bot, uint64_t game_id) {
 
         // Wait 10 seconds collecting submissions (message handler will mark responses)
         ::std::this_thread::sleep_for(::std::chrono::seconds(10));
+
+        // Check force-stop after sleep
+        if (game.force_stop) {
+            bot.message_create(dpp::message(game.channel_id,
+                dpp::embed().set_color(0xFF4500).set_title("BLACKTEA - Force Ended")
+                .set_description("this game was ended by a server administrator.")));
+            active_blacktea_games.erase(game_id);
+            return;
+        }
 
         // Evaluate results
         ::std::vector<uint64_t> eliminated_this_round;
@@ -197,15 +218,15 @@ static void run_blacktea_game_loop(dpp::cluster& bot, uint64_t game_id) {
 
 // Reaction join handler and message submit handler will be registered externally via register_blacktea_handlers
 inline void register_blacktea_handlers(dpp::cluster& bot) {
-    // Reaction join (✅)
+    // Reaction join (custom :check: emoji)
     bot.on_message_reaction_add([&bot](const dpp::message_reaction_add_t& event) {
         // find any active lobby with this message id
         for (auto& kv : active_blacktea_games) {
             auto& game = kv.second;
             if (!game.active && game.message_id == event.message_id && game.channel_id == event.channel_id) {
-                // Only accept ✅
+                // Only accept :check: custom emoji
                 ::std::string emoji_name = event.reacting_emoji.name;
-                if (emoji_name != "✅") return;
+                if (emoji_name != "check") return;
 
                 uint64_t uid = event.reacting_user.id;
                 // Ignore bots
@@ -294,7 +315,7 @@ inline Command* get_blacktea_command() {
             dpp::embed embed = dpp::embed()
                 .set_color(0x1E90FF)
                 .set_title("⏰ BLACKTEA - Lobby")
-                .set_description(":alarm_clock: Waiting for players, react with ✅ to join. The game will begin in 30 seconds.")
+                .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin in 30 seconds.")
                 .add_field("Players", "0 players joined", true)
                 .add_field("Minimum", "3 players to start", true)
                 .set_footer("Each player starts with 2 lives. Words must be unique.", "");
@@ -315,8 +336,8 @@ inline Command* get_blacktea_command() {
                 auto sent_msg = callback.get<dpp::message>();
                 active_blacktea_games[game_id].message_id = sent_msg.id;
 
-                // add ✅ reaction so users can join quickly
-                try { bot.message_add_reaction(sent_msg.id, sent_msg.channel_id, "✅"); } catch (...) {}
+                // add :check: reaction so users can join quickly
+                try { bot.message_add_reaction(sent_msg.id, sent_msg.channel_id, "check:1476703556428890132"); } catch (...) {}
 
                 // start lobby timer on background thread
                 ::std::thread([game_id, &bot]() mutable {
@@ -340,7 +361,7 @@ inline Command* get_blacktea_command() {
             dpp::embed embed = dpp::embed()
                 .set_color(0x1E90FF)
                 .set_title("⏰ BLACKTEA - Lobby")
-                .set_description(":alarm_clock: Waiting for players, react with ✅ to join. The game will begin in 30 seconds.")
+                .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin in 30 seconds.")
                 .add_field("Players", "0 players joined", true)
                 .add_field("Minimum", "3 players to start", true)
                 .set_footer("Each player starts with 2 lives. Words must be unique.", "");
@@ -367,8 +388,8 @@ inline Command* get_blacktea_command() {
                             active_blacktea_games[game_id].message_id = msg.id;
                             active_blacktea_games[game_id].channel_id = channel_id;
                             
-                            // add ✅ reaction so users can join quickly
-                            try { bot.message_add_reaction(msg.id, channel_id, "✅"); } catch (...) {}
+                            // add :check: reaction so users can join quickly
+                            try { bot.message_add_reaction(msg.id, channel_id, "check:1476703556428890132"); } catch (...) {}
                         } catch (...) {}
                     }
                 });

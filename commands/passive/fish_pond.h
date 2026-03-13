@@ -292,13 +292,13 @@ static dpp::embed build_pond_embed(Database* db, uint64_t user_id, const dpp::us
         auto next = *pond.last_collect + std::chrono::hours(6);
         auto now = std::chrono::system_clock::now();
         if (now >= next) {
-            desc += "\n✅ **Ready to collect!** Use `/pond collect`";
+            desc += "\n" + bronx::EMOJI_CHECK + " **Ready to collect!** Use `/pond collect`";
         } else {
             auto ts = std::chrono::system_clock::to_time_t(next);
             desc += "\n⏰ Next collect: <t:" + std::to_string(ts) + ":R>";
         }
     } else if (!fish.empty()) {
-        desc += "\n✅ **Ready to collect!** Use `/pond collect`";
+        desc += "\n" + bronx::EMOJI_CHECK + " **Ready to collect!** Use `/pond collect`";
     }
     
     embed.set_description(desc);

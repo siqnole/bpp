@@ -772,7 +772,7 @@ std::vector<Command*> get_utility_commands() {
                         }
                         
                         // Send confirmation
-                        std::string description = "✅ Cleaned up **" + std::to_string(delete_count) + "** messages";
+                        std::string description = bronx::EMOJI_CHECK + " Cleaned up **" + std::to_string(delete_count) + "** messages";
                         auto embed = bronx::create_embed(description);
                         embed.set_color(0x43B581);
                         
@@ -792,7 +792,7 @@ std::vector<Command*> get_utility_commands() {
                             return;
                         }
                         
-                        std::string description = "✅ Cleaned up **1** message";
+                        std::string description = bronx::EMOJI_CHECK + " Cleaned up **1** message";
                         auto embed = bronx::create_embed(description);
                         embed.set_color(0x43B581);
                         

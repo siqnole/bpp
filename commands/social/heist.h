@@ -199,9 +199,9 @@ static dpp::message build_heist_lobby(const HeistSession& s) {
     
     int needed = std::max(0, 3 - (int)s.participants.size());
     if (needed > 0) {
-        desc += "\n⚠️ Need **" + std::to_string(needed) + "** more player(s) to start!";
+        desc += "\n" + bronx::EMOJI_WARNING + " Need **" + std::to_string(needed) + "** more player(s) to start!";
     } else {
-        desc += "\n✅ Ready to start! Host can click **▶ Start**";
+        desc += "\n" + bronx::EMOJI_CHECK + " Ready to start! Host can click **▶ Start**";
     }
     
     embed.set_description(desc);
@@ -232,7 +232,10 @@ static dpp::message build_heist_lobby(const HeistSession& s) {
     dpp::component row2;
     row2.set_type(dpp::cot_action_row);
     row2.add_component(make_btn("▶ Start Heist", "heist_start_" + std::to_string(s.channel_id), dpp::cos_success));
-    row2.add_component(make_btn("❌ Cancel", "heist_cancel_" + std::to_string(s.channel_id), dpp::cos_danger));
+    row2.add_component(dpp::component().set_type(dpp::cot_button)
+        .set_label("Cancel").set_style(dpp::cos_danger)
+        .set_emoji("deny", 1476703341454168288)
+        .set_id("heist_cancel_" + std::to_string(s.channel_id)));
     msg.add_component(row2);
     
     return msg;
