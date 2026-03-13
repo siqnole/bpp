@@ -24,6 +24,9 @@
 #include <string>
 #include <iostream>
 
+// Forward declaration — avoid circular include with async_stat_writer.h
+namespace bronx { namespace perf { class RemoteStatsConnection; } }
+
 namespace bronx {
 namespace batch {
 
@@ -120,6 +123,11 @@ public:
     // Force immediate flush (shutdown / owner commands)
     void flush_now() { flush(); }
 
+    // Set remote stats connection for Aiven dual-write (call after AsyncStatWriter is initialized)
+    void set_remote_connection(bronx::perf::RemoteStatsConnection* remote) {
+        remote_stats_ = remote;
+    }
+
     // Get flush statistics
     struct FlushStats {
         std::atomic<uint64_t> total_flushes{0};
@@ -158,6 +166,7 @@ private:
     // ---- control ----
     bronx::db::Database* db_;
     bronx::local::LocalDB* local_db_;
+    bronx::perf::RemoteStatsConnection* remote_stats_ = nullptr;  // Aiven dual-write (optional)
     std::chrono::milliseconds flush_interval_;
     std::atomic<bool> running_{false};
     std::thread flush_thread_;
@@ -211,6 +220,16 @@ private:
             try {
                 db_->update_wallet(user_id, delta);
                 stats_.wallet_writes++;
+                // Dual-write to Aiven for dashboard
+                if (remote_stats_) {
+                    // Ensure user exists on Aiven before updating
+                    std::string ensure = "INSERT IGNORE INTO users (user_id, wallet, bank) VALUES ("
+                        + std::to_string(user_id) + ", 0, 0)";
+                    remote_stats_->execute(ensure);
+                    std::string sql = "UPDATE users SET wallet = wallet + (" + std::to_string(delta)
+                        + ") WHERE user_id = " + std::to_string(user_id);
+                    remote_stats_->execute(sql);
+                }
             } catch (const std::exception& e) {
                 stats_.errors++;
                 std::cerr << "[write_batch] wallet flush failed for " << user_id << ": " << e.what() << "\n";
@@ -226,6 +245,15 @@ private:
             try {
                 db_->update_bank(user_id, delta);
                 stats_.bank_writes++;
+                // Dual-write to Aiven for dashboard
+                if (remote_stats_) {
+                    std::string ensure = "INSERT IGNORE INTO users (user_id, wallet, bank) VALUES ("
+                        + std::to_string(user_id) + ", 0, 0)";
+                    remote_stats_->execute(ensure);
+                    std::string sql = "UPDATE users SET bank = bank + (" + std::to_string(delta)
+                        + ") WHERE user_id = " + std::to_string(user_id);
+                    remote_stats_->execute(sql);
+                }
             } catch (const std::exception& e) {
                 stats_.errors++;
                 std::cerr << "[write_batch] bank flush failed for " << user_id << ": " << e.what() << "\n";
