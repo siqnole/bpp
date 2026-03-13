@@ -110,6 +110,16 @@ public:
     }
     
     bool is_connected() const { return conn_ != nullptr; }
+
+    // Keep-alive ping — call periodically to prevent connection timeout
+    void ping() {
+        if (!conn_) return;
+        if (mysql_ping(conn_) != 0) {
+            std::cerr << "[remote_stats] Keep-alive ping failed, reconnecting...\n";
+            disconnect();
+            connect();
+        }
+    }
     
     bool execute(const std::string& sql) {
         if (!conn_) {
@@ -184,8 +194,45 @@ private:
             channel_id VARCHAR(32) NOT NULL DEFAULT '__guild__',
             stat_date DATE NOT NULL,
             messages_count INT UNSIGNED NOT NULL DEFAULT 0,
+            edits_count INT UNSIGNED NOT NULL DEFAULT 0,
+            deletes_count INT UNSIGNED NOT NULL DEFAULT 0,
+            joins_count INT UNSIGNED NOT NULL DEFAULT 0,
+            leaves_count INT UNSIGNED NOT NULL DEFAULT 0,
             commands_count INT UNSIGNED NOT NULL DEFAULT 0,
-            PRIMARY KEY (guild_id, channel_id, stat_date)
+            active_users INT UNSIGNED NOT NULL DEFAULT 0,
+            PRIMARY KEY (guild_id, channel_id, stat_date),
+            INDEX idx_guild_date (guild_id, stat_date)
+        ))");
+
+        // Migration: add missing columns if table was created with old schema
+        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS edits_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER messages_count");
+        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS deletes_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER edits_count");
+        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS joins_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER deletes_count");
+        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS leaves_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER joins_count");
+        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS active_users INT UNSIGNED NOT NULL DEFAULT 0 AFTER commands_count");
+
+        // Ensure users table exists on Aiven for economy dashboard queries
+        execute(R"(CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT UNSIGNED PRIMARY KEY,
+            wallet BIGINT NOT NULL DEFAULT 0,
+            bank BIGINT NOT NULL DEFAULT 0,
+            bank_limit BIGINT NOT NULL DEFAULT 5000,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ))");
+
+        // User activity daily — tracks messages, voice, commands per user per day
+        execute(R"(CREATE TABLE IF NOT EXISTS user_activity_daily (
+            guild_id BIGINT UNSIGNED NOT NULL,
+            user_id BIGINT UNSIGNED NOT NULL,
+            stat_date DATE NOT NULL,
+            messages INT UNSIGNED NOT NULL DEFAULT 0,
+            edits INT UNSIGNED NOT NULL DEFAULT 0,
+            deletes INT UNSIGNED NOT NULL DEFAULT 0,
+            commands_used INT UNSIGNED NOT NULL DEFAULT 0,
+            voice_minutes INT UNSIGNED NOT NULL DEFAULT 0,
+            PRIMARY KEY (guild_id, user_id, stat_date),
+            INDEX idx_guild_date (guild_id, stat_date),
+            INDEX idx_user_date (user_id, stat_date)
         ))");
     }
 };
@@ -215,6 +262,9 @@ public:
     }
 
     ~AsyncStatWriter() { stop(); }
+
+    // Expose remote connection for other components (e.g. WriteBatchQueue)
+    RemoteStatsConnection& remote_connection() { return remote_stats_; }
 
     void start() {
         if (running_.exchange(true)) return;
@@ -395,6 +445,7 @@ private:
     std::thread flush_thread_;
     std::mutex cv_mutex_;
     std::condition_variable cv_;
+    std::chrono::steady_clock::time_point last_ping_ = std::chrono::steady_clock::now();
 
     void flush_loop() {
         while (running_.load()) {
@@ -402,6 +453,14 @@ private:
             cv_.wait_for(lk, flush_interval_, [this] { return !running_.load(); });
             if (!running_.load()) break;
             lk.unlock();
+
+            // Keep-alive: ping Aiven every ~30s to prevent connection drop
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_ping_ > std::chrono::seconds(30)) {
+                remote_stats_.ping();
+                last_ping_ = now;
+            }
+
             flush();
         }
     }

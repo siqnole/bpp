@@ -310,9 +310,13 @@ int main(int argc, char* argv[]) {
     
     // 2. Write batch queue — non-blocking wallet/bank/inventory/stat writes
     bronx::batch::WriteBatchQueue write_batch(&db, &local_db, std::chrono::milliseconds(2000));
+    // Wire up Aiven dual-write: economy mutations go to both local + Aiven for dashboard
+    write_batch.set_remote_connection(&async_stat_writer.remote_connection());
     write_batch.start();
     std::cout << clr::GREEN << "✔ " << clr::RESET << "Write batch queue started " 
-              << clr::DIM << "(flush interval: 2s)" << clr::RESET << "\n";
+              << clr::DIM << "(flush interval: 2s, Aiven dual-write: "
+              << (async_stat_writer.remote_connection().is_connected() ? "enabled" : "disabled")
+              << ")" << clr::RESET << "\n";
     
     // 3. API cache client — fetch leaderboards/aggregations from the site API
     bronx::api::ApiCacheClient api_client(&local_db);
