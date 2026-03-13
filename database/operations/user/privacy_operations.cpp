@@ -29,7 +29,17 @@ static std::array<unsigned char, 32> get_encryption_key() {
     if (env_key && strlen(env_key) >= 32) {
         std::memcpy(key.data(), env_key, 32);
     } else {
-        // fallback: deterministic key (NOT for production — set BRONX_ENCRYPTION_KEY)
+        // SECURITY: Refuse to start with insecure default key in production.
+        // The deterministic fallback is only allowed if BRONX_ALLOW_DEFAULT_KEY=1
+        // is explicitly set (for development environments).
+        const char* allow_default = std::getenv("BRONX_ALLOW_DEFAULT_KEY");
+        if (!allow_default || allow_default[0] != '1') {
+            std::cerr << "\033[1;31m✘ FATAL: BRONX_ENCRYPTION_KEY is not set or too short (need >= 32 bytes).\033[0m\n";
+            std::cerr << "  Set it via: export BRONX_ENCRYPTION_KEY=<32+ byte secret>\n";
+            std::cerr << "  For development only: export BRONX_ALLOW_DEFAULT_KEY=1\n";
+            std::abort();
+        }
+        // Development fallback: deterministic key (NOT for production)
         const std::string seed = "bronx-identity-encryption-2026-default";
         unsigned char hash[32];
         EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -42,7 +52,7 @@ static std::array<unsigned char, 32> get_encryption_key() {
         
         static bool warned = false;
         if (!warned) {
-            std::cerr << "\033[33m⚠ privacy: using default encryption key — set BRONX_ENCRYPTION_KEY for production\033[0m\n";
+            std::cerr << "\033[33m⚠ privacy: using DEFAULT encryption key — set BRONX_ENCRYPTION_KEY for production\033[0m\n";
             warned = true;
         }
     }

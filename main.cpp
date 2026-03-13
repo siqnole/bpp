@@ -288,7 +288,7 @@ int main(int argc, char* argv[]) {
     // and increment_stat() calls off the gateway threads.  These were doing
     // 3 blocking DB round-trips per command, adding 150-300ms to every response.
     // Pass Aiven config for dual-write: local DB for bot, Aiven for dashboard
-    std::string aiven_config_path = "data/db_config_aiven.json";
+    std::string aiven_config_path = "../data/db_config_aiven.json";
     bronx::perf::AsyncStatWriter async_stat_writer(&db, std::chrono::milliseconds(3000), verbose_events, aiven_config_path);
     async_stat_writer.start();
     bronx::perf::g_stat_writer = &async_stat_writer;  // expose for command_handler.h
@@ -739,7 +739,8 @@ int main(int argc, char* argv[]) {
                         // REST call to avoid flooding the queue (previously fired up
                         // to 20+ guild_member_remove_role calls in a tight loop).
                         size_t delay_s = ++rest_call_index;
-                        bot.start_timer([&bot, gid = ev.guild_id, uid = ev.user_id, rid = level_role->role_id](dpp::timer) {
+                        bot.start_timer([&bot, gid = ev.guild_id, uid = ev.user_id, rid = level_role->role_id](dpp::timer t) {
+                            bot.stop_timer(t);
                             bot.guild_member_add_role(gid, uid, rid,
                                 [gid, uid, rid](const dpp::confirmation_callback_t& cb) {
                                     if (cb.is_error()) {
@@ -755,7 +756,8 @@ int main(int argc, char* argv[]) {
                             for (auto& r : all_roles) {
                                 if (r.level < ev.new_level) {
                                     size_t role_delay = ++rest_call_index;
-                                    bot.start_timer([&bot, gid = ev.guild_id, uid = ev.user_id, rid = r.role_id](dpp::timer) {
+                                    bot.start_timer([&bot, gid = ev.guild_id, uid = ev.user_id, rid = r.role_id](dpp::timer t) {
+                                        bot.stop_timer(t);
                                         bot.guild_member_remove_role(gid, uid, rid,
                                             [gid, uid, rid](const dpp::confirmation_callback_t& cb) {
                                                 if (cb.is_error()) {
@@ -774,7 +776,8 @@ int main(int argc, char* argv[]) {
                     if (cfg->announcement_channel) {
                         uint64_t ch = *cfg->announcement_channel;
                         size_t msg_delay = ++rest_call_index;
-                        bot.start_timer([&bot, ch, announcement, gid = ev.guild_id, uid = ev.user_id](dpp::timer) {
+                        bot.start_timer([&bot, ch, announcement, gid = ev.guild_id, uid = ev.user_id](dpp::timer t) {
+                            bot.stop_timer(t);
                             bot.message_create(dpp::message(ch, announcement),
                                 [ch, gid, uid](const dpp::confirmation_callback_t& cb) {
                                     if (cb.is_error()) {

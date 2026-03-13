@@ -98,15 +98,25 @@ private:
     mutable std::shared_mutex mutex_;
     std::unordered_map<K, CacheEntry> cache_;
     std::chrono::milliseconds default_ttl_;
+    size_t max_size_;  // max entries; 0 = unlimited
 
 public:
-    explicit TTLCache(std::chrono::milliseconds ttl = std::chrono::minutes(5))
-        : default_ttl_(ttl) {}
+    explicit TTLCache(std::chrono::milliseconds ttl = std::chrono::minutes(5),
+                      size_t max_size = 50000)
+        : default_ttl_(ttl), max_size_(max_size) {}
     
     void set(const K& key, const V& value, std::chrono::milliseconds ttl = std::chrono::milliseconds(0)) {
         std::unique_lock lock(mutex_);
         auto expiry = std::chrono::steady_clock::now() + (ttl.count() > 0 ? ttl : default_ttl_);
         cache_[key] = {value, expiry};
+        // Evict expired entries if we exceed max_size to prevent unbounded growth
+        if (max_size_ > 0 && cache_.size() > max_size_) {
+            evict_expired_unlocked();
+            // If still over limit after evicting expired, remove oldest entries
+            if (cache_.size() > max_size_) {
+                evict_oldest_unlocked(cache_.size() - max_size_);
+            }
+        }
     }
     
     std::optional<V> get(const K& key) {
@@ -147,6 +157,12 @@ public:
     // Clean up expired entries
     void cleanup() {
         std::unique_lock lock(mutex_);
+        evict_expired_unlocked();
+    }
+
+private:
+    // Must be called with mutex_ held exclusively
+    void evict_expired_unlocked() {
         auto now = std::chrono::steady_clock::now();
         for (auto it = cache_.begin(); it != cache_.end();) {
             if (now > it->second.expiry) {
@@ -154,6 +170,25 @@ public:
             } else {
                 ++it;
             }
+        }
+    }
+
+    // Evict N entries with the earliest expiry (LRU-like)
+    // Must be called with mutex_ held exclusively
+    void evict_oldest_unlocked(size_t count) {
+        if (count == 0 || cache_.empty()) return;
+        // Find the N entries closest to expiry
+        std::vector<typename std::unordered_map<K, CacheEntry>::iterator> candidates;
+        candidates.reserve(cache_.size());
+        for (auto it = cache_.begin(); it != cache_.end(); ++it) {
+            candidates.push_back(it);
+        }
+        // Sort by expiry (earliest first)
+        std::sort(candidates.begin(), candidates.end(),
+            [](const auto& a, const auto& b) { return a->second.expiry < b->second.expiry; });
+        size_t to_remove = std::min(count, candidates.size());
+        for (size_t i = 0; i < to_remove; ++i) {
+            cache_.erase(candidates[i]);
         }
     }
 };

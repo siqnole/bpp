@@ -45,11 +45,11 @@ public:
             if (pos == std::string::npos) return "";
             pos = json.find(":", pos);
             if (pos == std::string::npos) return "";
-            size_t start = json.find_first_not_of(" \t\n\"", pos + 1);
+            size_t start = json.find_first_not_of(" \t\n", pos + 1);
             if (start == std::string::npos) return "";
             // Handle numbers vs strings
             if (json[start] == '"') {
-                start++;
+                start++;  // skip opening quote
                 size_t end = json.find("\"", start);
                 return json.substr(start, end - start);
             } else {
@@ -81,16 +81,19 @@ public:
             return false;
         }
         
-        // Enable SSL for remote connections
+        // Enable SSL for remote connections (required by Aiven)
         mysql_ssl_set(conn_, nullptr, nullptr, nullptr, nullptr, nullptr);
+        my_bool verify = 0;  // Don't verify server cert (Aiven uses self-signed)
+        mysql_options(conn_, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify);
         
-        unsigned int timeout = 5;
+        unsigned int timeout = 10;
         mysql_options(conn_, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
         mysql_options(conn_, MYSQL_OPT_READ_TIMEOUT, &timeout);
         mysql_options(conn_, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
         
+        // Use CLIENT_SSL flag to force SSL connection
         if (!mysql_real_connect(conn_, host_.c_str(), user_.c_str(), password_.c_str(),
-                                database_.c_str(), port_, nullptr, 0)) {
+                                database_.c_str(), port_, nullptr, CLIENT_SSL)) {
             std::cerr << "[remote_stats] Connection failed: " << mysql_error(conn_) << "\n";
             mysql_close(conn_);
             conn_ = nullptr;
@@ -205,11 +208,38 @@ private:
         ))");
 
         // Migration: add missing columns if table was created with old schema
-        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS edits_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER messages_count");
-        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS deletes_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER edits_count");
-        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS joins_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER deletes_count");
-        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS leaves_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER joins_count");
-        execute("ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS active_users INT UNSIGNED NOT NULL DEFAULT 0 AFTER commands_count");
+        // Use try_add_column helper since MySQL doesn't support ADD COLUMN IF NOT EXISTS
+        // Note: don't use AFTER clause since it fails if reference column is missing
+        auto try_add_column = [this](const char* sql) {
+            if (!conn_) return;
+            if (mysql_query(conn_, sql) != 0) {
+                unsigned int err = mysql_errno(conn_);
+                // 1060 = Duplicate column name - that's fine, column already exists
+                if (err != 1060) {
+                    std::cerr << "[remote_stats] Migration warning: " << mysql_error(conn_) << "\n";
+                }
+            }
+        };
+        try_add_column("ALTER TABLE guild_daily_stats ADD COLUMN messages_count INT UNSIGNED NOT NULL DEFAULT 0");
+        try_add_column("ALTER TABLE guild_daily_stats ADD COLUMN edits_count INT UNSIGNED NOT NULL DEFAULT 0");
+        try_add_column("ALTER TABLE guild_daily_stats ADD COLUMN deletes_count INT UNSIGNED NOT NULL DEFAULT 0");
+        try_add_column("ALTER TABLE guild_daily_stats ADD COLUMN joins_count INT UNSIGNED NOT NULL DEFAULT 0");
+        try_add_column("ALTER TABLE guild_daily_stats ADD COLUMN leaves_count INT UNSIGNED NOT NULL DEFAULT 0");
+        try_add_column("ALTER TABLE guild_daily_stats ADD COLUMN commands_count INT UNSIGNED NOT NULL DEFAULT 0");
+        try_add_column("ALTER TABLE guild_daily_stats ADD COLUMN active_users INT UNSIGNED NOT NULL DEFAULT 0");
+
+        // Migration: convert ENUM event_type columns to VARCHAR(16) for compatibility
+        // (tables may have been created with ENUM before the schema was updated)
+        auto try_migrate = [this](const char* sql) {
+            if (!conn_) return;
+            if (mysql_query(conn_, sql) != 0) {
+                // Ignore errors — column may already be VARCHAR or table may not exist
+            }
+        };
+        try_migrate("ALTER TABLE guild_member_events MODIFY COLUMN event_type VARCHAR(16) NOT NULL");
+        try_migrate("ALTER TABLE guild_message_events MODIFY COLUMN event_type VARCHAR(16) NOT NULL");
+        try_migrate("ALTER TABLE guild_boost_events MODIFY COLUMN event_type VARCHAR(16) NOT NULL");
+        try_migrate("ALTER TABLE guild_voice_events MODIFY COLUMN event_type VARCHAR(16) NOT NULL");
 
         // Ensure users table exists on Aiven for economy dashboard queries
         execute(R"(CREATE TABLE IF NOT EXISTS users (

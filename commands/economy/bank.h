@@ -2,6 +2,7 @@
 #include "helpers.h"
 #include "../../database/operations/economy/loan_operations.h"
 #include <map>
+#include <mutex>
 
 namespace commands {
 namespace economy {
@@ -23,6 +24,7 @@ static std::vector<std::pair<std::string, int64_t>> upgrade_presets = {
 
 // Active bank sessions (user_id -> {message_id, channel_id})
 static std::map<uint64_t, std::pair<uint64_t, uint64_t>> active_bank_sessions;
+static std::mutex bank_sessions_mutex;
 
 // Helper to format money with commas
 inline std::string format_money(int64_t amount) {
@@ -335,7 +337,7 @@ inline void register_bank_handlers(dpp::cluster& bot, Database* db) {
         
         // Handle different button actions
         if (custom_id.find("bank_close_") == 0) {
-            active_bank_sessions.erase(user_id);
+            { std::lock_guard<std::mutex> lock(bank_sessions_mutex); active_bank_sessions.erase(user_id); }
             bot.message_delete(message_id, channel_id);
             return;
         }
@@ -675,6 +677,7 @@ inline Command* create_bank_command(Database* db) {
                 bot.message_create(msg, [user_id = event.msg.author.id](const dpp::confirmation_callback_t& callback) {
                     if (!callback.is_error()) {
                         auto created_msg = ::std::get<dpp::message>(callback.value);
+                        std::lock_guard<std::mutex> lock(bank_sessions_mutex);
                         active_bank_sessions[user_id] = {created_msg.id, created_msg.channel_id};
                     }
                 });
@@ -898,6 +901,7 @@ inline Command* create_bank_command(Database* db) {
                 bot.interaction_response_get_original(token, [user_id](const dpp::confirmation_callback_t& resp) {
                     if (resp.is_error()) return;
                     auto created_msg = resp.get<dpp::message>();
+                    std::lock_guard<std::mutex> lock(bank_sessions_mutex);
                     active_bank_sessions[user_id] = {created_msg.id, created_msg.channel_id};
                 });
             });

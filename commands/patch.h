@@ -5,6 +5,7 @@
 #include "../database/operations/community/patch_operations.h"
 #include <dpp/dpp.h>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <iomanip>
 
@@ -15,6 +16,7 @@ struct PatchState {
     int current_page = 0;
 };
 static std::map<uint64_t, PatchState> patch_states;
+static std::mutex patch_states_mutex;
 
 // Helper to format timestamp
 static std::string format_patch_timestamp(std::chrono::system_clock::time_point tp) {

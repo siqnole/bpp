@@ -81,6 +81,9 @@ protected:
     // BAC (Bronx AntiCheat) state per user
     std::unordered_map<uint64_t, BACRecord> bac_records_;
     std::mutex bac_mutex_;
+    std::chrono::steady_clock::time_point last_bac_prune_ = std::chrono::steady_clock::now();
+    static constexpr size_t BAC_MAX_RECORDS = 10000;  // hard cap on tracked users
+    static constexpr int BAC_PRUNE_INTERVAL_MINUTES = 30;  // prune every 30 min
 
     // BAC tunables
     static constexpr int    BAC_HISTORY_SIZE          = 12;       // number of recent command timestamps to keep
@@ -488,6 +491,24 @@ protected:
 
         std::lock_guard<std::mutex> lock(bac_mutex_);
         auto now = std::chrono::steady_clock::now();
+
+        // Periodic pruning: remove stale BAC records to prevent unbounded memory growth
+        auto since_prune = std::chrono::duration_cast<std::chrono::minutes>(now - last_bac_prune_);
+        if (since_prune.count() >= BAC_PRUNE_INTERVAL_MINUTES || bac_records_.size() > BAC_MAX_RECORDS) {
+            for (auto it = bac_records_.begin(); it != bac_records_.end();) {
+                auto& rec_entry = it->second;
+                // Remove records with no recent activity (no timestamps and no active strike/captcha)
+                bool is_stale = rec_entry.timestamps.empty() && rec_entry.strike == 0
+                                && !rec_entry.captcha_pending && now >= rec_entry.timeout_until;
+                if (is_stale) {
+                    it = bac_records_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            last_bac_prune_ = now;
+        }
+
         auto& rec = bac_records_[user_id];
 
         // ---- If the user is currently timed out, block silently ----

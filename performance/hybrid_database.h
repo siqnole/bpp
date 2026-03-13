@@ -161,8 +161,20 @@ public:
 
     bool deposit(uint64_t user_id, int64_t amount) {
         // Deposit = wallet - amount, bank + amount
-        // Both sides need to stay consistent
+        // SECURITY FIX: Validate balances before applying deltas locally.
+        // Without validation, users could deposit more than their wallet holds
+        // (negative wallet) or exceed their bank limit.
         if (local_db_ && batch_) {
+            // Read current local balances for validation
+            int64_t current_wallet = get_wallet(user_id);
+            int64_t current_bank = get_bank(user_id);
+            int64_t bank_limit_val = get_bank_limit(user_id);
+
+            // Validate: wallet must have enough
+            if (current_wallet < amount) return false;
+            // Validate: bank must not exceed limit
+            if (current_bank + amount > bank_limit_val) return false;
+
             local_db_->apply_wallet_delta(user_id, -amount);
             local_db_->apply_bank_delta(user_id, amount);
             if (cache_) cache_->invalidate_user_balance(user_id);
@@ -170,7 +182,7 @@ public:
             batch_->enqueue_bank_delta(user_id, amount);
             return true;
         }
-        // Fallback to synchronous
+        // Fallback to synchronous (remote DB validates atomically)
         bool result = db_->deposit(user_id, amount);
         if (result && cache_) cache_->invalidate_user_balance(user_id);
         if (result && local_db_) local_db_->invalidate_user(user_id);
@@ -178,7 +190,13 @@ public:
     }
 
     bool withdraw(uint64_t user_id, int64_t amount) {
+        // SECURITY FIX: Validate bank balance before allowing withdrawal.
         if (local_db_ && batch_) {
+            int64_t current_bank = get_bank(user_id);
+
+            // Validate: bank must have enough
+            if (current_bank < amount) return false;
+
             local_db_->apply_wallet_delta(user_id, amount);
             local_db_->apply_bank_delta(user_id, -amount);
             if (cache_) cache_->invalidate_user_balance(user_id);

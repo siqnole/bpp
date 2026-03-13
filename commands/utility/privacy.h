@@ -7,6 +7,7 @@
 #include <dpp/dpp.h>
 #include <chrono>
 #include <map>
+#include <mutex>
 
 namespace commands {
 namespace utility {
@@ -17,6 +18,7 @@ namespace utility {
 
 // confirmation cooldown to prevent accidental spam
 static std::map<uint64_t, std::chrono::steady_clock::time_point> pending_optout_confirmation_;
+static std::mutex optout_confirm_mutex_;
 
 inline void register_privacy_interactions(dpp::cluster& bot, bronx::db::Database* db) {
     // handle opt-out confirmation button

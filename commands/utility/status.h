@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <mutex>
 
 // generic pagination state used by both modules and commands
 struct StatusPageState {
@@ -18,15 +19,17 @@ struct StatusPageState {
     uint64_t channel_id = 0;   // channel where the message was posted
 };
 
-// maps keyed by guild id
+// maps keyed by guild id — protected by mutex for thread safety
 static std::unordered_map<uint64_t, StatusPageState> modules_states;
 static std::unordered_map<uint64_t, StatusPageState> commands_states;
+static std::mutex status_states_mutex;
 
 namespace commands {
 namespace utility {
 
 // helper to construct module message from state
 static dpp::message build_modules_message(uint64_t gid) {
+    std::lock_guard<std::mutex> lock(status_states_mutex);
     auto it = modules_states.find(gid);
     if (it == modules_states.end()) {
         return dpp::message().add_embed(bronx::error("no module state available"));
@@ -69,6 +72,7 @@ static dpp::message build_modules_message(uint64_t gid) {
 
 // helper to construct commands message from state
 static dpp::message build_commands_message(uint64_t gid) {
+    std::lock_guard<std::mutex> lock(status_states_mutex);
     auto it = commands_states.find(gid);
     if (it == commands_states.end()) {
         return dpp::message().add_embed(bronx::error("no command state available"));
@@ -138,22 +142,25 @@ inline void register_status_interactions(dpp::cluster& bot) {
                 dpp::message().add_embed(bronx::error("this interaction isn't for this server")).set_flags(dpp::m_ephemeral));
             return;
         }
-        StatusPageState *st = nullptr;
-        if (is_mod) {
-            auto it = modules_states.find(gid);
-            if (it == modules_states.end()) return;
-            st = &it->second;
-        } else {
-            auto it = commands_states.find(gid);
-            if (it == commands_states.end()) return;
-            st = &it->second;
-        }
-        int pages = st->pages.size();
-        if (pages <= 1) return;
-        if (next) {
-            if (st->current_page < pages-1) st->current_page++; else st->current_page = 0;
-        } else {
-            if (st->current_page > 0) st->current_page--; else st->current_page = pages-1;
+        {
+            std::lock_guard<std::mutex> lock(status_states_mutex);
+            StatusPageState *st = nullptr;
+            if (is_mod) {
+                auto it = modules_states.find(gid);
+                if (it == modules_states.end()) return;
+                st = &it->second;
+            } else {
+                auto it = commands_states.find(gid);
+                if (it == commands_states.end()) return;
+                st = &it->second;
+            }
+            int pages = st->pages.size();
+            if (pages <= 1) return;
+            if (next) {
+                if (st->current_page < pages-1) st->current_page++; else st->current_page = 0;
+            } else {
+                if (st->current_page > 0) st->current_page--; else st->current_page = pages-1;
+            }
         }
         dpp::message newmsg = is_mod ? build_modules_message(gid) : build_commands_message(gid);
         // acknowledge the interaction by updating the original message in-place
@@ -182,27 +189,30 @@ inline Command* get_modules_command(CommandHandler* handler, bronx::db::Database
             auto categories = handler->get_commands_by_category();
 
             // build one page containing all modules (paginate at 15 entries)
-            StatusPageState& st = modules_states[gid];
-            st.pages.clear();
-            st.current_page = 0;
-            std::string cur_page;
-            int per_page = 15, count = 0;
-            for (const auto& [cat, cat_cmds] : categories) {
-                bool enabled = true;
-                if (db) {
-                    try {
-                        enabled = db->is_guild_module_enabled(gid, cat, user_id, channel_id, roles);
-                    } catch (...) {}
+            {
+                std::lock_guard<std::mutex> lock(status_states_mutex);
+                StatusPageState& st = modules_states[gid];
+                st.pages.clear();
+                st.current_page = 0;
+                std::string cur_page;
+                int per_page = 15, count = 0;
+                for (const auto& [cat, cat_cmds] : categories) {
+                    bool enabled = true;
+                    if (db) {
+                        try {
+                            enabled = db->is_guild_module_enabled(gid, cat, user_id, channel_id, roles);
+                        } catch (...) {}
+                    }
+                    cur_page += "**" + cat + "** : " + (enabled ? bronx::EMOJI_CHECK + " enabled" : bronx::EMOJI_DENY + " disabled") + "\n";
+                    if (++count >= per_page) {
+                        st.pages.push_back(cur_page);
+                        cur_page.clear();
+                        count = 0;
+                    }
                 }
-                cur_page += "**" + cat + "** : " + (enabled ? bronx::EMOJI_CHECK + " enabled" : bronx::EMOJI_DENY + " disabled") + "\n";
-                if (++count >= per_page) {
-                    st.pages.push_back(cur_page);
-                    cur_page.clear();
-                    count = 0;
-                }
+                if (!cur_page.empty()) st.pages.push_back(cur_page);
+                if (st.pages.empty()) st.pages.push_back("<no modules registered>");
             }
-            if (!cur_page.empty()) st.pages.push_back(cur_page);
-            if (st.pages.empty()) st.pages.push_back("<no modules registered>");
 
             dpp::message msg = build_modules_message(gid);
             msg.channel_id = event.msg.channel_id;
@@ -212,6 +222,7 @@ inline Command* get_modules_command(CommandHandler* handler, bronx::db::Database
             }
             bot.message_create(msg, [gid](const dpp::confirmation_callback_t& cb) {
                 if (!cb.is_error()) {
+                    std::lock_guard<std::mutex> lock(status_states_mutex);
                     dpp::message sent = cb.get<dpp::message>();
                     modules_states[gid].message_id = sent.id;
                     modules_states[gid].channel_id = sent.channel_id;
@@ -242,32 +253,35 @@ inline Command* get_commands_status_command(CommandHandler* handler, bronx::db::
             std::vector<uint64_t> roles(role_snowflakes.begin(), role_snowflakes.end());
             auto categories = handler->get_commands_by_category();
 
-            StatusPageState& st = commands_states[gid];
-            st.pages.clear();
-            st.current_page = 0;
-            for (const auto& [cat, cmds] : categories) {
-                // check module state once — if the module is off, every command
-                // in it is considered disabled regardless of per-command state
-                bool module_enabled = true;
-                if (db) {
-                    try { module_enabled = db->is_guild_module_enabled(gid, cat, user_id, channel_id, roles); } catch (...) {}
-                }
-
-                std::string page = (module_enabled ? bronx::EMOJI_CHECK + " " : bronx::EMOJI_DENY + " ") + std::string("__") + cat + "__\n";
-                std::set<std::string> seen;
-                for (const auto& cmdptr : cmds) {
-                    if (!seen.insert(cmdptr->name).second) continue;
-                    bool cmd_enabled = module_enabled; // inherit module state
-                    if (module_enabled && db) {
-                        // only bother querying per-command toggle if module is on
-                        try { cmd_enabled = db->is_guild_command_enabled(gid, cmdptr->name, user_id, channel_id, roles); } catch (...) {}
+            {
+                std::lock_guard<std::mutex> lock(status_states_mutex);
+                StatusPageState& st = commands_states[gid];
+                st.pages.clear();
+                st.current_page = 0;
+                for (const auto& [cat, cmds] : categories) {
+                    // check module state once — if the module is off, every command
+                    // in it is considered disabled regardless of per-command state
+                    bool module_enabled = true;
+                    if (db) {
+                        try { module_enabled = db->is_guild_module_enabled(gid, cat, user_id, channel_id, roles); } catch (...) {}
                     }
-                    page += (cmd_enabled ? bronx::EMOJI_CHECK + " " : bronx::EMOJI_DENY + " ") + cmdptr->name + "\n";
+
+                    std::string page = (module_enabled ? bronx::EMOJI_CHECK + " " : bronx::EMOJI_DENY + " ") + std::string("__") + cat + "__\n";
+                    std::set<std::string> seen;
+                    for (const auto& cmdptr : cmds) {
+                        if (!seen.insert(cmdptr->name).second) continue;
+                        bool cmd_enabled = module_enabled; // inherit module state
+                        if (module_enabled && db) {
+                            // only bother querying per-command toggle if module is on
+                            try { cmd_enabled = db->is_guild_command_enabled(gid, cmdptr->name, user_id, channel_id, roles); } catch (...) {}
+                        }
+                        page += (cmd_enabled ? bronx::EMOJI_CHECK + " " : bronx::EMOJI_DENY + " ") + cmdptr->name + "\n";
+                    }
+                    st.pages.push_back(page);
                 }
-                st.pages.push_back(page);
-            }
-            if (st.pages.empty()) {
-                st.pages.push_back("<no commands registered>");
+                if (st.pages.empty()) {
+                    st.pages.push_back("<no commands registered>");
+                }
             }
 
             dpp::message msg = build_commands_message(gid);
@@ -278,6 +292,7 @@ inline Command* get_commands_status_command(CommandHandler* handler, bronx::db::
             }
             bot.message_create(msg, [gid](const dpp::confirmation_callback_t& cb) {
                 if (!cb.is_error()) {
+                    std::lock_guard<std::mutex> lock(status_states_mutex);
                     dpp::message sent = cb.get<dpp::message>();
                     commands_states[gid].message_id = sent.id;
                     commands_states[gid].channel_id = sent.channel_id;
