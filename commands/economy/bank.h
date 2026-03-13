@@ -83,7 +83,7 @@ inline dpp::embed create_upgrade_menu_embed(const UserData& user, Database* db) 
     description += "**Quick Upgrades:**\n";
     for (const auto& [label, increase] : upgrade_presets) {
         int64_t cost = upgrade_cost_for(increase);
-        std::string afford_icon = (user.wallet >= cost) ? "\u2705" : "\u274C";
+        std::string afford_icon = (user.wallet >= cost) ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY;
         description += afford_icon + " **" + label + "** bank space — costs " + format_money(cost) + "\n";
     }
     

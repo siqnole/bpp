@@ -65,6 +65,14 @@ else()
     message(FATAL_ERROR "SQLite3 not found! Install: sudo apt install libsqlite3-dev")
 endif()
 
+# OpenSSL for AES-256 encryption (privacy/identity cache)
+find_package(OpenSSL REQUIRED)
+if(OPENSSL_FOUND)
+    message(STATUS "OpenSSL found — enabling AES-256 identity encryption")
+else()
+    message(FATAL_ERROR "OpenSSL not found! Install: sudo apt install libssl-dev")
+endif()
+
 if(NOT MARIADB_LIBRARIES)
     message(FATAL_ERROR "MariaDB client library not found! Install: sudo apt install libmariadb-dev")
 endif()
@@ -94,6 +102,7 @@ set(DATABASE_SOURCES
     database/operations/leveling/leveling_operations.cpp
     database/operations/community/patch_operations.cpp
     database/operations/leveling/xp_blacklist_operations.cpp
+    database/operations/user/privacy_operations.cpp
     database/utils/database_utility.cpp
 )
 
@@ -120,6 +129,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${MARIADB_INCLUDE_DIRS}
     ${SQLITE3_INCLUDE_DIRS}
     ${CAIRO_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIR}
 )
 
 # Link libraries
@@ -128,6 +138,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${MARIADB_LIBRARIES}
     ${SQLITE3_LIBRARIES}
     ${CAIRO_LIBRARIES}
+    OpenSSL::Crypto
 )
 
 # If libcurl was found, wire it up and enable the steal command at compile-time

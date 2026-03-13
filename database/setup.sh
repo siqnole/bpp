@@ -70,7 +70,7 @@ echo ""
 
 # Check if MariaDB/MySQL is installed
 if ! command -v mysql &> /dev/null; then
-    echo "❌ Error: MySQL/MariaDB client not found!"
+    echo "[FAIL] Error: MySQL/MariaDB client not found!"
     echo ""
     echo "Install MariaDB:"
     echo "  Ubuntu/Debian: sudo apt install mariadb-server mariadb-client libmariadb-dev"
@@ -81,16 +81,16 @@ fi
 
 # Check if MariaDB service is running
 if ! systemctl is-active --quiet mariadb && ! systemctl is-active --quiet mysql; then
-    echo "⚠️  MariaDB service is not running!"
+    echo "[WARN] MariaDB service is not running!"
     echo "Start it with: sudo systemctl start mariadb"
     echo ""
     read -p "Do you want to start it now? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         sudo systemctl start mariadb || sudo systemctl start mysql
-        echo "✓ Service started"
+        echo "[OK] Service started"
     else
-        echo "❌ Cannot proceed without database service"
+        echo "[FAIL] Cannot proceed without database service"
         exit 1
     fi
 fi
@@ -110,7 +110,7 @@ fi
 # Test connection
 echo "Testing database connection..."
 if ! $MYSQL_CMD -e "SELECT 1;" &> /dev/null; then
-    echo "❌ Failed to connect to database!"
+    echo "[FAIL] Failed to connect to database!"
     echo ""
     echo "Troubleshooting:"
     echo "1. Check if MariaDB is running: systemctl status mariadb"
@@ -119,7 +119,7 @@ if ! $MYSQL_CMD -e "SELECT 1;" &> /dev/null; then
     echo "4. Reset root password if needed"
     exit 1
 fi
-echo "✓ Connection successful"
+echo "[OK] Connection successful"
 echo ""
 
 # Create database and user
@@ -140,19 +140,19 @@ FLUSH PRIVILEGES;
 SET GLOBAL event_scheduler = ON;
 EOF
 
-echo "✓ Database and user created"
+echo "[OK] Database and user created"
 echo ""
 
 # Run schema
 echo "Applying database schema..."
 $MYSQL_CMD $DB_NAME < "$(dirname "$0")/schema.sql"
-echo "✓ Schema applied successfully"
+echo "[OK] Schema applied successfully"
 echo ""
 
 # Verify tables
 echo "Verifying tables..."
 TABLE_COUNT=$($MYSQL_CMD $DB_NAME -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$DB_NAME';")
-echo "✓ Created $TABLE_COUNT tables"
+echo "[OK] Created $TABLE_COUNT tables"
 echo ""
 
 # Create config file for bot
@@ -171,14 +171,14 @@ cat > "$CONFIG_FILE" << EOF
 }
 EOF
 
-echo "✓ Configuration file created: $CONFIG_FILE"
+echo "[OK] Configuration file created: $CONFIG_FILE"
 echo ""
 
 echo "╔═══════════════════════════════════════════════════╗"
-echo "║           Database Setup Complete! ✓              ║"
+echo "║           Database Setup Complete! [OK]             ║"
 echo "╚═══════════════════════════════════════════════════╝"
 echo ""
-echo "⚠️  IMPORTANT: Change the default password!"
+echo "[WARN] IMPORTANT: Change the default password!"
 echo "Run: ALTER USER 'bronxbot'@'localhost' IDENTIFIED BY 'your_secure_password';"
 echo ""
 echo "Next steps:"

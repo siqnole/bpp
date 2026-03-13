@@ -85,7 +85,7 @@ static dpp::message build_crash_msg(const CrashGame& g) {
             "**payout:** $" + format_number(payout) + " (+$" + format_number(profit) + ")\n\n"
             "*actual crash was at " + fmt_mult(g.crash_point) + "*"
         );
-        embed.set_title("✅ Cashed out at " + fmt_mult(g.current_mult) + "!");
+        embed.set_title(bronx::EMOJI_CHECK + " Cashed out at " + fmt_mult(g.current_mult) + "!");
 
     } else if (g.crashed) {
         embed = bronx::error(
@@ -108,7 +108,7 @@ static dpp::message build_crash_msg(const CrashGame& g) {
             + bar +
             "**bet:** $" + format_number(g.bet) + "\n"
             "**value now:** $" + format_number(if_cashout) + "\n\n"
-            "⚠️ *click **Cash Out** before it crashes!*"
+            + bronx::EMOJI_WARNING + " *click **Cash Out** before it crashes!*"
         );
         embed.set_title("🟢 CRASH — running");
 

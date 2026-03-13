@@ -142,7 +142,7 @@ Command* create_guide_command(bronx::db::Database* db) {
                     desc += "📖 **" + std::to_string(progress.sections_read) + "/" + std::to_string(progress.total_sections) + "** sections read\n\n";
                     
                     if (!progress.read_sections.empty()) {
-                        desc += "✅ **completed:**\n";
+                        desc += bronx::EMOJI_CHECK + " **completed:**\n";
                         for (const auto& s : progress.read_sections) {
                             desc += "> " + s + "\n";
                         }
@@ -254,7 +254,7 @@ Command* create_guide_command(bronx::db::Database* db) {
                 // show checkmark if read
                 std::string stat_key = "guide_read_" + section.name;
                 bool is_read = db && db->get_stat(event.msg.author.id, stat_key) > 0;
-                std::string check = is_read ? " ✓" : "";
+                std::string check = is_read ? (" " + bronx::EMOJI_CHECK) : "";
                 
                 description += section.emoji + " **" + section.name + "**" + check + " — " + section.description + "\n";
             }
@@ -343,7 +343,7 @@ Command* create_guide_command(bronx::db::Database* db) {
                     desc += "📖 **" + std::to_string(progress.sections_read) + "/" + std::to_string(progress.total_sections) + "** sections read\n\n";
                     
                     if (!progress.read_sections.empty()) {
-                        desc += "✅ **completed:**\n";
+                        desc += bronx::EMOJI_CHECK + " **completed:**\n";
                         for (const auto& s : progress.read_sections) {
                             desc += "> " + s + "\n";
                         }
@@ -449,7 +449,7 @@ Command* create_guide_command(bronx::db::Database* db) {
                 
                 std::string stat_key = "guide_read_" + section.name;
                 bool is_read = db && db->get_stat(event.command.get_issuing_user().id, stat_key) > 0;
-                std::string check = is_read ? " ✓" : "";
+                std::string check = is_read ? (" " + bronx::EMOJI_CHECK) : "";
                 
                 description += section.emoji + " **" + section.name + "**" + check + " — " + section.description + "\n";
             }
@@ -615,7 +615,7 @@ void register_guide_interactions(dpp::cluster& bot, bronx::db::Database* db) {
                 
                 std::string stat_key = "guide_read_" + section.name;
                 bool is_read = db && db->get_stat(event.command.usr.id, stat_key) > 0;
-                std::string check = is_read ? " ✓" : "";
+                std::string check = is_read ? (" " + bronx::EMOJI_CHECK) : "";
                 
                 description += section.emoji + " **" + section.name + "**" + check + " — " + section.description + "\n";
             }

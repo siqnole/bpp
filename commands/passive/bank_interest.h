@@ -88,7 +88,7 @@ inline Command* get_interest_command(Database* db) {
                     auto ts = std::chrono::system_clock::to_time_t(*expiry);
                     embed.add_field("⏰ Next Claim", "<t:" + std::to_string(ts) + ":R>", true);
                 } else {
-                    embed.add_field("⏰ Next Claim", "✅ Ready now!", true);
+                    embed.add_field("⏰ Next Claim", bronx::EMOJI_CHECK + " Ready now!", true);
                 }
                 
                 bronx::add_invoker_footer(embed, event.msg.author);
@@ -153,7 +153,7 @@ inline Command* get_interest_command(Database* db) {
                     auto ts = std::chrono::system_clock::to_time_t(*expiry);
                     embed.add_field("⏰ Next", "<t:" + std::to_string(ts) + ":R>", true);
                 } else {
-                    embed.add_field("⏰ Next", "✅ Ready!", true);
+                    embed.add_field("⏰ Next", bronx::EMOJI_CHECK + " Ready!", true);
                 }
                 event.reply(dpp::message().add_embed(embed));
                 return;

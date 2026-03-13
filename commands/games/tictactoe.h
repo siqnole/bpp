@@ -269,14 +269,16 @@ static void update_game_message(dpp::cluster& bot, TicTacToeGame& game) {
         dpp::component action_row;
         action_row.add_component(dpp::component()
             .set_type(dpp::cot_button)
-            .set_label("✅ Accept")
+            .set_label("Accept")
             .set_style(dpp::cos_success)
+            .set_emoji("check", 1476703556428890132)
             .set_id("ttt_accept_" + ::std::to_string(game.game_id)));
         
         action_row.add_component(dpp::component()
             .set_type(dpp::cot_button)
-            .set_label("❌ Decline")
+            .set_label("Decline")
             .set_style(dpp::cos_danger)
+            .set_emoji("deny", 1476703341454168288)
             .set_id("ttt_decline_" + ::std::to_string(game.game_id)));
         
         msg.add_component(action_row);
@@ -641,14 +643,16 @@ inline Command* get_tictactoe_command(Database* db) {
             dpp::component action_row;
             action_row.add_component(dpp::component()
                 .set_type(dpp::cot_button)
-                .set_label("✅ Accept")
+                .set_label("Accept")
                 .set_style(dpp::cos_success)
+                .set_emoji("check", 1476703556428890132)
                 .set_id("ttt_accept_" + ::std::to_string(game.game_id)));
             
             action_row.add_component(dpp::component()
                 .set_type(dpp::cot_button)
-                .set_label("❌ Decline")
+                .set_label("Decline")
                 .set_style(dpp::cos_danger)
+                .set_emoji("deny", 1476703341454168288)
                 .set_id("ttt_decline_" + ::std::to_string(game.game_id)));
             
             msg.add_component(action_row);
@@ -770,14 +774,16 @@ inline Command* get_tictactoe_command(Database* db) {
                 dpp::component action_row;
                 action_row.add_component(dpp::component()
                     .set_type(dpp::cot_button)
-                    .set_label("✅ Accept")
+                    .set_label("Accept")
                     .set_style(dpp::cos_success)
+                    .set_emoji("check", 1476703556428890132)
                     .set_id("ttt_accept_" + ::std::to_string(game.game_id)));
                 
                 action_row.add_component(dpp::component()
                     .set_type(dpp::cot_button)
-                    .set_label("❌ Decline")
+                    .set_label("Decline")
                     .set_style(dpp::cos_danger)
+                    .set_emoji("deny", 1476703341454168288)
                     .set_id("ttt_decline_" + ::std::to_string(game.game_id)));
                 
                 msg.add_component(action_row);

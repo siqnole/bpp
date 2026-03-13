@@ -88,7 +88,7 @@ inline void send_welcome_message(dpp::cluster& bot, uint64_t guild_id, uint64_t 
                     .set_color(0x5865F2)
                     .set_description(
                         "thanks for adding me to **" + guild_name + "**!\n\n"
-                        "⚠️ i couldn't send a message in your server — i might be missing permissions.\n\n"
+                        + bronx::EMOJI_WARNING + " i couldn't send a message in your server — i might be missing permissions.\n\n"
                         "**please make sure i have:**\n"
                         "• `Send Messages`\n"
                         "• `Embed Links`\n"

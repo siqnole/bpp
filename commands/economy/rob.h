@@ -8,11 +8,120 @@
 #include <vector>
 #include <chrono>
 #include <random>
+#include <map>
+#include <mutex>
 
 using namespace bronx::db;
 using namespace bronx::db::history_operations;
 
 namespace commands {
+
+// ── Passive confirmation state ──────────────────────────────────────────
+struct PendingPassiveConfirm {
+    uint64_t user_id;
+    bool     new_passive;   // what they want to toggle TO
+    std::chrono::steady_clock::time_point expires;
+};
+static std::map<uint64_t, PendingPassiveConfirm> pending_passive_confirms; // keyed by user_id
+static std::mutex passive_confirm_mutex;
+
+// Handle passive confirmation button clicks (called from main on_button_click)
+inline void handle_passive_button(dpp::cluster& bot, const dpp::button_click_t& event, Database* db) {
+    std::string id = event.custom_id;
+    if (id.rfind("passive_", 0) != 0) return;
+
+    uint64_t clicker = event.command.get_issuing_user().id;
+
+    std::lock_guard<std::mutex> lock(passive_confirm_mutex);
+    auto it = pending_passive_confirms.find(clicker);
+    if (it == pending_passive_confirms.end()) {
+        event.reply(dpp::ir_update_message,
+            dpp::message().set_content("").add_embed(
+                bronx::error("this confirmation has expired")));
+        return;
+    }
+
+    auto& pending = it->second;
+    if (std::chrono::steady_clock::now() > pending.expires) {
+        pending_passive_confirms.erase(it);
+        event.reply(dpp::ir_update_message,
+            dpp::message().set_content("").add_embed(
+                bronx::error("this confirmation has expired")));
+        return;
+    }
+
+    if (id == "passive_cancel") {
+        pending_passive_confirms.erase(it);
+        event.reply(dpp::ir_update_message,
+            dpp::message().set_content("").add_embed(
+                bronx::info("passive mode change cancelled")));
+        return;
+    }
+
+    if (id == "passive_confirm") {
+        bool new_passive = pending.new_passive;
+        pending_passive_confirms.erase(it);
+
+        if (db->set_passive(clicker, new_passive)) {
+            db->set_cooldown(clicker, "passive", 1800);
+            std::string description;
+            if (new_passive) {
+                description = "🛡️ **passive mode enabled**\nyou can no longer rob or be robbed by other users";
+            } else {
+                description = "⚔️ **passive mode disabled**\nyou can now rob and be robbed by other users";
+            }
+            event.reply(dpp::ir_update_message,
+                dpp::message().set_content("").add_embed(bronx::info(description)));
+        } else {
+            event.reply(dpp::ir_update_message,
+                dpp::message().set_content("").add_embed(
+                    bronx::error("failed to toggle passive mode")));
+        }
+    }
+}
+
+// Helper: build the confirmation message with buttons
+static dpp::message build_passive_confirm_msg(bool disabling) {
+    std::string desc;
+    if (disabling) {
+        desc = "⚠️ **are you sure you want to disable passive mode?**\n\n";
+        desc += "• you will be vulnerable to robbery\n";
+        desc += "• you won't be able to re-enable passive for **30 minutes**\n";
+        desc += "• this confirmation expires in 15 seconds";
+    } else {
+        desc = "⚠️ **are you sure you want to enable passive mode?**\n\n";
+        desc += "• you won't be able to rob other users\n";
+        desc += "• you won't be able to disable passive for **30 minutes**\n";
+        desc += "• this confirmation expires in 15 seconds";
+    }
+
+    auto embed = bronx::create_embed(desc, bronx::COLOR_WARNING);
+
+    dpp::component row;
+    row.set_type(dpp::cot_action_row);
+
+    dpp::component confirm_btn;
+    confirm_btn.set_type(dpp::cot_button);
+    confirm_btn.set_label("confirm");
+    confirm_btn.set_style(disabling ? dpp::cos_danger : dpp::cos_success);
+    confirm_btn.set_id("passive_confirm");
+    confirm_btn.set_emoji("✅");
+
+    dpp::component cancel_btn;
+    cancel_btn.set_type(dpp::cot_button);
+    cancel_btn.set_label("cancel");
+    cancel_btn.set_style(dpp::cos_secondary);
+    cancel_btn.set_id("passive_cancel");
+    cancel_btn.set_emoji("❌");
+
+    row.add_component(confirm_btn);
+    row.add_component(cancel_btn);
+
+    dpp::message msg;
+    msg.add_embed(embed);
+    msg.add_component(row);
+    return msg;
+}
 
 ::std::vector<Command*> get_rob_commands(Database* db) {
     static ::std::vector<Command*> cmds;
@@ -339,7 +448,7 @@ namespace commands {
     
     cmds.push_back(rob);
     
-    // Passive command
+    // Passive command — confirmation before toggling
     static Command* passive = new Command("passive", "toggle passive mode (can't rob or be robbed)", "economy", {}, true,
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             uint64_t user_id = event.msg.author.id;
@@ -379,24 +488,18 @@ namespace commands {
                 }
             }
             
-            if (db->set_passive(user_id, new_passive)) {
-                // Set 30-minute cooldown for passive mode changes
-                db->set_cooldown(user_id, "passive", 1800); // 30 minutes
-                ::std::string description;
-                if (new_passive) {
-                    description = "🛡️ **passive mode enabled**\n";
-                    description += "you can no longer rob or be robbed by other users";
-                } else {
-                    description = "⚔️ **passive mode disabled**\n";
-                    description += "you can now rob and be robbed by other users";
-                }
-                
-                auto embed = bronx::info(description);
-                bronx::add_invoker_footer(embed, event.msg.author);
-                bronx::send_message(bot, event, embed);
-            } else {
-                bronx::send_message(bot, event, bronx::error("failed to toggle passive mode"));
+            // Store pending confirmation and send confirmation message with buttons
+            {
+                std::lock_guard<std::mutex> lock(passive_confirm_mutex);
+                pending_passive_confirms[user_id] = {
+                    user_id, new_passive,
+                    std::chrono::steady_clock::now() + std::chrono::seconds(15)
+                };
             }
+
+            auto msg = build_passive_confirm_msg(!new_passive);
+            msg.channel_id = event.msg.channel_id;
+            bot.message_create(msg);
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
             uint64_t user_id = event.command.get_issuing_user().id;
@@ -436,24 +539,16 @@ namespace commands {
                 }
             }
             
-            if (db->set_passive(user_id, new_passive)) {
-                // Set 30-minute cooldown for passive mode changes
-                db->set_cooldown(user_id, "passive", 1800); // 30 minutes
-                ::std::string description;
-                if (new_passive) {
-                    description = "🛡️ **passive mode enabled**\n";
-                    description += "you can no longer rob or be robbed by other users";
-                } else {
-                    description = "⚔️ **passive mode disabled**\n";
-                    description += "you can now rob and be robbed by other users";
-                }
-                
-                auto embed = bronx::info(description);
-                bronx::add_invoker_footer(embed, event.command.get_issuing_user());
-                event.reply(dpp::message().add_embed(embed));
-            } else {
-                event.reply(dpp::message().add_embed(bronx::error("failed to toggle passive mode")));
+            // Store pending confirmation and reply with buttons
+            {
+                std::lock_guard<std::mutex> lock(passive_confirm_mutex);
+                pending_passive_confirms[user_id] = {
+                    user_id, new_passive,
+                    std::chrono::steady_clock::now() + std::chrono::seconds(15)
+                };
             }
+
+            event.reply(build_passive_confirm_msg(!new_passive));
         });
     
     cmds.push_back(passive);

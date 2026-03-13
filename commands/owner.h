@@ -7,7 +7,11 @@
 #include "../database/operations/community/suggestion_operations.h"
 #include "../database/operations/economy/history_operations.h"
 #include "titles.h"  // dynamic title definitions
+#include "../performance/cache_manager.h"
 #include <dpp/dpp.h>
+#include <dpp/version.h>
+#include <fstream>
+#include <dirent.h>
 
 // helper to compute next weekly rotation boundary (UTC)
 static time_t next_rotation_time() {
@@ -24,6 +28,538 @@ static time_t next_rotation_time() {
 #include <iomanip>
 #include <algorithm>
 #include <shared_mutex>
+
+// ─── OStats paginator ───
+static constexpr int OSTATS_TOTAL_PAGES = 7;
+
+struct OStatsState {
+    int current_page = 0; // 0-based, 0..OSTATS_TOTAL_PAGES-1
+};
+static std::map<uint64_t, OStatsState> ostats_states;
+
+// System memory / process helpers
+struct ProcessInfo {
+    long vm_rss_kb = 0;
+    long vm_size_kb = 0;
+    long vm_hwm_kb = 0;
+    int  threads = 0;
+};
+
+static ProcessInfo get_process_info() {
+    ProcessInfo info;
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.rfind("VmRSS:", 0) == 0)    info.vm_rss_kb  = std::stol(line.substr(6));
+        else if (line.rfind("VmSize:", 0) == 0) info.vm_size_kb = std::stol(line.substr(7));
+        else if (line.rfind("VmHWM:", 0) == 0)  info.vm_hwm_kb  = std::stol(line.substr(6));
+        else if (line.rfind("Threads:", 0) == 0) info.threads    = std::stoi(line.substr(8));
+    }
+    return info;
+}
+
+static int count_open_fds() {
+    int count = 0;
+    DIR* d = opendir("/proc/self/fd");
+    if (d) {
+        while (readdir(d)) count++;
+        closedir(d);
+        count -= 2; // . and ..
+    }
+    return count;
+}
+
+static std::string fmt_mem(long kb) {
+    if (kb >= 1048576) return std::to_string(kb / 1024 / 1024) + " GB";
+    if (kb >= 1024)    return std::to_string(kb / 1024) + " MB";
+    return std::to_string(kb) + " KB";
+}
+
+// Helper to run a single SQL query that returns one numeric column, one row
+static int64_t sql_count(bronx::db::Database* db, const std::string& sql) {
+    auto conn = db->get_pool()->acquire();
+    if (!conn) return -1;
+    if (mysql_query(conn->get(), sql.c_str()) != 0) { db->get_pool()->release(conn); return -1; }
+    MYSQL_RES* res = mysql_store_result(conn->get());
+    if (!res) { db->get_pool()->release(conn); return -1; }
+    MYSQL_ROW row = mysql_fetch_row(res);
+    int64_t val = (row && row[0]) ? std::stoll(row[0]) : 0;
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return val;
+}
+
+// Helper to run a SQL query returning multiple string columns, multiple rows
+struct SqlRow { std::vector<std::string> cols; };
+static std::vector<SqlRow> sql_query(bronx::db::Database* db, const std::string& sql) {
+    std::vector<SqlRow> rows;
+    auto conn = db->get_pool()->acquire();
+    if (!conn) return rows;
+    if (mysql_query(conn->get(), sql.c_str()) != 0) { db->get_pool()->release(conn); return rows; }
+    MYSQL_RES* res = mysql_store_result(conn->get());
+    if (!res) { db->get_pool()->release(conn); return rows; }
+    int ncols = mysql_num_fields(res);
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        SqlRow r;
+        for (int i = 0; i < ncols; i++) r.cols.push_back(row[i] ? row[i] : "0");
+        rows.push_back(std::move(r));
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return rows;
+}
+
+// Build a single ostats page (0-based)
+static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database* db, uint64_t owner_id) {
+    OStatsState& state = ostats_states[owner_id];
+    int page = state.current_page;
+
+    static const std::vector<std::string> page_titles = {
+        "Bot Overview",         // 0
+        "Cache & Infrastructure", // 1
+        "Command Stats",        // 2
+        "Economy Overview",     // 3
+        "Fishing & Inventory",  // 4
+        "Leveling & Community", // 5
+        "System & Process",     // 6
+    };
+
+    std::string desc;
+
+    if (page == 0) {
+        // ── Page 1: Bot Overview ──
+        auto now = std::chrono::system_clock::now();
+        auto uptime_s = std::chrono::duration_cast<std::chrono::seconds>(now - commands::global_stats.start_time).count();
+        uint64_t d = uptime_s / 86400, h = (uptime_s % 86400) / 3600, m = (uptime_s % 3600) / 60, s = uptime_s % 60;
+        std::string uptime = std::to_string(d) + "d " + std::to_string(h) + "h " + std::to_string(m) + "m " + std::to_string(s) + "s";
+
+        desc += "**uptime:** " + uptime + "\n";
+        desc += "**bot:** " + bot.me.format_username() + " (`" + std::to_string((uint64_t)bot.me.id) + "`)\n";
+        desc += "**dpp:** " DPP_VERSION_TEXT "\n";
+        desc += "**c++:** " + std::to_string(__cplusplus) + "\n\n";
+
+        // Shards
+        auto shards = bot.get_shards();
+        double total_ws = 0; int connected = 0;
+        desc += "**shards:** " + std::to_string(shards.size()) + "\n";
+        for (const auto& [sid, shard] : shards) {
+            bool ready = shard->websocket_ping > 0;
+            if (ready) { connected++; total_ws += shard->websocket_ping * 1000; }
+            desc += "• shard " + std::to_string(sid) + ": " + (ready ? "🟢" : "⚫");
+            if (ready) desc += " " + std::to_string((int)(shard->websocket_ping * 1000)) + "ms";
+            desc += "\n";
+        }
+        double avg_ws = connected > 0 ? total_ws / connected : 0;
+        desc += "\n**avg ping:** " + std::to_string((int)commands::global_stats.get_average_ping()) + "ms\n";
+        desc += "**ws avg:** " + std::to_string((int)avg_ws) + "ms\n\n";
+
+        // Discord object counts
+        desc += "**servers:** " + std::to_string(dpp::get_guild_cache()->count()) + "\n";
+        desc += "**users:** " + std::to_string(dpp::get_user_cache()->count()) + "\n";
+        desc += "**channels:** " + std::to_string(dpp::get_channel_cache()->count()) + "\n";
+        desc += "**roles:** " + std::to_string(dpp::get_role_cache()->count()) + "\n";
+        desc += "**emojis:** " + std::to_string(dpp::get_emoji_cache()->count()) + "\n";
+
+    } else if (page == 1) {
+        // ── Page 2: Cache & Infrastructure ──
+        if (bronx::cache::global_cache) {
+            auto cs = bronx::cache::global_cache->get_stats();
+            desc += "**cache manager**\n";
+            desc += "• blacklist: " + std::to_string(cs.blacklist_entries) + "\n";
+            desc += "• whitelist: " + std::to_string(cs.whitelist_entries) + "\n";
+            desc += "• user prefixes: " + std::to_string(cs.user_prefixes_entries) + "\n";
+            desc += "• guild prefixes: " + std::to_string(cs.guild_prefixes_entries) + "\n";
+            desc += "• cooldowns: " + std::to_string(cs.cooldown_entries) + "\n";
+            desc += "• modules: " + std::to_string(cs.module_entries) + "\n";
+            desc += "• commands: " + std::to_string(cs.command_entries) + "\n";
+            desc += "• guild toggles: " + std::to_string(cs.guild_toggle_entries) + "\n";
+            desc += "• wallets: " + std::to_string(cs.wallet_entries) + "\n";
+            desc += "• banks: " + std::to_string(cs.bank_entries) + "\n";
+            desc += "• **total:** " + std::to_string(cs.total_entries) + "\n\n";
+        } else {
+            desc += "**cache manager:** not initialized\n\n";
+        }
+
+        // Connection pool
+        auto pool = db->get_pool();
+        if (pool) {
+            desc += "**db pool**\n";
+            desc += "• available: " + std::to_string(pool->available_connections()) + "\n";
+            desc += "• total: " + std::to_string(pool->total_connections()) + "\n\n";
+        }
+
+        // Blacklist / whitelist counts
+        auto bl = db->get_global_blacklist();
+        auto wl = db->get_global_whitelist();
+        desc += "**moderation**\n";
+        desc += "• blacklisted users: " + std::to_string(bl.size()) + "\n";
+        desc += "• whitelisted users: " + std::to_string(wl.size()) + "\n\n";
+
+        // Config counts
+        int64_t custom_prefixes = sql_count(db, "SELECT COUNT(DISTINCT guild_id) FROM guild_prefixes");
+        int64_t disabled_cmds   = sql_count(db, "SELECT COUNT(*) FROM guild_command_settings WHERE enabled=0");
+        int64_t disabled_mods   = sql_count(db, "SELECT COUNT(*) FROM guild_module_settings WHERE enabled=0");
+        int64_t reaction_roles  = sql_count(db, "SELECT COUNT(*) FROM reaction_roles");
+        int64_t autopurges      = sql_count(db, "SELECT COUNT(*) FROM autopurges");
+        int64_t reminders       = sql_count(db, "SELECT COUNT(*) FROM reminders WHERE completed=0");
+
+        desc += "**guild config**\n";
+        desc += "• custom prefixes: " + std::to_string(custom_prefixes) + "\n";
+        desc += "• disabled commands: " + std::to_string(disabled_cmds) + "\n";
+        desc += "• disabled modules: " + std::to_string(disabled_mods) + "\n";
+        desc += "• reaction roles: " + std::to_string(reaction_roles) + "\n";
+        desc += "• autopurges: " + std::to_string(autopurges) + "\n";
+        desc += "• active reminders: " + std::to_string(reminders) + "\n";
+
+    } else if (page == 2) {
+        // ── Page 3: Command Stats ──
+        desc += "**session totals**\n";
+        desc += "• commands run: " + commands::format_number((int64_t)commands::global_stats.total_commands) + "\n";
+        desc += "• errors: " + commands::format_number((int64_t)commands::global_stats.total_errors) + "\n";
+
+        // Rates
+        auto now = std::chrono::system_clock::now();
+        double uptime_hrs = std::chrono::duration_cast<std::chrono::seconds>(now - commands::global_stats.start_time).count() / 3600.0;
+        if (uptime_hrs > 0) {
+            double cmds_hr = commands::global_stats.total_commands / uptime_hrs;
+            desc += "• commands/hour: " + std::to_string((int)cmds_hr) + "\n";
+        }
+        double err_rate = commands::global_stats.total_commands > 0
+            ? (double)commands::global_stats.total_errors / commands::global_stats.total_commands * 100.0
+            : 0.0;
+        std::ostringstream oss; oss << std::fixed << std::setprecision(2) << err_rate;
+        desc += "• error rate: " + oss.str() + "%\n\n";
+
+        // Top 15 commands
+        if (!commands::global_stats.command_usage.empty()) {
+            desc += "**top commands**\n";
+            std::vector<std::pair<std::string, uint64_t>> sorted_cmds(
+                commands::global_stats.command_usage.begin(), commands::global_stats.command_usage.end());
+            std::sort(sorted_cmds.begin(), sorted_cmds.end(),
+                [](const auto& a, const auto& b) { return a.second > b.second; });
+            int count = 0;
+            for (const auto& [cmd, uses] : sorted_cmds) {
+                if (count++ >= 15) break;
+                desc += std::to_string(count) + ". `" + cmd + "` — " + std::to_string(uses) + "\n";
+            }
+            desc += "\n";
+        }
+
+        // Error breakdown
+        if (!commands::global_stats.error_counts.empty()) {
+            desc += "**error breakdown**\n";
+            std::vector<std::pair<std::string, uint64_t>> sorted_errs(
+                commands::global_stats.error_counts.begin(), commands::global_stats.error_counts.end());
+            std::sort(sorted_errs.begin(), sorted_errs.end(),
+                [](const auto& a, const auto& b) { return a.second > b.second; });
+            int count = 0;
+            for (const auto& [err, cnt] : sorted_errs) {
+                if (count++ >= 10) break;
+                desc += "• `" + err + "`: " + std::to_string(cnt) + "\n";
+            }
+        }
+
+        // DB-persisted command stats
+        int64_t db_total_cmds = sql_count(db, "SELECT COALESCE(SUM(uses),0) FROM command_stats");
+        int64_t db_unique_cmds = sql_count(db, "SELECT COUNT(DISTINCT command_name) FROM command_stats");
+        int64_t db_unique_users = sql_count(db, "SELECT COUNT(DISTINCT user_id) FROM command_stats");
+        if (db_total_cmds > 0) {
+            desc += "\n**all-time (db)**\n";
+            desc += "• total uses: " + commands::format_number(db_total_cmds) + "\n";
+            desc += "• unique commands: " + std::to_string(db_unique_cmds) + "\n";
+            desc += "• unique users: " + std::to_string(db_unique_users) + "\n";
+        }
+
+    } else if (page == 3) {
+        // ── Page 4: Economy Overview ──
+        int64_t total_users   = sql_count(db, "SELECT COUNT(*) FROM users");
+        int64_t total_wallets = sql_count(db, "SELECT COALESCE(SUM(wallet),0) FROM users");
+        int64_t total_banks   = sql_count(db, "SELECT COALESCE(SUM(bank),0) FROM users");
+        int64_t total_circ    = total_wallets + total_banks;
+        int64_t avg_nw        = sql_count(db, "SELECT COALESCE(AVG(wallet+bank),0) FROM users");
+        int64_t max_nw        = sql_count(db, "SELECT COALESCE(MAX(wallet+bank),0) FROM users");
+
+        desc += "**users**\n";
+        desc += "• registered: " + commands::format_number(total_users) + "\n";
+        int64_t active_24h = sql_count(db, "SELECT COUNT(*) FROM users WHERE last_active >= DATE_SUB(NOW(), INTERVAL 1 DAY)");
+        int64_t active_7d  = sql_count(db, "SELECT COUNT(*) FROM users WHERE last_active >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        desc += "• active (24h): " + commands::format_number(active_24h) + "\n";
+        desc += "• active (7d): " + commands::format_number(active_7d) + "\n\n";
+
+        desc += "**money supply**\n";
+        desc += "• wallets: $" + commands::format_number(total_wallets) + "\n";
+        desc += "• banks: $" + commands::format_number(total_banks) + "\n";
+        desc += "• **circulation:** $" + commands::format_number(total_circ) + "\n";
+        desc += "• avg net worth: $" + commands::format_number(avg_nw) + "\n";
+        desc += "• max net worth: $" + commands::format_number(max_nw) + "\n\n";
+
+        // Gambling
+        int64_t total_gambled = sql_count(db, "SELECT COALESCE(SUM(total_gambled),0) FROM users");
+        int64_t total_won     = sql_count(db, "SELECT COALESCE(SUM(total_won),0) FROM users");
+        int64_t total_lost    = sql_count(db, "SELECT COALESCE(SUM(total_lost),0) FROM users");
+        desc += "**gambling**\n";
+        desc += "• total gambled: $" + commands::format_number(total_gambled) + "\n";
+        desc += "• total won: $" + commands::format_number(total_won) + "\n";
+        desc += "• total lost: $" + commands::format_number(total_lost) + "\n";
+        desc += "• house edge: $" + commands::format_number(total_lost - total_won) + "\n\n";
+
+        // Gambling stats table
+        int64_t gbl_games    = sql_count(db, "SELECT COALESCE(SUM(games_played),0) FROM gambling_stats");
+        int64_t gbl_bet      = sql_count(db, "SELECT COALESCE(SUM(total_bet),0) FROM gambling_stats");
+        int64_t gbl_big_win  = sql_count(db, "SELECT COALESCE(MAX(biggest_win),0) FROM gambling_stats");
+        int64_t gbl_big_loss = sql_count(db, "SELECT COALESCE(MAX(biggest_loss),0) FROM gambling_stats");
+        desc += "**gambling (detailed)**\n";
+        desc += "• games played: " + commands::format_number(gbl_games) + "\n";
+        desc += "• total bet: $" + commands::format_number(gbl_bet) + "\n";
+        desc += "• biggest win: $" + commands::format_number(gbl_big_win) + "\n";
+        desc += "• biggest loss: $" + commands::format_number(gbl_big_loss) + "\n\n";
+
+        // Jackpot
+        int64_t jackpot_pool = db->get_jackpot_pool();
+        desc += "**jackpot pool:** $" + commands::format_number(jackpot_pool) + "\n";
+
+        // VIP & prestige
+        int64_t vip_count     = sql_count(db, "SELECT COUNT(*) FROM users WHERE vip=1");
+        int64_t prestige_count = sql_count(db, "SELECT COUNT(*) FROM users WHERE prestige > 0");
+        int64_t max_prestige  = sql_count(db, "SELECT COALESCE(MAX(prestige),0) FROM users");
+        desc += "**vip users:** " + std::to_string(vip_count) + "\n";
+        desc += "**prestige users:** " + std::to_string(prestige_count) + " (max: " + std::to_string(max_prestige) + ")\n";
+
+        // Loans
+        int64_t active_loans = sql_count(db, "SELECT COUNT(*) FROM loans WHERE remaining > 0");
+        int64_t loan_balance = sql_count(db, "SELECT COALESCE(SUM(remaining),0) FROM loans WHERE remaining > 0");
+        desc += "**active loans:** " + std::to_string(active_loans) + " ($" + commands::format_number(loan_balance) + " outstanding)\n";
+
+        // Trades
+        int64_t pending_trades = sql_count(db, "SELECT COUNT(*) FROM trades WHERE status='pending'");
+        int64_t completed_trades = sql_count(db, "SELECT COUNT(*) FROM trades WHERE status='completed'");
+        desc += "**trades:** " + std::to_string(pending_trades) + " pending, " + std::to_string(completed_trades) + " completed\n";
+
+    } else if (page == 4) {
+        // ── Page 5: Fishing & Inventory ──
+        int64_t total_fish     = sql_count(db, "SELECT COUNT(*) FROM fish_catches");
+        int64_t unsold_fish    = sql_count(db, "SELECT COUNT(*) FROM fish_catches WHERE sold=0");
+        int64_t unsold_value   = sql_count(db, "SELECT COALESCE(SUM(value),0) FROM fish_catches WHERE sold=0");
+        int64_t legendary_fish = sql_count(db, "SELECT COUNT(*) FROM fish_catches WHERE rarity='legendary'");
+        int64_t mutated_fish   = sql_count(db, "SELECT COUNT(*) FROM fish_catches WHERE rarity='mutated'");
+
+        desc += "**fishing**\n";
+        desc += "• total caught: " + commands::format_number(total_fish) + "\n";
+        desc += "• unsold: " + commands::format_number(unsold_fish) + " ($" + commands::format_number(unsold_value) + ")\n";
+        desc += "• legendary: " + commands::format_number(legendary_fish) + "\n";
+        desc += "• mutated: " + commands::format_number(mutated_fish) + "\n\n";
+
+        // Rarity breakdown
+        auto rarity_rows = sql_query(db, "SELECT rarity, COUNT(*) as cnt FROM fish_catches GROUP BY rarity ORDER BY cnt DESC LIMIT 10");
+        if (!rarity_rows.empty()) {
+            desc += "**fish by rarity**\n";
+            for (const auto& r : rarity_rows) {
+                desc += "• " + r.cols[0] + ": " + commands::format_number((int64_t)std::stoll(r.cols[1])) + "\n";
+            }
+            desc += "\n";
+        }
+
+        // Autofishing
+        int64_t auto_active  = sql_count(db, "SELECT COUNT(*) FROM autofishers WHERE active=1");
+        int64_t auto_balance = sql_count(db, "SELECT COALESCE(SUM(balance),0) FROM autofishers");
+        int64_t auto_stored  = sql_count(db, "SELECT COUNT(*) FROM autofish_storage");
+        desc += "**autofishing**\n";
+        desc += "• active: " + std::to_string(auto_active) + "\n";
+        desc += "• total balance: $" + commands::format_number(auto_balance) + "\n";
+        desc += "• stored fish: " + commands::format_number(auto_stored) + "\n\n";
+
+        // Inventory
+        int64_t inv_items    = sql_count(db, "SELECT COALESCE(SUM(quantity),0) FROM inventory");
+        int64_t inv_distinct = sql_count(db, "SELECT COUNT(DISTINCT item_id) FROM inventory");
+        int64_t inv_users    = sql_count(db, "SELECT COUNT(DISTINCT user_id) FROM inventory");
+        desc += "**inventory**\n";
+        desc += "• total items: " + commands::format_number(inv_items) + "\n";
+        desc += "• distinct items: " + std::to_string(inv_distinct) + "\n";
+        desc += "• users with items: " + commands::format_number(inv_users) + "\n\n";
+
+        // Bazaar
+        int64_t baz_shares    = sql_count(db, "SELECT COALESCE(SUM(shares),0) FROM bazaar_stock");
+        int64_t baz_invested  = sql_count(db, "SELECT COALESCE(SUM(total_invested),0) FROM bazaar_stock");
+        int64_t baz_dividends = sql_count(db, "SELECT COALESCE(SUM(total_dividends),0) FROM bazaar_stock");
+        desc += "**bazaar**\n";
+        desc += "• total shares: " + commands::format_number(baz_shares) + "\n";
+        desc += "• invested: $" + commands::format_number(baz_invested) + "\n";
+        desc += "• dividends paid: $" + commands::format_number(baz_dividends) + "\n";
+
+        // Mining claims
+        int64_t active_claims = sql_count(db, "SELECT COUNT(*) FROM mining_claims WHERE expires_at > NOW()");
+        desc += "\n**mining claims:** " + std::to_string(active_claims) + " active\n";
+
+    } else if (page == 5) {
+        // ── Page 6: Leveling & Community ──
+        int64_t xp_users     = sql_count(db, "SELECT COUNT(*) FROM user_xp");
+        int64_t xp_total     = sql_count(db, "SELECT COALESCE(SUM(total_xp),0) FROM user_xp");
+        int64_t xp_max_level = sql_count(db, "SELECT COALESCE(MAX(level),0) FROM user_xp");
+        int64_t lv_servers   = sql_count(db, "SELECT COUNT(*) FROM server_leveling_config WHERE enabled=1");
+        int64_t lv_roles     = sql_count(db, "SELECT COUNT(*) FROM level_roles");
+
+        desc += "**leveling**\n";
+        desc += "• users with xp: " + commands::format_number(xp_users) + "\n";
+        desc += "• total xp earned: " + commands::format_number(xp_total) + "\n";
+        desc += "• max level: " + std::to_string(xp_max_level) + "\n";
+        desc += "• servers with leveling: " + std::to_string(lv_servers) + "\n";
+        desc += "• level roles: " + std::to_string(lv_roles) + "\n\n";
+
+        // Community
+        int64_t sugg_total  = sql_count(db, "SELECT COUNT(*) FROM suggestions");
+        int64_t sugg_unread = sql_count(db, "SELECT COUNT(*) FROM suggestions WHERE `read`=0");
+        int64_t bug_total   = sql_count(db, "SELECT COUNT(*) FROM bug_reports");
+        int64_t bug_unread  = sql_count(db, "SELECT COUNT(*) FROM bug_reports WHERE `read`=0");
+        int64_t bug_open    = sql_count(db, "SELECT COUNT(*) FROM bug_reports WHERE resolved=0");
+        int64_t patch_count = db->get_patch_count();
+
+        desc += "**community**\n";
+        desc += "• suggestions: " + std::to_string(sugg_total) + " (" + std::to_string(sugg_unread) + " unread)\n";
+        desc += "• bug reports: " + std::to_string(bug_total) + " (" + std::to_string(bug_unread) + " unread, " + std::to_string(bug_open) + " open)\n";
+        desc += "• patch notes: " + std::to_string(patch_count) + "\n\n";
+
+        // Giveaways / guild economy
+        int64_t active_giveaways = sql_count(db, "SELECT COUNT(*) FROM giveaways WHERE active=1");
+        int64_t guild_bal_total  = sql_count(db, "SELECT COALESCE(SUM(balance),0) FROM guild_balances");
+        int64_t guild_donated    = sql_count(db, "SELECT COALESCE(SUM(total_donated),0) FROM guild_balances");
+        desc += "**giveaways & guild economy**\n";
+        desc += "• active giveaways: " + std::to_string(active_giveaways) + "\n";
+        desc += "• guild balance total: $" + commands::format_number(guild_bal_total) + "\n";
+        desc += "• total donated: $" + commands::format_number(guild_donated) + "\n\n";
+
+        // Event tracking
+        int64_t msg_evts_7d    = sql_count(db, "SELECT COUNT(*) FROM guild_message_events WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        int64_t voice_evts_7d  = sql_count(db, "SELECT COUNT(*) FROM guild_voice_events WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        int64_t member_evts_7d = sql_count(db, "SELECT COUNT(*) FROM guild_member_events WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        int64_t boost_evts_7d  = sql_count(db, "SELECT COUNT(*) FROM guild_boost_events WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+        desc += "**event tracking (7d)**\n";
+        desc += "• message events: " + commands::format_number(msg_evts_7d) + "\n";
+        desc += "• voice events: " + commands::format_number(voice_evts_7d) + "\n";
+        desc += "• member events: " + commands::format_number(member_evts_7d) + "\n";
+        desc += "• boost events: " + commands::format_number(boost_evts_7d) + "\n";
+
+        // Pets
+        int64_t total_pets = sql_count(db, "SELECT COUNT(*) FROM user_pets");
+        desc += "\n**pets:** " + commands::format_number(total_pets) + " owned\n";
+
+        // Crews
+        int64_t total_crews = sql_count(db, "SELECT COUNT(*) FROM crews");
+        int64_t crew_members = sql_count(db, "SELECT COUNT(*) FROM crew_members");
+        desc += "**crews:** " + std::to_string(total_crews) + " (" + std::to_string(crew_members) + " members)\n";
+
+    } else if (page == 6) {
+        // ── Page 7: System & Process ──
+        auto mem = get_process_info();
+        desc += "**memory**\n";
+        desc += "• rss: " + fmt_mem(mem.vm_rss_kb) + "\n";
+        desc += "• peak rss: " + fmt_mem(mem.vm_hwm_kb) + "\n";
+        desc += "• virtual: " + fmt_mem(mem.vm_size_kb) + "\n\n";
+
+        desc += "**process**\n";
+        desc += "• threads: " + std::to_string(mem.threads) + "\n";
+        desc += "• open fds: " + std::to_string(count_open_fds()) + "\n";
+
+        // executable size
+        struct stat st;
+        if (stat("/proc/self/exe", &st) == 0) {
+            double mb = st.st_size / 1048576.0;
+            std::ostringstream oss; oss << std::fixed << std::setprecision(1) << mb;
+            desc += "• binary size: " + oss.str() + " MB\n";
+        }
+
+        char hostname[256] = {};
+        gethostname(hostname, sizeof(hostname));
+        desc += "• hostname: " + std::string(hostname) + "\n\n";
+
+        // Ping percentiles
+        if (commands::global_stats.ping_history.size() >= 5) {
+            auto sorted_pings = commands::global_stats.ping_history;
+            std::sort(sorted_pings.begin(), sorted_pings.end());
+            size_t n = sorted_pings.size();
+            desc += "**ping percentiles** (" + std::to_string(n) + " samples)\n";
+            desc += "• min: " + std::to_string((int)sorted_pings[0]) + "ms\n";
+            desc += "• p50: " + std::to_string((int)sorted_pings[n/2]) + "ms\n";
+            desc += "• p95: " + std::to_string((int)sorted_pings[(size_t)(n*0.95)]) + "ms\n";
+            desc += "• p99: " + std::to_string((int)sorted_pings[(size_t)(n*0.99)]) + "ms\n";
+            desc += "• max: " + std::to_string((int)sorted_pings[n-1]) + "ms\n\n";
+        }
+
+        // DB table sizes
+        auto table_rows = sql_query(db,
+            "SELECT table_name, table_rows, ROUND(data_length/1024/1024, 2) AS data_mb "
+            "FROM information_schema.tables WHERE table_schema='bronxbot' "
+            "ORDER BY data_length DESC LIMIT 10");
+        if (!table_rows.empty()) {
+            desc += "**top tables by size**\n";
+            for (const auto& r : table_rows) {
+                desc += "• " + r.cols[0] + ": ~" + r.cols[1] + " rows (" + r.cols[2] + " MB)\n";
+            }
+        }
+    }
+
+    // Truncate if too long
+    if (desc.size() > 4000) desc = desc.substr(0, 3997) + "...";
+
+    auto embed = bronx::create_embed(desc);
+    embed.set_title("📊 " + page_titles[page]);
+    embed.set_color(0xFF6B35);
+    embed.set_footer(dpp::embed_footer().set_text(
+        "Page " + std::to_string(page + 1) + " / " + std::to_string(OSTATS_TOTAL_PAGES)
+        + " • " + page_titles[page]));
+    embed.set_timestamp(time(0));
+
+    dpp::message msg;
+    msg.add_embed(embed);
+
+    // Navigation buttons
+    dpp::component nav_row;
+    nav_row.set_type(dpp::cot_action_row);
+
+    dpp::component first_btn;
+    first_btn.set_type(dpp::cot_button).set_label("⏮").set_style(dpp::cos_secondary)
+        .set_id("ostats_first").set_disabled(page == 0);
+    nav_row.add_component(first_btn);
+
+    dpp::component prev_btn;
+    prev_btn.set_type(dpp::cot_button).set_label("◀ Prev").set_style(dpp::cos_primary)
+        .set_id("ostats_prev").set_disabled(page == 0);
+    nav_row.add_component(prev_btn);
+
+    // Page indicator (disabled button as label)
+    dpp::component page_btn;
+    page_btn.set_type(dpp::cot_button)
+        .set_label(std::to_string(page + 1) + " / " + std::to_string(OSTATS_TOTAL_PAGES))
+        .set_style(dpp::cos_secondary).set_id("ostats_page").set_disabled(true);
+    nav_row.add_component(page_btn);
+
+    dpp::component next_btn;
+    next_btn.set_type(dpp::cot_button).set_label("Next ▶").set_style(dpp::cos_primary)
+        .set_id("ostats_next").set_disabled(page >= OSTATS_TOTAL_PAGES - 1);
+    nav_row.add_component(next_btn);
+
+    dpp::component last_btn;
+    last_btn.set_type(dpp::cot_button).set_label("⏭").set_style(dpp::cos_secondary)
+        .set_id("ostats_last").set_disabled(page >= OSTATS_TOTAL_PAGES - 1);
+    nav_row.add_component(last_btn);
+
+    msg.add_component(nav_row);
+
+    // Quick-jump row — select menu for pages
+    dpp::component jump_row;
+    jump_row.set_type(dpp::cot_action_row);
+    dpp::component select;
+    select.set_type(dpp::cot_selectmenu).set_placeholder("Jump to page…").set_id("ostats_jump");
+    for (int i = 0; i < OSTATS_TOTAL_PAGES; i++) {
+        select.add_select_option(
+            dpp::select_option(std::to_string(i+1) + ". " + page_titles[i], std::to_string(i))
+                .set_default(i == page));
+    }
+    jump_row.add_component(select);
+    msg.add_component(jump_row);
+
+    return msg;
+}
 
 // Pagination state for suggestions view
 struct SuggestState {
@@ -513,106 +1049,32 @@ static bool parse_scope_args(const std::vector<std::string> &args,
 inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bronx::db::Database* db) {
     static ::std::vector<Command*> cmds;
     
-    // Owner Stats command (bot statistics)
+    // Owner Stats command (bot statistics) — paginated
     static Command stats("ostats", "view detailed bot statistics (owner only)", "owner", {"ownerstatistics", "botinfo"}, false,
-        [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+        [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (!is_owner(event.msg.author.id)) {
                 bot.message_create(dpp::message(event.msg.channel_id, 
                     bronx::error("This command is restricted to the bot owner only.")));
                 return;
             }
-            
-            // Calculate uptime
-            auto now = ::std::chrono::system_clock::now();
-            auto uptime_duration = ::std::chrono::duration_cast<::std::chrono::seconds>(now - global_stats.start_time);
-            uint64_t total_seconds = uptime_duration.count();
-            
-            uint64_t days = total_seconds / 86400;
-            uint64_t hours = (total_seconds % 86400) / 3600;
-            uint64_t minutes = (total_seconds % 3600) / 60;
-            uint64_t seconds = total_seconds % 60;
-            
-            ::std::string uptime_str = ::std::to_string(days) + "d " + ::std::to_string(hours) + "h " 
-                                    + ::std::to_string(minutes) + "m " + ::std::to_string(seconds) + "s";
-            
-            // Get shard information
-            auto shards = bot.get_shards();
-            double total_ws_latency = 0;
-            int connected_shards = 0;
-            
-            // Build stats embed
-            ::std::string description = "**info**\n\n";
-            
-            // Uptime & Basic Stats
-            description += "**uptime:** " + uptime_str + "\n";
-            description += "**avg Ping:** " + ::std::to_string((int)global_stats.get_average_ping()) + "ms\n";
-            
-            // Shard status details
-            description += "**shards:** " + ::std::to_string(shards.size()) + "\n";
-            
-            for (const auto& [shard_id, shard] : shards) {
-                ::std::string status_str;
-                
-                // Check if shard is ready by checking if websocket_ping is valid
-                bool is_ready = shard->websocket_ping > 0;
-                
-                if (is_ready) {
-                    status_str = "🟢 ready";
-                    connected_shards++;
-                    total_ws_latency += shard->websocket_ping * 1000;
-                } else {
-                    status_str = "⚫ disconnected";
-                }
-                
-                description += "• **shard " + ::std::to_string(shard_id) + ":** " + status_str;
-                if (is_ready) {
-                    description += " (" + ::std::to_string((int)(shard->websocket_ping * 1000)) + "ms)";
-                }
-                description += "\n";
+
+            uint64_t uid = event.msg.author.id;
+            // Initialize / reset state
+            OStatsState& state = ostats_states[uid];
+
+            // Allow jumping to a page: .ostats 3
+            if (!args.empty()) {
+                try {
+                    int p = std::stoi(args[0]) - 1;
+                    if (p >= 0 && p < OSTATS_TOTAL_PAGES) state.current_page = p;
+                } catch (...) {}
+            } else {
+                state.current_page = 0;
             }
-            
-            // Overall websocket ping average
-            double avg_ws_latency = connected_shards > 0 ? total_ws_latency / connected_shards : 0;
-            description += "**websocket Ping:** " + ::std::to_string((int)avg_ws_latency) + "ms avg\n\n";
-            
-            // Server stats
-            description += "**servers:** " + ::std::to_string(dpp::get_guild_cache()->count()) + "\n";
-            description += "**users:** " + ::std::to_string(dpp::get_user_cache()->count()) + "\n";
-            description += "**channels:** " + ::std::to_string(dpp::get_channel_cache()->count()) + "\n\n";
-            
-            // Command stats
-            description += "**commands:** " + ::std::to_string(global_stats.total_commands) + "\n";
-            description += "**errors:** " + ::std::to_string(global_stats.total_errors) + "\n\n";
-            
-            // Top 5 commands
-            if (!global_stats.command_usage.empty()) {
-                description += "**top commands:**\n";
-                ::std::vector<::std::pair<::std::string, uint64_t>> sorted_cmds(
-                    global_stats.command_usage.begin(), global_stats.command_usage.end());
-                ::std::sort(sorted_cmds.begin(), sorted_cmds.end(),
-                    [](const auto& a, const auto& b) { return a.second > b.second; });
-                
-                int count = 0;
-                for (const auto& [cmd, uses] : sorted_cmds) {
-                    if (count++ >= 5) break;
-                    description += "• `" + cmd + "`: " + ::std::to_string(uses) + " uses\n";
-                }
-                description += "\n";
-            }
-            
-            // Error stats
-            if (!global_stats.error_counts.empty()) {
-                description += "**analysis:**\n";
-                for (const auto& [error_type, count] : global_stats.error_counts) {
-                    description += "• " + error_type + ": " + ::std::to_string(count) + "\n";
-                }
-            }
-            
-            auto embed = bronx::create_embed(description);
-            embed.set_color(0xFF6B35);
-            bronx::add_invoker_footer(embed, event.msg.author);
-            
-            bot.message_create(dpp::message(event.msg.channel_id, embed));
+
+            dpp::message msg = build_ostats_message(bot, db, uid);
+            msg.set_channel_id(event.msg.channel_id);
+            bot.message_create(msg);
         });
     cmds.push_back(&stats);
 
@@ -2471,7 +2933,7 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             // Safety: require explicit "confirm" flag
             bool confirmed = (args.size() >= 2 && args[1] == "confirm");
             if (!confirmed) {
-                std::string warn = "⚠️ **this will permanently delete ALL data** for <@" + std::to_string(target_id) + "> (`" + std::to_string(target_id) + "`):\n\n"
+                std::string warn = bronx::EMOJI_WARNING + " **this will permanently delete ALL data** for <@" + std::to_string(target_id) + "> (`" + std::to_string(target_id) + "`):\n\n"
                     "economy, inventory, fish catches, autofisher, bazaar, XP, gambling stats, "
                     "command history, cooldowns, wishlists, trades, suggestions, bug reports, "
                     "reminders, and every other record tied to this user.\n\n"
@@ -2501,7 +2963,7 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
                     bronx::success("purged all data for `" + uid + "` (" + std::to_string(ok) + "/" + std::to_string(total) + " statements succeeded)")));
             } else if (ok > 0) {
                 bot.message_create(dpp::message(event.msg.channel_id,
-                    bronx::create_embed("⚠️ partial purge: " + std::to_string(ok) + "/" + std::to_string(total) + " statements succeeded for `" + uid + "`. check logs for errors.")));
+                    bronx::create_embed(bronx::EMOJI_WARNING + " partial purge: " + std::to_string(ok) + "/" + std::to_string(total) + " statements succeeded for `" + uid + "`. check logs for errors.")));
             } else {
                 bot.message_create(dpp::message(event.msg.channel_id,
                     bronx::error("purge failed for `" + uid + "`: " + db->get_last_error())));
@@ -2518,7 +2980,8 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
     bot.on_select_click([&bot, db](const dpp::select_click_t& event) {
         std::string custom_id = event.custom_id;
         // Only handle owner-related select menus, let other handlers process their own
-        if (custom_id.rfind("owner_mod_select_", 0) != 0 && custom_id.rfind("owner_cmd_select_", 0) != 0) {
+        if (custom_id.rfind("owner_mod_select_", 0) != 0 && custom_id.rfind("owner_cmd_select_", 0) != 0
+            && custom_id != "ostats_jump") {
             return;
         }
         uint64_t uid = event.command.get_issuing_user().id;
@@ -2527,6 +2990,20 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
                 dpp::message().add_embed(bronx::error("this interaction is restricted to the bot owner")).set_flags(dpp::m_ephemeral));
             return;
         }
+
+        // ── ostats page-jump select ──
+        if (custom_id == "ostats_jump") {
+            std::string choice = event.values.empty() ? "0" : event.values[0];
+            int target_page = 0;
+            try { target_page = std::stoi(choice); } catch (...) {}
+            if (target_page < 0) target_page = 0;
+            if (target_page >= OSTATS_TOTAL_PAGES) target_page = OSTATS_TOTAL_PAGES - 1;
+            ostats_states[uid].current_page = target_page;
+            dpp::message msg = build_ostats_message(bot, db, uid);
+            event.reply(dpp::ir_update_message, msg);
+            return;
+        }
+
         std::string choice = event.values.empty() ? "" : event.values[0];
         if (custom_id.rfind("owner_mod_select_",0)==0) {
             // produce ephemeral enable/disable buttons for module
@@ -2618,9 +3095,10 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
             }
             return;
         }
-        // only handle suggestion-related, serverlist, and cmdhistory buttons; otherwise ignore entirely so they
+        // only handle suggestion-related, serverlist, cmdhistory, and ostats buttons; otherwise ignore entirely so they
         // don't collide with other modules (e.g. gambling interactions)
-        if (custom_id.rfind("suggest_", 0) != 0 && custom_id.rfind("serverlist_", 0) != 0 && custom_id.rfind("cmdh_", 0) != 0) {
+        if (custom_id.rfind("suggest_", 0) != 0 && custom_id.rfind("serverlist_", 0) != 0
+            && custom_id.rfind("cmdh_", 0) != 0 && custom_id.rfind("ostats_", 0) != 0) {
             return;
         }
         uint64_t user_id = event.command.get_issuing_user().id;
@@ -2629,6 +3107,20 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
             event.reply(dpp::ir_channel_message_with_source,
                 dpp::message().add_embed(bronx::error("this interaction is restricted to the bot owner"))
                     .set_flags(dpp::m_ephemeral));
+            return;
+        }
+
+        // ── ostats paginator buttons ──
+        if (custom_id.rfind("ostats_", 0) == 0) {
+            OStatsState& st = ostats_states[user_id];
+            if (custom_id == "ostats_first")     st.current_page = 0;
+            else if (custom_id == "ostats_prev") st.current_page = std::max(0, st.current_page - 1);
+            else if (custom_id == "ostats_next") st.current_page = std::min(OSTATS_TOTAL_PAGES - 1, st.current_page + 1);
+            else if (custom_id == "ostats_last") st.current_page = OSTATS_TOTAL_PAGES - 1;
+            else return; // "ostats_page" disabled button, ignore
+
+            dpp::message msg = build_ostats_message(bot, db, user_id);
+            event.reply(dpp::ir_update_message, msg);
             return;
         }
         // ensure state exists

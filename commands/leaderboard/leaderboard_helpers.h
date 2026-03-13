@@ -1,5 +1,6 @@
 #pragma once
 #include "../../database/core/database.h"
+#include "../../database/operations/stats/stats_query_operations.h"
 #include "../../embed_style.h"
 #include "../titles.h"
 #include "../economy/helpers.h"
@@ -195,9 +196,14 @@ static const ::std::vector<::std::string> ALL_CATEGORIES = {
     "networth", "wallet", "bank", "prestige",
     "fish-caught", "fish-sold", "fish-value", "fishing-profit",
     "gambling-profit", "gambling-losses",
-    "commands",
+    "commands", "messages", "vc-time",
     "global-xp", "server-xp"
 };
+
+// Categories that support time-range filtering
+inline bool category_supports_range(const ::std::string& cat) {
+    return cat == "messages" || cat == "vc-time" || cat == "commands";
+}
 
 // Resolve alias to full category name
 inline ::std::string resolve_category_alias(const ::std::string& input) {
@@ -219,6 +225,8 @@ inline ::std::string resolve_category_alias(const ::std::string& input) {
     if (lower == "gp" || lower == "gambleprofit" || lower == "gambling-wins" || lower == "gw") return "gambling-profit";
     if (lower == "gl" || lower == "gamblelosses") return "gambling-losses";
     if (lower == "cmd" || lower == "cmds") return "commands";
+    if (lower == "msg" || lower == "msgs") return "messages";
+    if (lower == "vc" || lower == "voice" || lower == "hours" || lower == "vctime") return "vc-time";
     if (lower == "p" || lower == "pres") return "prestige";
     if (lower == "gxp" || lower == "globalxp" || lower == "level" || lower == "lvl") return "global-xp";
     if (lower == "sxp" || lower == "serverxp" || lower == "slevel" || lower == "slvl") return "server-xp";
@@ -279,6 +287,10 @@ inline CategoryInfo get_category_info(const ::std::string& category) {
         return {"gambling losses", "💸", true};
     } else if (category == "commands") {
         return {"commands used", "⌨️", false};
+    } else if (category == "messages") {
+        return {"messages sent", "💬", false};
+    } else if (category == "vc-time") {
+        return {"VC hours", "🎙️", false};
     } else if (category == "prestige") {
         return {"prestige level", bronx::EMOJI_STAR, false};
     } else if (category == "global-xp") {
@@ -306,6 +318,8 @@ inline dpp::component create_category_select_menu(uint64_t user_id) {
                .add_select_option(dpp::select_option("🎰 gambling profit", "gambling-profit", "gambling earnings"))
                .add_select_option(dpp::select_option("💸 gambling losses", "gambling-losses", "gambling losses"))
                .add_select_option(dpp::select_option("⌨️ commands used", "commands", "command usage count"))
+               .add_select_option(dpp::select_option("💬 messages sent", "messages", "total messages sent"))
+               .add_select_option(dpp::select_option("🎙️ VC hours", "vc-time", "time spent in voice channels"))
                .add_select_option(dpp::select_option("⭐ prestige level", "prestige", "prestige rank"))
                .add_select_option(dpp::select_option("🌐 global XP", "global-xp", "total XP across all servers"))
                .add_select_option(dpp::select_option("📊 server XP", "server-xp", "XP in this server"));
@@ -340,6 +354,24 @@ inline ::std::vector<bronx::db::LeaderboardEntry> get_entries_for_category(
         return db->get_gambling_losses_leaderboard(guild_id, limit);
     } else if (category == "commands") {
         return db->get_commands_used_leaderboard(guild_id, limit);
+    } else if (category == "messages") {
+        // uses user_activity_daily table — all-time
+        auto entries_raw = bronx::db::stats_queries::top_users_messages(db, guild_id, -1, limit);
+        ::std::vector<bronx::db::LeaderboardEntry> entries;
+        int rank = 1;
+        for (auto& e : entries_raw) {
+            entries.push_back({e.user_id, "", e.total_value, rank++, ""});
+        }
+        return entries;
+    } else if (category == "vc-time") {
+        // uses user_activity_daily table — all-time, values in minutes
+        auto entries_raw = bronx::db::stats_queries::top_users_voice(db, guild_id, -1, limit);
+        ::std::vector<bronx::db::LeaderboardEntry> entries;
+        int rank = 1;
+        for (auto& e : entries_raw) {
+            entries.push_back({e.user_id, "", e.total_value, rank++, ""});
+        }
+        return entries;
     } else if (category == "prestige") {
         return db->get_prestige_leaderboard(guild_id, limit);
     } else if (category == "global-xp") {
@@ -560,6 +592,8 @@ inline dpp::component create_category_dropdown_row(
         {"🎰 gambling profit", "gambling-profit", "gambling earnings"},
         {"💸 gambling losses", "gambling-losses", "gambling losses"},
         {"⌨️ commands used", "commands", "command usage count"},
+        {"💬 messages sent", "messages", "total messages sent"},
+        {"🎙️ VC hours", "vc-time", "time spent in voice channels"},
         {"🌐 global XP", "global-xp", "total XP across all servers"},
         {"📊 server XP", "server-xp", "XP in this server"},
     };
@@ -656,6 +690,14 @@ inline ::std::string build_leaderboard_description(
         if (category == "prestige") {
             // Prestige leaderboard: extra_info carries the full display (e.g., "🔄 R2 · P5 ⭐" or "10 ⭐")
             description += entry.extra_info;
+        } else if (category == "vc-time") {
+            // Display voice time as hours + minutes (value is in minutes)
+            int64_t hours = entry.value / 60;
+            int64_t mins  = entry.value % 60;
+            if (hours > 0)
+                description += std::to_string(hours) + "h " + std::to_string(mins) + "m";
+            else
+                description += std::to_string(mins) + "m";
         } else if (info.is_currency) {
             description += "$" + format_number(entry.value);
         } else {

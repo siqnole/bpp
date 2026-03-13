@@ -7,6 +7,8 @@
 #include <iostream>
 #include <cmath>
 #include <set>
+#include <map>
+#include <mutex>
 
 using namespace bronx::db;
 
@@ -15,6 +17,39 @@ namespace fishing {
 
 // AUTO-SELL FEE applied to gross value when the autofisher sells on the user's behalf.
 static constexpr double AUTOSELL_FEE = 0.22; // 22% convenience fee
+
+// ── DM notification throttling ──────────────────────────────────────────
+// Track last DM time per (user_id, reason) to avoid spamming
+static std::map<std::pair<uint64_t, std::string>, std::chrono::steady_clock::time_point> af_dm_throttle;
+static std::mutex af_dm_mutex;
+
+// Send a DM to user about an autofish failure, throttled to once per hour per reason
+inline void af_notify_user(dpp::cluster* bot, uint64_t user_id, const std::string& reason, const std::string& message) {
+    if (!bot) return;
+    auto key = std::make_pair(user_id, reason);
+    auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(af_dm_mutex);
+        auto it = af_dm_throttle.find(key);
+        if (it != af_dm_throttle.end() &&
+            std::chrono::duration_cast<std::chrono::hours>(now - it->second).count() < 1) {
+            return; // already notified within the last hour
+        }
+        af_dm_throttle[key] = now;
+    }
+    try {
+        dpp::embed embed = dpp::embed()
+            .set_color(0xE5989B) // soft red
+            .set_title("🎣 autofisher paused")
+            .set_description(message)
+            .set_timestamp(time(0));
+        bot->direct_message_create(user_id, dpp::message().add_embed(embed));
+    } catch (...) {}
+}
+
+// Optional: set from main.cpp so the runner can send DMs
+static dpp::cluster* af_bot_ptr = nullptr;
+inline void set_autofish_bot(dpp::cluster* bot) { af_bot_ptr = bot; }
 
 // Attempt to top up the autofisher's bait supply by drawing from the user's bank.
 // Returns the number of bait units added (0 if disabled or insufficient funds).
@@ -55,16 +90,23 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
 
         if (cfg.af_rod_id.empty()) {
             std::cerr << "Autofisher user=" << user_id << " no rod equipped\n";
+            af_notify_user(af_bot_ptr, user_id, "no_rod",
+                "your autofisher has **no rod equipped**.\nuse `autofisher equip rod <id>` to fix this.");
             return 0;
         }
         if (cfg.af_bait_id.empty()) {
             std::cerr << "Autofisher user=" << user_id << " no bait type set\n";
+            af_notify_user(af_bot_ptr, user_id, "no_bait",
+                "your autofisher has **no bait type set**.\nuse `autofisher equip bait <id>` to fix this.");
             return 0;
         }
 
         // Rod must still be in the user's own inventory
         if (!db->has_item(user_id, cfg.af_rod_id, 1)) {
             std::cerr << "Autofisher user=" << user_id << " rod not in inventory\n";
+            af_notify_user(af_bot_ptr, user_id, "rod_missing",
+                "your autofisher rod `" + cfg.af_rod_id + "` is **no longer in your inventory** (sold or consumed).\n"
+                "equip a new rod with `autofisher equip rod <id>`.");
             return 0;
         }
 
@@ -81,6 +123,10 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
         // Allow common/uncommon/rare bait (levels 1-3) with any rod
         if (bait_lvl > 3 && abs(rod_lvl - bait_lvl) > 2) {
             std::cerr << "Autofisher user=" << user_id << " incompatible gear levels\n";
+            af_notify_user(af_bot_ptr, user_id, "gear_mismatch",
+                "your autofisher gear is **incompatible** — rod level " + std::to_string(rod_lvl) +
+                " vs bait level " + std::to_string(bait_lvl) + " (gap > 2).\n"
+                "equip compatible gear with `autofisher equip rod|bait <id>`.");
             return 0;
         }
 
@@ -94,6 +140,9 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
 
         if (cfg.af_bait_qty <= 0) {
             std::cerr << "Autofisher user=" << user_id << " out of bait\n";
+            af_notify_user(af_bot_ptr, user_id, "out_of_bait",
+                "your autofisher is **out of bait** and couldn't buy more.\n"
+                "deposit bait with `autofisher deposit` or enable bank draw with `autofisher balance <amount>`.");
             return 0;
         }
 

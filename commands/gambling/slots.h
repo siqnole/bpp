@@ -123,6 +123,12 @@ inline Command* get_slots_command(Database* db) {
             bot.message_create(dpp::message(event.msg.channel_id, spin_embed), [&bot, event, slot1, slot2, slot3, winnings, result_text, bet, db](const dpp::confirmation_callback_t& callback) {
                 if (callback.is_error()) return;
                 
+                // Extract sent message before spawning thread (callback ref won't survive)
+                auto sent_msg = ::std::get<dpp::message>(callback.value);
+                
+                // PERFORMANCE FIX: Run animation delay in a separate thread to avoid
+                // blocking DPP's thread pool for 1.5s with sleep_for.
+                std::thread([&bot, event, slot1, slot2, slot3, winnings, result_text, bet, db, sent_msg]() {
                 // Wait a moment, then edit message with result
                 ::std::this_thread::sleep_for(::std::chrono::milliseconds(1500));
                 
@@ -170,10 +176,10 @@ inline Command* get_slots_command(Database* db) {
                 auto final_embed = (winnings > 0) ? bronx::success(final_desc) : bronx::error(final_desc);
                 bronx::add_invoker_footer(final_embed, event.msg.author);
                 
-                auto msg = ::std::get<dpp::message>(callback.value);
                 dpp::message edit_msg(event.msg.channel_id, final_embed);
-                edit_msg.id = msg.id;
+                edit_msg.id = sent_msg.id;
                 bronx::safe_message_edit(bot, edit_msg);
+                }).detach(); // end of animation thread
             });
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
@@ -284,6 +290,9 @@ inline Command* get_slots_command(Database* db) {
             event.thinking(false, [&bot, event, slot1, slot2, slot3, winnings, result_text, bet, db](const dpp::confirmation_callback_t& callback) {
                 if (callback.is_error()) return;
                 
+                // PERFORMANCE FIX: Run animation delay in a separate thread to avoid
+                // blocking DPP's thread pool for 1.5s with sleep_for.
+                std::thread([&bot, event, slot1, slot2, slot3, winnings, result_text, bet, db]() {
                 ::std::this_thread::sleep_for(::std::chrono::milliseconds(1500));
                 
                 // Track gambling stats
@@ -332,6 +341,7 @@ inline Command* get_slots_command(Database* db) {
                 bronx::add_invoker_footer(final_embed, event.command.get_issuing_user());
                 
                 event.edit_response(dpp::message().add_embed(final_embed));
+                }).detach(); // end of animation thread
             });
         },
         {

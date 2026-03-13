@@ -210,7 +210,7 @@ static dpp::message build_poker_msg(const PokerGame& g) {
     for (int i = 0; i < (int)g.players.size(); i++) {
         const auto& p = g.players[i];
         std::string status;
-        if (p.folded) status = "❌ folded";
+        if (p.folded) status = bronx::EMOJI_DENY + " folded";
         else if (p.all_in) status = "💥 all-in ($" + format_number(p.bet_street) + ")";
         else if (i == turn) status = "▶️ **ACTING**";
         else status = "$" + format_number(p.stack);
@@ -254,8 +254,8 @@ static dpp::message build_poker_msg(const PokerGame& g) {
                                g.cur_bet - g.players[turn_idx].bet_street);
         }
         std::string check_label = can_check
-            ? "✅ Check"
-            : "✅ Call $" + format_number(to_call);
+            ? "Check"
+            : "Call $" + format_number(to_call);
 
         // Raise to 2 * cur_bet (or 2 * BB if no bet yet)
         int64_t raise_to = std::max(g.min_bet * 2, g.cur_bet * 2);
@@ -264,6 +264,7 @@ static dpp::message build_poker_msg(const PokerGame& g) {
         dpp::component row1;
         row1.add_component(dpp::component().set_type(dpp::cot_button)
             .set_label(check_label).set_style(dpp::cos_success)
+            .set_emoji("check", 1476703556428890132)
             .set_id("poker_checkcall_" + std::to_string(g.channel_id)));
         row1.add_component(dpp::component().set_type(dpp::cot_button)
             .set_label(raise_label).set_style(dpp::cos_primary)
@@ -272,7 +273,8 @@ static dpp::message build_poker_msg(const PokerGame& g) {
             .set_label("💥 All-In").set_style(dpp::cos_danger)
             .set_id("poker_allin_" + std::to_string(g.channel_id)));
         row1.add_component(dpp::component().set_type(dpp::cot_button)
-            .set_label("❌ Fold").set_style(dpp::cos_secondary)
+            .set_label("Fold").set_style(dpp::cos_secondary)
+            .set_emoji("deny", 1476703341454168288)
             .set_id("poker_fold_" + std::to_string(g.channel_id)));
 
         dpp::component row2;
@@ -754,7 +756,7 @@ static void process_action(dpp::cluster& bot, Database* db, uint64_t chan_id,
                 // Check
                 g.to_act.pop_front();
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::success("✅ you checked")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(bronx::success("you checked")).set_flags(dpp::m_ephemeral));
             } else {
                 int64_t to_call = std::min(p.stack, g.cur_bet - p.bet_street);
                 p.stack     -= to_call;
@@ -763,7 +765,7 @@ static void process_action(dpp::cluster& bot, Database* db, uint64_t chan_id,
                 if (p.stack == 0) p.all_in = true;
                 g.to_act.pop_front();
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::success("✅ called $" + format_number(to_call)))
+                    dpp::message().add_embed(bronx::success("called $" + format_number(to_call)))
                         .set_flags(dpp::m_ephemeral));
             }
 

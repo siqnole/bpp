@@ -494,6 +494,35 @@ public:
     std::vector<GuildCommandRow> get_all_command_settings_bulk();
 
     // ========================================
+    // PRIVACY & OPT-OUT
+    // ========================================
+    
+    // Opt-out management — users can request complete data removal
+    bool set_opted_out(uint64_t user_id, bool opted_out);
+    bool is_opted_out(uint64_t user_id);
+    bool delete_all_user_data(uint64_t user_id);
+    
+    // Encrypted identity cache (AES-256-CBC, 30-day TTL)
+    bool cache_encrypted_identity(uint64_t user_id,
+                                   const std::string& username,
+                                   const std::string& nickname,
+                                   const std::string& avatar_hash);
+    
+    // Forward-declared struct for decrypted identity
+    struct DecryptedIdentityResult {
+        std::string username;
+        std::string nickname;
+        std::string avatar_hash;
+    };
+    std::optional<DecryptedIdentityResult> get_cached_identity(uint64_t user_id);
+    
+    // Purge expired identity cache entries (called periodically)
+    int purge_expired_identities();
+    
+    // Get all opted-out user IDs (for in-memory caching in hot path)
+    std::vector<uint64_t> get_all_opted_out_users();
+
+    // ========================================
     // PROGRESSIVE JACKPOT
     // ========================================
     int64_t get_jackpot_pool();

@@ -246,7 +246,7 @@ inline Command* get_suggestfish_command(Database* db) {
             
             auto embed = dpp::embed()
                 .set_color(0x2ecc71)
-                .set_title("✅ Suggestion Submitted")
+                .set_title(bronx::EMOJI_CHECK + " Suggestion Submitted")
                 .set_description(confirm_ss.str());
             bronx::add_invoker_footer(embed, event.msg.author);
             bronx::send_message(bot, event, embed);

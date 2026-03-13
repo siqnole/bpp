@@ -304,7 +304,7 @@ public:
             
             try {
                 dpp::embed error_embed = dpp::embed()
-                    .set_description("✗ an error occurred while executing this command")
+                    .set_description(bronx::EMOJI_DENY + " an error occurred while executing this command")
                     .set_color(0xE5989B);
                     
                 dpp::message error_msg;
