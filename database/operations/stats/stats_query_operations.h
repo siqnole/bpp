@@ -94,7 +94,7 @@ inline int64_t total_messages(Database* db, uint64_t guild_id, int days = 7) {
     if (!db) return 0;
     // first try daily_stats rollup table
     std::string sql =
-        "SELECT COALESCE(SUM(messages),0) FROM guild_daily_stats "
+        "SELECT COALESCE(SUM(messages_count),0) FROM guild_daily_stats "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND channel_id='__guild__' "
         "AND stat_date >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
@@ -195,7 +195,7 @@ inline std::vector<DailyMessages> daily_message_breakdown(Database* db, uint64_t
     std::vector<DailyMessages> out;
     if (!db) return out;
     std::string sql =
-        "SELECT stat_date, COALESCE(messages,0), COALESCE(edits,0), COALESCE(deletes,0) "
+        "SELECT stat_date, COALESCE(messages_count,0), COALESCE(edits_count,0), COALESCE(deletes_count,0) "
         "FROM guild_daily_stats "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND channel_id='__guild__' "

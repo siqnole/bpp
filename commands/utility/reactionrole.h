@@ -432,9 +432,11 @@ struct RRCheckSession {
 
 // session_key -> session   (key = "rrcs_<message_id>_<user_id>")
 static std::map<std::string, RRCheckSession> rr_check_sessions;
+static std::mutex rr_check_mutex;
 
 // Clean up expired check sessions (5-minute timeout)
 static void cleanup_expired_check_sessions() {
+    std::lock_guard<std::mutex> lock(rr_check_mutex);
     auto now = std::chrono::steady_clock::now();
     for (auto it = rr_check_sessions.begin(); it != rr_check_sessions.end(); ) {
         auto elapsed = std::chrono::duration_cast<std::chrono::minutes>(now - it->second.created_at);
@@ -622,9 +624,11 @@ inline void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t mes
         session.created_at = std::chrono::steady_clock::now();
 
         std::string key = rr_session_key(message_id, user_id);
-        rr_check_sessions[key] = std::move(session);
-
-        reply_msg(build_check_page(rr_check_sessions[key]));
+        {
+            std::lock_guard<std::mutex> lock(rr_check_mutex);
+            rr_check_sessions[key] = std::move(session);
+            reply_msg(build_check_page(rr_check_sessions[key]));
+        }
     });
 }
 
@@ -1529,6 +1533,7 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
         try { session_uid = std::stoull(cid.substr(idx_end + 1)); } catch (...) { return; }
 
         std::string key = rr_session_key(target_msg, session_uid);
+        std::lock_guard<std::mutex> lock(rr_check_mutex);
         auto sit = rr_check_sessions.find(key);
         if (sit == rr_check_sessions.end()) {
             event.reply(dpp::message().add_embed(bronx::error("this check session has expired, please run the check again")).set_flags(dpp::m_ephemeral));
@@ -1598,20 +1603,24 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
         try { session_uid = std::stoull(cid.substr(mid_end + 1)); } catch (...) { return; }
 
         std::string key = rr_session_key(target_msg, session_uid);
-        auto sit = rr_check_sessions.find(key);
-        if (sit == rr_check_sessions.end()) {
-            event.reply(dpp::message().add_embed(bronx::error("this check session has expired")).set_flags(dpp::m_ephemeral));
-            return;
-        }
+        RRCheckSession s;
+        {
+            std::lock_guard<std::mutex> lock(rr_check_mutex);
+            auto sit = rr_check_sessions.find(key);
+            if (sit == rr_check_sessions.end()) {
+                event.reply(dpp::message().add_embed(bronx::error("this check session has expired")).set_flags(dpp::m_ephemeral));
+                return;
+            }
 
-        RRCheckSession s = sit->second; // copy before erase
-        rr_check_sessions.erase(sit);
+            s = sit->second; // copy before erase
+            rr_check_sessions.erase(sit);
 
-        // verify user
-        if (static_cast<uint64_t>(event.command.get_issuing_user().id) != s.user_id) {
-            event.reply(dpp::message().add_embed(bronx::error("only the person who ran the check can confirm")).set_flags(dpp::m_ephemeral));
-            rr_check_sessions[key] = std::move(s); // put back
-            return;
+            // verify user
+            if (static_cast<uint64_t>(event.command.get_issuing_user().id) != s.user_id) {
+                event.reply(dpp::message().add_embed(bronx::error("only the person who ran the check can confirm")).set_flags(dpp::m_ephemeral));
+                rr_check_sessions[key] = std::move(s); // put back
+                return;
+            }
         }
 
         // persist all assigned reaction roles, sync existing reactions

@@ -3,6 +3,7 @@
 #include "../../embed_style.h"
 #include "../../database/core/database.h"
 #include "../../database/operations/economy/history_operations.h"
+#include "../../security/input_validation.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <string>
@@ -39,7 +40,18 @@ inline MYSQL_RES* db_select(Database* db, const std::string& sql) {
 }
 
 // Execute a DML query (INSERT/UPDATE/DELETE) via raw sql string
+// DEPRECATED: Use db_exec_safe() with parameterized queries for new code.
+[[deprecated("Use parameterized queries via prepared statements instead")]]
 inline bool db_exec(Database* db, const std::string& sql) {
+    auto conn = db->get_pool()->acquire();
+    bool ok = (mysql_query(conn->get(), sql.c_str()) == 0);
+    db->get_pool()->release(conn);
+    return ok;
+}
+
+// Safe DML execution — still raw SQL but with explicit deprecation warning.
+// For truly safe execution, use prepared statements via Database methods.
+inline bool db_exec_raw(Database* db, const std::string& sql) {
     auto conn = db->get_pool()->acquire();
     bool ok = (mysql_query(conn->get(), sql.c_str()) == 0);
     db->get_pool()->release(conn);
@@ -84,12 +96,13 @@ inline int64_t parse_amount(const ::std::string& input, int64_t user_balance) {
     }
     
     // Scientific notation (1e6, 2.5e5)
+    // SECURITY FIX: Check for int64_t overflow before casting.
     if (lower.find('e') != ::std::string::npos) {
-        try {
-            return static_cast<int64_t>(::std::stod(lower));
-        } catch (const ::std::invalid_argument&) {
-            throw ::std::invalid_argument("invalid scientific notation format");
+        auto result = bronx::security::safe_parse_scientific(lower);
+        if (!result) {
+            throw ::std::invalid_argument("invalid or overflowing scientific notation");
         }
+        return *result;
     }
     
     // K/M/B/T/Qd/Qt/Sq/Sp/Oc/No/Dc suffix (case-insensitive)
@@ -154,9 +167,14 @@ inline int64_t parse_amount(const ::std::string& input, int64_t user_balance) {
         if (value < 0) {
             throw ::std::invalid_argument("amount cannot be negative");
         }
-        return static_cast<int64_t>(value * multiplier);
+        // SECURITY FIX: Check for int64_t overflow before casting
+        double product = value * multiplier;
+        if (product > static_cast<double>(INT64_MAX) || std::isinf(product) || std::isnan(product)) {
+            throw ::std::invalid_argument("amount too large");
+        }
+        return static_cast<int64_t>(product);
     } catch (const ::std::invalid_argument&) {
-        throw ::std::invalid_argument("invalid number format");
+        throw; // re-throw our own invalid_argument messages
     } catch (const ::std::out_of_range&) {
         throw ::std::invalid_argument("number too large");
     }

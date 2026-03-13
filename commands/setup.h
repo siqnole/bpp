@@ -2,6 +2,7 @@
 #include <dpp/dpp.h>
 #include <string>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include "../database/core/database.h"
 #include "../database/operations/economy/server_economy_operations.h"
@@ -26,6 +27,7 @@ struct SetupState {
 
 // Global map to track active setup sessions
 static std::map<uint64_t, SetupState> active_setups;
+static std::recursive_mutex setup_mutex;
 
 // Helper: Check if user has admin permissions (DPP version)
 inline bool has_admin_permission(dpp::cluster& bot, uint64_t guild_id, uint64_t user_id) {
@@ -149,6 +151,7 @@ inline void send_economy_setup(dpp::cluster& bot, const dpp::button_click_t& eve
 
 // Step 3: Feature toggles
 inline void send_features_setup(dpp::cluster& bot, const dpp::button_click_t& event, uint64_t guild_id, const std::string& economy_mode) {
+    std::lock_guard<std::recursive_mutex> lock(setup_mutex);
     active_setups[guild_id].config["economy_mode"] = economy_mode;
     
     // Initialize all features as enabled by default
@@ -263,6 +266,7 @@ inline void send_leveling_setup(dpp::cluster& bot, const dpp::button_click_t& ev
 
 // Step 5: Moderation system setup
 inline void send_moderation_setup(dpp::cluster& bot, const dpp::button_click_t& event, uint64_t guild_id, Database* db) {
+    std::lock_guard<std::recursive_mutex> lock(setup_mutex);
     // Initialize moderation settings as disabled by default
     auto& state = active_setups[guild_id];
     if (state.config.find("antispam") == state.config.end()) {
@@ -309,6 +313,7 @@ inline void send_moderation_setup(dpp::cluster& bot, const dpp::button_click_t& 
 
 // Step 5a: Moderation module toggles
 inline void send_moderation_toggles(dpp::cluster& bot, const dpp::button_click_t& event, uint64_t guild_id) {
+    std::lock_guard<std::recursive_mutex> lock(setup_mutex);
     auto& config = active_setups[guild_id].config;
     
     dpp::embed embed = dpp::embed()
@@ -367,6 +372,7 @@ inline void send_moderation_toggles(dpp::cluster& bot, const dpp::button_click_t
 
 // Step 5b: Detailed moderation customization
 inline void send_moderation_customization(dpp::cluster& bot, const dpp::button_click_t& event, uint64_t guild_id) {
+    std::lock_guard<std::recursive_mutex> lock(setup_mutex);
     auto& config = active_setups[guild_id].config;
     
     // Initialize default values for enabled modules
@@ -487,6 +493,7 @@ inline void send_prefix_setup(dpp::cluster& bot, const dpp::button_click_t& even
 
 // Step 6: Final summary and completion
 inline void send_completion(dpp::cluster& bot, const dpp::button_click_t& event, uint64_t guild_id, Database* db) {
+    std::lock_guard<std::recursive_mutex> lock(setup_mutex);
     auto& state = active_setups[guild_id];
     
     // Apply configuration to database
@@ -630,6 +637,7 @@ inline void send_completion(dpp::cluster& bot, const dpp::button_click_t& event,
 
 // Handle skip setup
 inline void handle_skip_setup(dpp::cluster& bot, const dpp::button_click_t& event, uint64_t guild_id) {
+    std::lock_guard<std::recursive_mutex> lock(setup_mutex);
     dpp::embed embed = dpp::embed()
         .set_color(0x5865F2)
         .set_description(
@@ -658,6 +666,7 @@ inline void handle_skip_setup(dpp::cluster& bot, const dpp::button_click_t& even
 
 // Main button handler for setup flow
 inline void handle_setup_button(dpp::cluster& bot, const dpp::button_click_t& event, Database* db) {
+    std::lock_guard<std::recursive_mutex> lock(setup_mutex);
     std::string custom_id = event.custom_id;
     uint64_t guild_id = event.command.guild_id;
     uint64_t user_id = event.command.usr.id;
@@ -1053,7 +1062,10 @@ inline Command* create_setup_command(Database* db) {
             }
 
             // Start setup flow
-            active_setups[guild_id].admin_id = user_id;
+            {
+                std::lock_guard<std::recursive_mutex> lock(setup_mutex);
+                active_setups[guild_id].admin_id = user_id;
+            }
 
             dpp::embed embed = dpp::embed()
                 .set_color(0x5865F2)

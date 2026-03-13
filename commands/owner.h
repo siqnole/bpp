@@ -8,6 +8,8 @@
 #include "../database/operations/economy/history_operations.h"
 #include "titles.h"  // dynamic title definitions
 #include "../performance/cache_manager.h"
+#include "../security/secure_config.h"
+#include "../security/input_validation.h"
 #include <dpp/dpp.h>
 #include <dpp/version.h>
 #include <fstream>
@@ -36,6 +38,7 @@ struct OStatsState {
     int current_page = 0; // 0-based, 0..OSTATS_TOTAL_PAGES-1
 };
 static std::map<uint64_t, OStatsState> ostats_states;
+static std::recursive_mutex ostats_mutex;
 
 // System memory / process helpers
 struct ProcessInfo {
@@ -112,6 +115,7 @@ static std::vector<SqlRow> sql_query(bronx::db::Database* db, const std::string&
 
 // Build a single ostats page (0-based)
 static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database* db, uint64_t owner_id) {
+    std::lock_guard<std::recursive_mutex> lock(ostats_mutex);
     OStatsState& state = ostats_states[owner_id];
     int page = state.current_page;
 
@@ -568,6 +572,7 @@ struct SuggestState {
     bool asc = false;
 };
 static std::map<uint64_t, SuggestState> suggest_states;
+static std::recursive_mutex suggest_mutex;
 
 // Pagination state for server list view
 struct ServerListState {
@@ -576,6 +581,7 @@ struct ServerListState {
     bool asc = true;
 };
 static std::map<uint64_t, ServerListState> server_list_states;
+static std::recursive_mutex server_list_mutex;
 
 // Pagination state for command history view
 struct CmdHistoryState {
@@ -584,6 +590,7 @@ struct CmdHistoryState {
     std::string filter = "";    // optional filter by entry_type (CMD, BAL, FSH, etc)
 };
 static std::map<uint64_t, CmdHistoryState> cmdhistory_states;
+static std::recursive_mutex cmdhistory_mutex;
 
 // Helper to format a history entry for display
 static std::string format_history_entry(const bronx::db::HistoryEntry& e) {
@@ -609,6 +616,7 @@ static std::string format_relative_time(std::chrono::system_clock::time_point tp
 // Helper for constructing the message for command history view
 static constexpr int HISTORY_PER_PAGE = 10;
 static dpp::message build_cmdhistory_message(bronx::db::Database* db, uint64_t owner_id) {
+    std::lock_guard<std::recursive_mutex> lock(cmdhistory_mutex);
     CmdHistoryState& state = cmdhistory_states[owner_id];
     
     if (state.target_user == 0) {
@@ -690,6 +698,7 @@ static dpp::message build_cmdhistory_message(bronx::db::Database* db, uint64_t o
 // Discord's limit of 5 rows. 3 items/page gives 3 rows for items + 2 nav rows.
 static constexpr int SUGGESTIONS_PER_PAGE = 1;
 static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t owner_id) {
+    std::lock_guard<std::recursive_mutex> lock(suggest_mutex);
     SuggestState& state = suggest_states[owner_id];
     // determine order clause
     std::string clause = state.order_by + (state.asc ? " ASC" : " DESC");
@@ -825,6 +834,7 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
 // - 1 row for sorting (name/members/id)
 static constexpr int SERVERS_PER_PAGE = 3;
 static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) {
+    std::lock_guard<std::recursive_mutex> lock(server_list_mutex);
     ServerListState& state = server_list_states[owner_id];
     
     // Get all guilds from cache
@@ -966,12 +976,24 @@ static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) 
 
 namespace commands {
 
-// Owner ID
-const uint64_t OWNER_ID = 814226043924643880;
+// Owner IDs — loaded from BOT_OWNER_IDS env var (comma-separated).
+// Falls back to hardcoded ID if env var is not set (for backward compat).
+static const std::set<uint64_t>& get_owner_ids() {
+    static const std::set<uint64_t> ids = []() {
+        auto env_ids = bronx::security::load_owner_ids();
+        if (env_ids.empty()) {
+            // Backward compatibility — remove this fallback once env is configured
+            env_ids.insert(814226043924643880ULL);
+            std::cerr << "\033[33m⚠ BOT_OWNER_IDS not set — using hardcoded fallback. Set BOT_OWNER_IDS env var.\033[0m\n";
+        }
+        return env_ids;
+    }();
+    return ids;
+}
 
-// Check if user is owner
+// Check if user is owner — now supports multiple admins
 inline bool is_owner(uint64_t user_id) {
-    return user_id == OWNER_ID;
+    return get_owner_ids().count(user_id) > 0;
 }
 
 // parse a mention or raw numeric string into a snowflake ID
@@ -1059,20 +1081,24 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             }
 
             uint64_t uid = event.msg.author.id;
-            // Initialize / reset state
-            OStatsState& state = ostats_states[uid];
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(ostats_mutex);
+                // Initialize / reset state
+                OStatsState& state = ostats_states[uid];
 
-            // Allow jumping to a page: .ostats 3
-            if (!args.empty()) {
-                try {
-                    int p = std::stoi(args[0]) - 1;
-                    if (p >= 0 && p < OSTATS_TOTAL_PAGES) state.current_page = p;
-                } catch (...) {}
-            } else {
-                state.current_page = 0;
+                // Allow jumping to a page: .ostats 3
+                if (!args.empty()) {
+                    try {
+                        int p = std::stoi(args[0]) - 1;
+                        if (p >= 0 && p < OSTATS_TOTAL_PAGES) state.current_page = p;
+                    } catch (...) {}
+                } else {
+                    state.current_page = 0;
+                }
+
+                msg = build_ostats_message(bot, db, uid);
             }
-
-            dpp::message msg = build_ostats_message(bot, db, uid);
             msg.set_channel_id(event.msg.channel_id);
             bot.message_create(msg);
         });
@@ -1262,13 +1288,17 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             }
             
             uint64_t owner_id = event.msg.author.id;
-            // Initialize state if missing
-            if (server_list_states.find(owner_id) == server_list_states.end()) {
-                server_list_states[owner_id] = {};
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(server_list_mutex);
+                // Initialize state if missing
+                if (server_list_states.find(owner_id) == server_list_states.end()) {
+                    server_list_states[owner_id] = {};
+                }
+                
+                // Build and send the server list
+                msg = build_servers_message(bot, owner_id);
             }
-            
-            // Build and send the server list
-            dpp::message msg = build_servers_message(bot, owner_id);
             msg.set_channel_id(event.msg.channel_id);
             bot.message_create(msg);
         });
@@ -1276,7 +1306,7 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
     
     // mysql eval command
     static Command mysql_cmd("mysql", "execute arbitrary mysql statement (owner only)", "owner", {"sql"}, false,
-        [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+        [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (!is_owner(event.msg.author.id)) {
                 bot.message_create(dpp::message(event.msg.channel_id,
                     bronx::error("command is restricted to the bot owner only.")));
@@ -1300,26 +1330,56 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
                 if (i) sql += " ";
                 sql += args[i];
             }
-            // escape double quotes
-            std::string esc = sql;
-            size_t p = 0;
-            while ((p = esc.find('"', p)) != std::string::npos) {
-                esc.insert(p, "\\");
-                p += 2;
-            }
-            std::string command = "mysql -u bronxbot -pbronx2026_secure bronxbot -e \"" + esc + "\" 2>&1";
-            std::array<char,256> buf;
+
+            // SECURITY FIX: Use direct MySQL C API instead of popen() shell injection vector.
+            // This eliminates shell metacharacter injection and avoids exposing
+            // credentials on the command line (visible in /proc/*/cmdline).
             std::string result;
-            FILE* pipe = popen(command.c_str(), "r");
-            if (!pipe) {
-                result = "failed to execute";
+            auto conn = db->get_pool()->acquire();
+            if (!conn) {
+                result = "failed to acquire database connection";
             } else {
-                while (fgets(buf.data(), buf.size(), pipe)) {
-                    result += buf.data();
+                if (mysql_query(conn->get(), sql.c_str()) == 0) {
+                    MYSQL_RES* res = mysql_store_result(conn->get());
+                    if (res) {
+                        unsigned int num_fields = mysql_num_fields(res);
+                        MYSQL_FIELD* fields = mysql_fetch_fields(res);
+                        // Header row
+                        for (unsigned int i = 0; i < num_fields; i++) {
+                            if (i) result += "\t";
+                            result += fields[i].name;
+                        }
+                        result += "\n";
+                        // Data rows (limit to 50 rows to avoid message overflow)
+                        int row_count = 0;
+                        MYSQL_ROW row;
+                        while ((row = mysql_fetch_row(res)) && row_count < 50) {
+                            for (unsigned int i = 0; i < num_fields; i++) {
+                                if (i) result += "\t";
+                                result += row[i] ? row[i] : "NULL";
+                            }
+                            result += "\n";
+                            row_count++;
+                        }
+                        uint64_t total_rows = mysql_num_rows(res);
+                        if (total_rows > 50) {
+                            result += "... (" + std::to_string(total_rows - 50) + " more rows)\n";
+                        }
+                        mysql_free_result(res);
+                    } else {
+                        // Non-SELECT statement (INSERT/UPDATE/DELETE/ALTER/etc.)
+                        uint64_t affected = mysql_affected_rows(conn->get());
+                        result = "OK, " + std::to_string(affected) + " rows affected";
+                    }
+                } else {
+                    result = "MySQL error: ";
+                    result += mysql_error(conn->get());
                 }
-                pclose(pipe);
+                db->get_pool()->release(conn);
             }
             if (result.empty()) result = "(no output)";
+            // Truncate to fit Discord message limit
+            if (result.size() > 1900) result = result.substr(0, 1900) + "\n... (truncated)";
             bot.message_create(dpp::message(event.msg.channel_id, "```" + result + "```"));
         }
     );
@@ -1708,13 +1768,17 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             }
 
             uint64_t owner_id = event.msg.author.id;
-            // initialize state if missing
-            if (suggest_states.find(owner_id) == suggest_states.end()) {
-                suggest_states[owner_id] = {};
-            }
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(suggest_mutex);
+                // initialize state if missing
+                if (suggest_states.find(owner_id) == suggest_states.end()) {
+                    suggest_states[owner_id] = {};
+                }
 
-            // build and send the suggestions list
-            dpp::message msg = build_suggestions_message(db, owner_id);
+                // build and send the suggestions list
+                msg = build_suggestions_message(db, owner_id);
+            }
             // ensure the message is sent to the correct channel (build_suggestions_message
             // doesn't know about channels)
             msg.set_channel_id(event.msg.channel_id);
@@ -1732,43 +1796,58 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             }
             
             uint64_t owner_id = event.msg.author.id;
-            
-            // Initialize state if missing
-            if (cmdhistory_states.find(owner_id) == cmdhistory_states.end()) {
-                cmdhistory_states[owner_id] = {};
-            }
-            
-            CmdHistoryState& state = cmdhistory_states[owner_id];
-            
-            // If a user argument is provided, set the target
-            if (!args.empty()) {
-                uint64_t target_id = 0;
-                // Check mentions first
-                if (!event.msg.mentions.empty()) {
-                    target_id = event.msg.mentions[0].first.id;
-                } else {
-                    // Try to parse as snowflake
-                    target_id = parse_snowflake(args[0]);
+            bool target_invalid = false;
+            bool no_target = false;
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(cmdhistory_mutex);
+                // Initialize state if missing
+                if (cmdhistory_states.find(owner_id) == cmdhistory_states.end()) {
+                    cmdhistory_states[owner_id] = {};
                 }
                 
-                if (target_id == 0) {
-                    bot.message_create(dpp::message(event.msg.channel_id,
-                        bronx::error("Invalid user. Usage: `.cmdh <@user>` or `.cmdh <user_id>`")));
-                    return;
+                CmdHistoryState& state = cmdhistory_states[owner_id];
+                
+                // If a user argument is provided, set the target
+                if (!args.empty()) {
+                    uint64_t target_id = 0;
+                    // Check mentions first
+                    if (!event.msg.mentions.empty()) {
+                        target_id = event.msg.mentions[0].first.id;
+                    } else {
+                        // Try to parse as snowflake
+                        target_id = parse_snowflake(args[0]);
+                    }
+                    
+                    if (target_id == 0) {
+                        target_invalid = true;
+                    } else {
+                        state.target_user = target_id;
+                        state.current_page = 0;  // reset to first page when switching users
+                    }
                 }
                 
-                state.target_user = target_id;
-                state.current_page = 0;  // reset to first page when switching users
+                if (!target_invalid) {
+                    if (state.target_user == 0) {
+                        no_target = true;
+                    } else {
+                        // Build the history view
+                        msg = build_cmdhistory_message(db, owner_id);
+                    }
+                }
             }
             
-            if (state.target_user == 0) {
+            if (target_invalid) {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::error("Invalid user. Usage: `.cmdh <@user>` or `.cmdh <user_id>`")));
+                return;
+            }
+            if (no_target) {
                 bot.message_create(dpp::message(event.msg.channel_id,
                     bronx::error("Usage: `.cmdh <@user>` or `.cmdh <user_id>` to view a user's command history")));
                 return;
             }
             
-            // Build and send the history view
-            dpp::message msg = build_cmdhistory_message(db, owner_id);
             msg.set_channel_id(event.msg.channel_id);
             bot.message_create(msg);
         });
@@ -2998,8 +3077,12 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
             try { target_page = std::stoi(choice); } catch (...) {}
             if (target_page < 0) target_page = 0;
             if (target_page >= OSTATS_TOTAL_PAGES) target_page = OSTATS_TOTAL_PAGES - 1;
-            ostats_states[uid].current_page = target_page;
-            dpp::message msg = build_ostats_message(bot, db, uid);
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(ostats_mutex);
+                ostats_states[uid].current_page = target_page;
+                msg = build_ostats_message(bot, db, uid);
+            }
             event.reply(dpp::ir_update_message, msg);
             return;
         }
@@ -3112,22 +3195,28 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
 
         // ── ostats paginator buttons ──
         if (custom_id.rfind("ostats_", 0) == 0) {
-            OStatsState& st = ostats_states[user_id];
-            if (custom_id == "ostats_first")     st.current_page = 0;
-            else if (custom_id == "ostats_prev") st.current_page = std::max(0, st.current_page - 1);
-            else if (custom_id == "ostats_next") st.current_page = std::min(OSTATS_TOTAL_PAGES - 1, st.current_page + 1);
-            else if (custom_id == "ostats_last") st.current_page = OSTATS_TOTAL_PAGES - 1;
-            else return; // "ostats_page" disabled button, ignore
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(ostats_mutex);
+                OStatsState& st = ostats_states[user_id];
+                if (custom_id == "ostats_first")     st.current_page = 0;
+                else if (custom_id == "ostats_prev") st.current_page = std::max(0, st.current_page - 1);
+                else if (custom_id == "ostats_next") st.current_page = std::min(OSTATS_TOTAL_PAGES - 1, st.current_page + 1);
+                else if (custom_id == "ostats_last") st.current_page = OSTATS_TOTAL_PAGES - 1;
+                else return; // "ostats_page" disabled button, ignore
 
-            dpp::message msg = build_ostats_message(bot, db, user_id);
+                msg = build_ostats_message(bot, db, user_id);
+            }
             event.reply(dpp::ir_update_message, msg);
             return;
         }
         // ensure state exists
-        if (suggest_states.find(user_id) == suggest_states.end()) {
-            suggest_states[user_id] = {};
+        SuggestState* suggest_state_ptr;
+        {
+            std::lock_guard<std::recursive_mutex> lock(suggest_mutex);
+            suggest_state_ptr = &suggest_states[user_id];
         }
-        SuggestState& state = suggest_states[user_id];
+        SuggestState& state = *suggest_state_ptr;
 
         if (custom_id == "suggest_nav_prev" || custom_id == "suggest_nav_next") {
             // fetch current suggestions to compute pages
@@ -3227,52 +3316,64 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
         
         // Server list navigation handlers
         if (custom_id == "serverlist_nav_prev" || custom_id == "serverlist_nav_next" || custom_id == "serverlist_refresh") {
-            // ensure state exists
-            if (server_list_states.find(user_id) == server_list_states.end()) {
-                server_list_states[user_id] = {};
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(server_list_mutex);
+                // ensure state exists
+                if (server_list_states.find(user_id) == server_list_states.end()) {
+                    server_list_states[user_id] = {};
+                }
+                ServerListState& srv_state = server_list_states[user_id];
+                
+                // Get total pages
+                int total = dpp::get_guild_cache()->count();
+                int pages = std::max(1, (total + SERVERS_PER_PAGE - 1) / SERVERS_PER_PAGE);
+                
+                if (custom_id == "serverlist_nav_prev") {
+                    if (srv_state.current_page > 0) srv_state.current_page--;
+                    else srv_state.current_page = pages - 1;
+                } else if (custom_id == "serverlist_nav_next") {
+                    if (srv_state.current_page < pages - 1) srv_state.current_page++;
+                    else srv_state.current_page = 0;
+                }
+                // serverlist_refresh just rebuilds without changing page
+                
+                msg = build_servers_message(bot, user_id);
             }
-            ServerListState& srv_state = server_list_states[user_id];
-            
-            // Get total pages
-            int total = dpp::get_guild_cache()->count();
-            int pages = std::max(1, (total + SERVERS_PER_PAGE - 1) / SERVERS_PER_PAGE);
-            
-            if (custom_id == "serverlist_nav_prev") {
-                if (srv_state.current_page > 0) srv_state.current_page--;
-                else srv_state.current_page = pages - 1;
-            } else if (custom_id == "serverlist_nav_next") {
-                if (srv_state.current_page < pages - 1) srv_state.current_page++;
-                else srv_state.current_page = 0;
-            }
-            // serverlist_refresh just rebuilds without changing page
-            
-            dpp::message msg = build_servers_message(bot, user_id);
             event.reply(dpp::ir_update_message, msg);
             return;
         }
         
         // Server list sort handlers
         if (custom_id.find("serverlist_sort_") == 0) {
-            if (server_list_states.find(user_id) == server_list_states.end()) {
-                server_list_states[user_id] = {};
-            }
-            ServerListState& srv_state = server_list_states[user_id];
-            
-            std::string field;
-            if (custom_id == "serverlist_sort_name") field = "name";
-            else if (custom_id == "serverlist_sort_members") field = "members";
-            else if (custom_id == "serverlist_sort_id") field = "id";
-            
-            if (!field.empty()) {
-                if (srv_state.sort_by == field) {
-                    srv_state.asc = !srv_state.asc;
-                } else {
-                    srv_state.sort_by = field;
-                    srv_state.asc = true;
-                    srv_state.current_page = 0;
+            dpp::message msg;
+            bool has_msg = false;
+            {
+                std::lock_guard<std::recursive_mutex> lock(server_list_mutex);
+                if (server_list_states.find(user_id) == server_list_states.end()) {
+                    server_list_states[user_id] = {};
                 }
+                ServerListState& srv_state = server_list_states[user_id];
                 
-                dpp::message msg = build_servers_message(bot, user_id);
+                std::string field;
+                if (custom_id == "serverlist_sort_name") field = "name";
+                else if (custom_id == "serverlist_sort_members") field = "members";
+                else if (custom_id == "serverlist_sort_id") field = "id";
+                
+                if (!field.empty()) {
+                    if (srv_state.sort_by == field) {
+                        srv_state.asc = !srv_state.asc;
+                    } else {
+                        srv_state.sort_by = field;
+                        srv_state.asc = true;
+                        srv_state.current_page = 0;
+                    }
+                    
+                    msg = build_servers_message(bot, user_id);
+                    has_msg = true;
+                }
+            }
+            if (has_msg) {
                 event.reply(dpp::ir_update_message, msg);
             }
             return;
@@ -3309,18 +3410,22 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
                     std::cout << "[LEAVE SUCCESS] Left guild: " << guild_name << " (ID: " << guild_id << ")\n";
                     
                     // Refresh the list
-                    if (server_list_states.find(user_id) == server_list_states.end()) {
-                        server_list_states[user_id] = {};
+                    dpp::message msg;
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(server_list_mutex);
+                        if (server_list_states.find(user_id) == server_list_states.end()) {
+                            server_list_states[user_id] = {};
+                        }
+                        
+                        // Adjust page if needed (in case we left the last server on the page)
+                        int total = dpp::get_guild_cache()->count();
+                        int pages = std::max(1, (total + SERVERS_PER_PAGE - 1) / SERVERS_PER_PAGE);
+                        if (server_list_states[user_id].current_page >= pages && pages > 0) {
+                            server_list_states[user_id].current_page = pages - 1;
+                        }
+                        
+                        msg = build_servers_message(bot, user_id);
                     }
-                    
-                    // Adjust page if needed (in case we left the last server on the page)
-                    int total = dpp::get_guild_cache()->count();
-                    int pages = std::max(1, (total + SERVERS_PER_PAGE - 1) / SERVERS_PER_PAGE);
-                    if (server_list_states[user_id].current_page >= pages && pages > 0) {
-                        server_list_states[user_id].current_page = pages - 1;
-                    }
-                    
-                    dpp::message msg = build_servers_message(bot, user_id);
                     // Edit the original message with updated list
                     bot.interaction_response_edit(event.command.token, msg);
                     
@@ -3335,53 +3440,68 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
         
         // Command history navigation handlers
         if (custom_id == "cmdh_nav_prev" || custom_id == "cmdh_nav_next" || custom_id == "cmdh_refresh") {
-            // ensure cmdhistory state exists
-            if (cmdhistory_states.find(user_id) == cmdhistory_states.end()) {
-                cmdhistory_states[user_id] = {};
+            bool no_user = false;
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(cmdhistory_mutex);
+                // ensure cmdhistory state exists
+                if (cmdhistory_states.find(user_id) == cmdhistory_states.end()) {
+                    cmdhistory_states[user_id] = {};
+                }
+                CmdHistoryState& hstate = cmdhistory_states[user_id];
+                
+                if (hstate.target_user == 0) {
+                    no_user = true;
+                } else {
+                    int total = db->get_history_count(hstate.target_user);
+                    int pages = std::max(1, (total + HISTORY_PER_PAGE - 1) / HISTORY_PER_PAGE);
+                    
+                    if (custom_id == "cmdh_nav_prev") {
+                        if (hstate.current_page > 0) hstate.current_page--;
+                        else hstate.current_page = pages - 1;  // wrap to end
+                    } else if (custom_id == "cmdh_nav_next") {
+                        if (hstate.current_page < pages - 1) hstate.current_page++;
+                        else hstate.current_page = 0;  // wrap to start
+                    }
+                    // refresh button: page stays the same
+                    
+                    msg = build_cmdhistory_message(db, user_id);
+                }
             }
-            CmdHistoryState& hstate = cmdhistory_states[user_id];
-            
-            if (hstate.target_user == 0) {
+            if (no_user) {
                 event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("No user selected")).set_flags(dpp::m_ephemeral));
-                return;
+            } else {
+                event.reply(dpp::ir_update_message, msg);
             }
-            
-            int total = db->get_history_count(hstate.target_user);
-            int pages = std::max(1, (total + HISTORY_PER_PAGE - 1) / HISTORY_PER_PAGE);
-            
-            if (custom_id == "cmdh_nav_prev") {
-                if (hstate.current_page > 0) hstate.current_page--;
-                else hstate.current_page = pages - 1;  // wrap to end
-            } else if (custom_id == "cmdh_nav_next") {
-                if (hstate.current_page < pages - 1) hstate.current_page++;
-                else hstate.current_page = 0;  // wrap to start
-            }
-            // refresh button: page stays the same
-            
-            dpp::message msg = build_cmdhistory_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
             return;
         }
         
         // Command history clear button
         if (custom_id == "cmdh_clear") {
-            if (cmdhistory_states.find(user_id) == cmdhistory_states.end()) {
-                cmdhistory_states[user_id] = {};
+            bool no_user = false;
+            dpp::message msg;
+            {
+                std::lock_guard<std::recursive_mutex> lock(cmdhistory_mutex);
+                if (cmdhistory_states.find(user_id) == cmdhistory_states.end()) {
+                    cmdhistory_states[user_id] = {};
+                }
+                CmdHistoryState& hstate = cmdhistory_states[user_id];
+                
+                if (hstate.target_user == 0) {
+                    no_user = true;
+                } else {
+                    db->clear_history(hstate.target_user);
+                    hstate.current_page = 0;
+                    msg = build_cmdhistory_message(db, user_id);
+                }
             }
-            CmdHistoryState& hstate = cmdhistory_states[user_id];
-            
-            if (hstate.target_user == 0) {
+            if (no_user) {
                 event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("No user selected")).set_flags(dpp::m_ephemeral));
-                return;
+            } else {
+                event.reply(dpp::ir_update_message, msg);
             }
-            
-            db->clear_history(hstate.target_user);
-            hstate.current_page = 0;
-            
-            dpp::message msg = build_cmdhistory_message(db, user_id);
-            event.reply(dpp::ir_update_message, msg);
             return;
         }
     });
@@ -3398,10 +3518,12 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
             return;
         }
         // ensure state exists
-        if (suggest_states.find(user_id) == suggest_states.end()) {
-            suggest_states[user_id] = {};
+        SuggestState* form_state_ptr;
+        {
+            std::lock_guard<std::recursive_mutex> lock(suggest_mutex);
+            form_state_ptr = &suggest_states[user_id];
         }
-        SuggestState& state = suggest_states[user_id];
+        SuggestState& state = *form_state_ptr;
 
         if (event.components.empty()) {
             event.reply(dpp::ir_channel_message_with_source,
@@ -3425,16 +3547,20 @@ inline void register_owner_interactions(dpp::cluster& bot, bronx::db::Database* 
             return;
         }
         if (page < 0) page = 0;
-        // clamp against total pages
-        std::string clause = state.order_by + (state.asc ? " ASC" : " DESC");
-        auto suggestions = bronx::db::suggestion_operations::fetch_suggestions(db, clause);
-        int per_page = 5;
-        int total = suggestions.size();
-        int pages = (total + per_page - 1) / per_page;
-        if (pages == 0) pages = 1;
-        if (page >= pages) page = pages - 1;
-        state.current_page = page;
-        dpp::message msg = build_suggestions_message(db, user_id);
+        // clamp against total pages and update state under lock
+        dpp::message msg;
+        {
+            std::lock_guard<std::recursive_mutex> lock(suggest_mutex);
+            std::string clause = state.order_by + (state.asc ? " ASC" : " DESC");
+            auto suggestions = bronx::db::suggestion_operations::fetch_suggestions(db, clause);
+            int per_page = 5;
+            int total = suggestions.size();
+            int pages = (total + per_page - 1) / per_page;
+            if (pages == 0) pages = 1;
+            if (page >= pages) page = pages - 1;
+            state.current_page = page;
+            msg = build_suggestions_message(db, user_id);
+        }
         event.reply(dpp::ir_update_message, msg);
     });
 }

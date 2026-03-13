@@ -3,6 +3,7 @@
 #include "../../database/core/database.h"
 #include "../../database/operations/economy/history_operations.h"
 #include "../economy_core.h"
+#include "../../security/input_validation.h"
 #include "roulette.h"
 #include "blackjack.h"
 #include "russian_roulette.h"
@@ -36,6 +37,10 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             custom_id.find("lottery_") != 0) {
             return; // Let other handlers deal with non-gambling interactions
         }
+        
+        // SECURITY FIX: Wrap entire handler in try-catch to prevent bot crashes
+        // from malformed custom_id values (e.g. stoull throwing std::invalid_argument)
+        try {
         
         std::cout << DBG_GAMB "button_click user=" << event.command.get_issuing_user().id \
                   << " custom_id=" << custom_id << "\n";
@@ -284,15 +289,33 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             handle_rr_spin(bot, event, game_id);
             return;
         }
+
+        } catch (const ::std::exception& e) {
+            std::cerr << "\033[31m✘ gambling button handler exception: " << e.what()
+                      << " (custom_id=" << event.custom_id << ")\033[0m\n";
+            try {
+                event.reply(dpp::ir_channel_message_with_source,
+                    dpp::message().add_embed(bronx::error("an error occurred processing this interaction")).set_flags(dpp::m_ephemeral));
+            } catch (...) {}
+        } catch (...) {
+            try {
+                event.reply(dpp::ir_channel_message_with_source,
+                    dpp::message().add_embed(bronx::error("an unexpected error occurred")).set_flags(dpp::m_ephemeral));
+            } catch (...) {}
+        }
     });
 
     // Handle Russian Roulette player target dropdown
     bot.on_select_click([&bot, db](const dpp::select_click_t& event) {
+        try {
         ::std::string custom_id = event.custom_id;
         if (custom_id.find("rr_target_") != 0) return;
 
         uint64_t game_id = ::std::stoull(custom_id.substr(10));
         handle_rr_target(bot, db, event, game_id);
+        } catch (const ::std::exception& e) {
+            std::cerr << "\033[31m✘ gambling select handler exception: " << e.what() << "\033[0m\n";
+        } catch (...) {}
     });
     
     // Handle roulette bet modals
