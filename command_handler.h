@@ -299,6 +299,10 @@ public:
                     bronx::db::history_operations::log_command(db_, event.msg.author.id, it->second->name);
                     db_->increment_stat(event.msg.author.id, "commands_used", 1);
                     ::commands::daily_challenges::track_daily_stat(db_, event.msg.author.id, "commands_today", 1);
+                    // Update user_activity_daily for top-10 / leaderboard queries
+                    if (event.msg.guild_id != 0) {
+                        bronx::db::stats_operations::increment_user_daily_commands(db_, event.msg.guild_id, event.msg.author.id);
+                    }
                     // Per-guild command tracking for dashboard
                     if (event.msg.guild_id != 0) {
                         bronx::db::server_economy_operations::log_server_command(db_, event.msg.guild_id, event.msg.author.id, it->second->name);
@@ -399,6 +403,10 @@ public:
                     bronx::db::history_operations::log_command(db_, event.command.get_issuing_user().id, it->second->name);
                     db_->increment_stat(event.command.get_issuing_user().id, "commands_used", 1);
                     ::commands::daily_challenges::track_daily_stat(db_, event.command.get_issuing_user().id, "commands_today", 1);
+                    // Update user_activity_daily for top-10 / leaderboard queries
+                    if (event.command.guild_id != 0) {
+                        bronx::db::stats_operations::increment_user_daily_commands(db_, event.command.guild_id, event.command.get_issuing_user().id);
+                    }
                     // Per-guild command tracking for dashboard
                     if (event.command.guild_id != 0) {
                         bronx::db::server_economy_operations::log_server_command(db_, event.command.guild_id, event.command.get_issuing_user().id, it->second->name);
@@ -720,6 +728,7 @@ private:
         if (rec.strike >= 3) {
             // ---- STRIKE 3: permanent ban ----
             if (db_) {
+                db_->remove_global_whitelist(user_id);  // ensure ban is not bypassed
                 db_->add_global_blacklist(user_id, "(BAC) " + reason + " — strike 3");
             }
             auto ban_embed = bronx::create_embed(

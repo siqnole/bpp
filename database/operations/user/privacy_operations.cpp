@@ -195,24 +195,23 @@ bool Database::is_opted_out(uint64_t user_id) {
 bool Database::delete_all_user_data(uint64_t user_id) {
     auto conn = pool_->acquire();
     
-    // List of all tables that contain user_id data
+    // List of all tables that contain user_id data (v2 names)
     const std::vector<std::string> tables = {
-        "users", "server_users", "loans", "inventory", "server_inventory",
-        "wishlists", "fish_catches", "active_fishing_gear", "autofishers",
-        "autofish_storage", "server_fish_catches", "server_active_fishing_gear",
-        "server_autofishers", "server_autofish_storage", "fish_ponds", "pond_fish",
-        "bazaar_stock", "bazaar_visitors", "bazaar_purchases",
-        "gambling_stats", "server_gambling_stats", "lottery_entries",
-        "user_xp", "server_xp", "user_skill_points",
+        "users",
+        "user_loans", "user_inventory",
+        "user_wishlists", "user_fish_catches", "user_fishing_gear",
+        "user_autofishers", "user_autofish_storage",
+        "user_fish_ponds", "user_pond_fish",
+        "user_bazaar_stock", "user_bazaar_visits", "user_bazaar_purchases",
+        "user_gambling_stats", "user_gambling_history", "lottery_entries",
+        "user_xp", "user_stats_ext",
         "daily_challenges", "daily_stats", "daily_streaks",
-        "user_pets", "mining_claims",
-        "trades", "server_trades",
-        "giveaway_entries",
-        "cooldowns", "server_cooldowns",
-        "afk_status", "command_history", "command_stats",
+        "user_pets", "user_mining_claims",
+        "user_cooldowns",
+        "user_afk", "user_command_history", "command_stats",
         "suggestions", "bug_reports",
-        "user_prefixes",
-        "server_bot_admins", "server_bot_mods",
+        "user_prefixes", "user_reminders",
+        "guild_bot_staff",
         "encrypted_identity_cache"
     };
     
@@ -241,14 +240,14 @@ bool Database::delete_all_user_data(uint64_t user_id) {
     
     // Also delete from tables that use initiator_id / recipient_id / created_by
     const std::vector<std::pair<std::string, std::string>> extra_cols = {
-        {"trades", "initiator_id"}, {"trades", "recipient_id"},
-        {"server_trades", "initiator_id"}, {"server_trades", "recipient_id"},
-        {"giveaways", "created_by"},
+        {"guild_trades", "initiator_id"}, {"guild_trades", "recipient_id"},
+        {"guild_giveaways", "created_by"},
+        {"guild_giveaway_entries", "user_id"},
         {"guild_member_events", "user_id"},
         {"guild_message_events", "user_id"},
         {"guild_voice_events", "user_id"},
         {"guild_boost_events", "user_id"},
-        {"server_command_stats", "user_id"},
+        {"command_stats", "user_id"},
     };
     
     for (const auto& [table, col] : extra_cols) {

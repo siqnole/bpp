@@ -11,65 +11,33 @@ namespace db {
 
 class Database;
 
-// Server-specific fish catch
-struct ServerFishCatch {
-    uint64_t id;
-    uint64_t guild_id;
-    uint64_t user_id;
-    std::string rarity;
-    std::string fish_name;
-    double weight;
-    int64_t value;
-    std::chrono::system_clock::time_point caught_at;
-    bool sold;
-    std::string rod_id;
-    std::string bait_id;
-};
+// NOTE: ServerFishCatch is now replaced by FishCatch with guild_id field.
+// The "server_fishing_operations" namespace is retained for backward compat
+// but all underlying queries hit the unified user_fish_catches table.
 
 namespace server_fishing_operations {
-    // Create fish catch in server economy
-    bool create_server_fish_catch(Database* db, uint64_t guild_id, uint64_t user_id,
-                                  const std::string& rarity, const std::string& fish_name,
-                                  double weight, int64_t value,
-                                  const std::string& rod_id, const std::string& bait_id);
+    // Fish catch operations (guild_id selects server economy)
+    bool create_fish_catch(Database* db, uint64_t guild_id, uint64_t user_id,
+                           const std::string& rarity, const std::string& fish_name,
+                           double weight, int64_t value,
+                           const std::string& rod_id, const std::string& bait_id);
     
-    // Get user's unsold fish in server economy
-    std::vector<ServerFishCatch> get_server_unsold_fish(Database* db, uint64_t guild_id, uint64_t user_id);
+    std::vector<FishCatch> get_unsold_fish(Database* db, uint64_t guild_id, uint64_t user_id);
+    int64_t sell_all_fish(Database* db, uint64_t guild_id, uint64_t user_id);
     
-    // Sell all unsold fish in server economy
-    int64_t sell_all_server_fish(Database* db, uint64_t guild_id, uint64_t user_id);
+    // Active fishing gear (per guild)
+    std::pair<std::string, std::string> get_active_gear(Database* db, uint64_t guild_id, uint64_t user_id);
+    bool set_active_rod(Database* db, uint64_t guild_id, uint64_t user_id, const std::string& rod_id);
+    bool set_active_bait(Database* db, uint64_t guild_id, uint64_t user_id, const std::string& bait_id);
     
-    // Get/set active fishing gear in server economy
-    std::pair<std::string, std::string> get_server_active_gear(Database* db, uint64_t guild_id, uint64_t user_id);
-    bool set_server_active_rod(Database* db, uint64_t guild_id, uint64_t user_id, const std::string& rod_id);
-    bool set_server_active_bait(Database* db, uint64_t guild_id, uint64_t user_id, const std::string& bait_id);
-    
-    // Server inventory operations for fishing
-    bool add_server_inventory_item(Database* db, uint64_t guild_id, uint64_t user_id,
-                                   const std::string& item_id, const std::string& item_type,
-                                   int quantity, int level);
-    bool remove_server_inventory_item(Database* db, uint64_t guild_id, uint64_t user_id,
-                                      const std::string& item_id, int quantity);
-    int get_server_item_quantity(Database* db, uint64_t guild_id, uint64_t user_id,
-                                 const std::string& item_id);
-    
-    // Unified fishing operations that check economy mode
-    bool create_fish_catch_unified(Database* db, std::optional<uint64_t> guild_id, uint64_t user_id,
-                                   const std::string& rarity, const std::string& fish_name,
-                                   double weight, int64_t value,
-                                   const std::string& rod_id, const std::string& bait_id);
-    
-    int64_t sell_all_fish_unified(Database* db, std::optional<uint64_t> guild_id, uint64_t user_id);
-    
-    std::pair<std::string, std::string> get_active_gear_unified(Database* db, 
-                                                                std::optional<uint64_t> guild_id, 
-                                                                uint64_t user_id);
-    
-    bool set_active_rod_unified(Database* db, std::optional<uint64_t> guild_id, 
-                               uint64_t user_id, const std::string& rod_id);
-    
-    bool set_active_bait_unified(Database* db, std::optional<uint64_t> guild_id,
-                                uint64_t user_id, const std::string& bait_id);
+    // Server inventory (delegates to unified user_inventory with guild_id)
+    bool add_inventory_item(Database* db, uint64_t guild_id, uint64_t user_id,
+                            const std::string& item_id, const std::string& item_type,
+                            int quantity, int level);
+    bool remove_inventory_item(Database* db, uint64_t guild_id, uint64_t user_id,
+                               const std::string& item_id, int quantity);
+    int get_item_quantity(Database* db, uint64_t guild_id, uint64_t user_id,
+                          const std::string& item_id);
 }
 
 } // namespace db

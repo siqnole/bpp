@@ -38,9 +38,25 @@ struct UserData {
     int64_t total_gambled;
     int64_t total_won;
     int64_t total_lost;
+
+    // Flattened common stats (hybrid model)
+    int64_t fish_caught      = 0;
+    int64_t fish_sold         = 0;
+    int64_t gambling_wins     = 0;
+    int64_t gambling_losses   = 0;
+    int64_t commands_used     = 0;
+    int     daily_streak      = 0;
+    int64_t work_count        = 0;
+    int64_t ores_mined        = 0;
+    int64_t items_crafted     = 0;
+    int64_t trades_completed  = 0;
+
+    // Role flags
     bool dev;
     bool admin;
     bool is_mod;
+    bool maintainer       = false;
+    bool contributor      = false;
     bool vip;
     bool passive;
     int prestige;
@@ -49,21 +65,23 @@ struct UserData {
 // Loan data structure
 struct LoanData {
     uint64_t user_id;
-    int64_t principal;        // Original loan amount
-    int64_t interest;         // Interest charged (calculated at loan time)
-    int64_t remaining;        // Total amount remaining to be paid
+    uint64_t guild_id     = 0;  // 0 = global
+    int64_t principal;           // Original loan amount
+    double  interest_rate = 5.0; // Interest rate at loan time
+    int64_t remaining;           // Total amount remaining to be paid
     std::chrono::system_clock::time_point created_at;
     std::optional<std::chrono::system_clock::time_point> last_payment_at;
 };
 
-// Inventory item
+// Inventory item (unified: guild_id=0 → global, >0 → per-server)
 struct InventoryItem {
     uint64_t id;
+    uint64_t guild_id = 0;  // 0 = global economy
     std::string item_id;
     std::string item_type;
     int quantity;
     int level;              // item level (for rods, bait, upgrades, etc)
-    std::string metadata; // JSON string
+    std::string metadata;   // JSON string
 };
 
 
@@ -94,9 +112,10 @@ struct MarketItem {
     std::optional<std::chrono::system_clock::time_point> expires_at;
 };
 
-// Fish catch data
+// Fish catch data (unified: guild_id=0 → global, >0 → per-server)
 struct FishCatch {
     uint64_t id;
+    uint64_t guild_id = 0;  // 0 = global
     std::string rarity;
     std::string fish_name;
     double weight;
@@ -107,9 +126,10 @@ struct FishCatch {
     std::string bait_id;
 };
 
-// Cooldown data
+// Cooldown data (unified: guild_id=0 → global, >0 → per-server)
 struct Cooldown {
     uint64_t user_id;
+    uint64_t guild_id = 0;  // 0 = global
     std::string command;
     std::chrono::system_clock::time_point expires_at;
 };
@@ -189,8 +209,9 @@ enum class TransactionResult {
     UserNotFound
 };
 
-// Autofisher v2 configuration
+// Autofisher v2 configuration (unified: guild_id=0 → global)
 struct AutofisherConfig {
+    uint64_t guild_id    = 0;   // 0 = global
     bool active          = false;
     int  tier            = 0;
     std::string af_rod_id;      // rod equipped to the autofisher
@@ -208,6 +229,8 @@ struct AutofisherConfig {
 // A single fish sitting in autofisher storage
 struct AutofishFish {
     uint64_t    id        = 0;
+    uint64_t    user_id   = 0;
+    uint64_t    guild_id  = 0;  // 0 = global
     std::string fish_name;
     int64_t     value     = 0;
     std::string metadata;
@@ -225,23 +248,16 @@ struct WhitelistEntry {
     std::string reason;
 };
 
-// Leveling system structs
+// Leveling system structs (unified: guild_id=0 → global XP)
 struct UserXP {
     uint64_t user_id;
+    uint64_t guild_id  = 0;  // 0 = global XP
     uint64_t total_xp;
     uint32_t level;
     std::optional<std::chrono::system_clock::time_point> last_message_xp;
 };
 
-struct ServerXP {
-    uint64_t user_id;
-    uint64_t guild_id;
-    uint64_t server_xp;
-    uint32_t server_level;
-    std::optional<std::chrono::system_clock::time_point> last_message_xp;
-};
-
-struct ServerLevelingConfig {
+struct GuildLevelingConfig {
     uint64_t guild_id;
     bool enabled;
     bool reward_coins;
@@ -272,32 +288,41 @@ struct PatchNote {
     std::chrono::system_clock::time_point created_at;
 };
 
-// XP Blacklist structs
-struct XPBlacklistChannel {
+// XP Blacklist — consolidated (replaces channel/role/user variants)
+enum class XPBlacklistTargetType { Channel, Role, User };
+
+struct XPBlacklistEntry {
     uint64_t id;
     uint64_t guild_id;
-    uint64_t channel_id;
+    XPBlacklistTargetType target_type;
+    uint64_t target_id;   // channel_id, role_id, or user_id
     uint64_t added_by;
     std::string reason;
     std::chrono::system_clock::time_point created_at;
 };
 
-struct XPBlacklistRole {
-    uint64_t id;
-    uint64_t guild_id;
-    uint64_t role_id;
-    uint64_t added_by;
-    std::string reason;
-    std::chrono::system_clock::time_point created_at;
-};
+// Guild bot staff (replaces server_bot_admins + server_bot_mods)
+enum class GuildStaffRole { Admin, Mod };
 
-struct XPBlacklistUser {
-    uint64_t id;
+struct GuildBotStaffRow {
     uint64_t guild_id;
     uint64_t user_id;
-    uint64_t added_by;
-    std::string reason;
-    std::chrono::system_clock::time_point created_at;
+    GuildStaffRole role;
+    uint64_t granted_by;
+    std::chrono::system_clock::time_point granted_at;
+};
+
+// Guild moderation config (NEW — persists configs that were in-memory)
+struct GuildModerationConfig {
+    uint64_t guild_id;
+    bool antispam_enabled        = false;
+    bool text_filter_enabled     = false;
+    bool url_guard_enabled       = false;
+    bool reaction_filter_enabled = false;
+    std::string antispam_config;         // JSON
+    std::string text_filter_config;      // JSON
+    std::string url_guard_config;        // JSON
+    std::string reaction_filter_config;  // JSON
 };
 
 // Progressive Jackpot data

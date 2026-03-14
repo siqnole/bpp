@@ -10,7 +10,7 @@ uint64_t Database::add_autopurge(uint64_t user_id, uint64_t guild_id, uint64_t c
                                  uint64_t target_user_id, uint64_t target_role_id) {
     auto conn = pool_->acquire();
 
-    const char* query = "INSERT INTO autopurges (user_id, guild_id, channel_id, interval_seconds, message_limit, target_user_id, target_role_id)"
+    const char* query = "INSERT INTO guild_autopurges (user_id, guild_id, channel_id, interval_seconds, message_limit, target_user_id, target_role_id)"
                         " VALUES (?, ?, ?, ?, ?, ?, ?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -71,7 +71,7 @@ uint64_t Database::add_autopurge(uint64_t user_id, uint64_t guild_id, uint64_t c
 bool Database::remove_autopurge(uint64_t autopurge_id, uint64_t user_id) {
     auto conn = pool_->acquire();
 
-    const char* query = "DELETE FROM autopurges WHERE id = ? AND user_id = ?";
+    const char* query = "DELETE FROM guild_autopurges WHERE id = ? AND user_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         last_error_ = mysql_stmt_error(stmt);
@@ -110,14 +110,14 @@ std::vector<AutopurgeRow> Database::get_all_autopurges() {
     auto conn = pool_->acquire();
 
     // attempt to select new columns; if that fails, retry without them
-    const char* query = "SELECT id, user_id, guild_id, channel_id, interval_seconds, message_limit, target_user_id, target_role_id FROM autopurges";
+    const char* query = "SELECT id, user_id, guild_id, channel_id, interval_seconds, message_limit, target_user_id, target_role_id FROM guild_autopurges";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         std::string err = mysql_stmt_error(stmt);
         // if missing column error, retry simpler query
         if (err.find("Unknown column") != std::string::npos) {
             mysql_stmt_close(stmt);
-            query = "SELECT id, user_id, guild_id, channel_id, interval_seconds, message_limit FROM autopurges";
+            query = "SELECT id, user_id, guild_id, channel_id, interval_seconds, message_limit FROM guild_autopurges";
             stmt = mysql_stmt_init(conn->get());
             if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
                 last_error_ = mysql_stmt_error(stmt);
@@ -256,7 +256,7 @@ std::vector<AutopurgeRow> Database::get_autopurges_for_user(uint64_t user_id_arg
     auto conn = pool_->acquire();
 
     const char* query = "SELECT id, user_id, guild_id, channel_id, interval_seconds, message_limit, target_user_id, target_role_id "
-                        "FROM autopurges WHERE user_id = ?";
+                        "FROM guild_autopurges WHERE user_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         std::string err = mysql_stmt_error(stmt);
@@ -264,7 +264,7 @@ std::vector<AutopurgeRow> Database::get_autopurges_for_user(uint64_t user_id_arg
             // retry without the new columns
             mysql_stmt_close(stmt);
             query = "SELECT id, user_id, guild_id, channel_id, interval_seconds, message_limit "
-                    "FROM autopurges WHERE user_id = ?";
+                    "FROM guild_autopurges WHERE user_id = ?";
             stmt = mysql_stmt_init(conn->get());
             if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
                 last_error_ = mysql_stmt_error(stmt);

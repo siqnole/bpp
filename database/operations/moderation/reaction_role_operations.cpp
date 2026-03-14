@@ -18,7 +18,7 @@ bool Database::add_reaction_role(uint64_t guild_id, uint64_t message_id, uint64_
 
     auto conn = pool_->acquire();
 
-    const char* query = "INSERT INTO reaction_roles (guild_id, message_id, channel_id, emoji_raw, emoji_id, role_id) VALUES (?, ?, ?, ?, ?, ?)"
+    const char* query = "INSERT INTO guild_reaction_roles (guild_id, message_id, channel_id, emoji_raw, emoji_id, role_id) VALUES (?, ?, ?, ?, ?, ?)"
                         " ON DUPLICATE KEY UPDATE guild_id = VALUES(guild_id), channel_id = VALUES(channel_id), emoji_id = VALUES(emoji_id), role_id = VALUES(role_id)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -72,7 +72,7 @@ bool Database::add_reaction_role(uint64_t guild_id, uint64_t message_id, uint64_
 bool Database::remove_reaction_role(uint64_t message_id, const std::string& emoji_raw) {
     auto conn = pool_->acquire();
 
-    const char* query = "DELETE FROM reaction_roles WHERE message_id = ? AND emoji_raw = ?";
+    const char* query = "DELETE FROM guild_reaction_roles WHERE message_id = ? AND emoji_raw = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         last_error_ = mysql_stmt_error(stmt);
@@ -110,7 +110,7 @@ std::vector<ReactionRoleRow> Database::get_all_reaction_roles() {
     std::vector<ReactionRoleRow> out;
     auto conn = pool_->acquire();
 
-    const char* query = "SELECT guild_id, message_id, channel_id, emoji_raw, emoji_id, role_id FROM reaction_roles";
+    const char* query = "SELECT guild_id, message_id, channel_id, emoji_raw, emoji_id, role_id FROM guild_reaction_roles";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         last_error_ = mysql_stmt_error(stmt);

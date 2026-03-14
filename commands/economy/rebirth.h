@@ -185,23 +185,23 @@ static bool perform_rebirth(Database* db, uint64_t user_id) {
     ok = ok && (mysql_query(conn->get(), ("UPDATE users SET wallet = 0, bank = 0, prestige = 0 WHERE user_id = " + uid).c_str()) == 0);
     
     // Clear inventory — but preserve titles and active_title so they survive rebirth
-    ok = ok && (mysql_query(conn->get(), ("DELETE FROM inventory WHERE user_id = " + uid + " AND item_id NOT LIKE 'title\\_%' AND item_id != 'active_title'").c_str()) == 0);
+    ok = ok && (mysql_query(conn->get(), ("DELETE FROM user_inventory WHERE user_id = " + uid + " AND item_id NOT LIKE 'title\\_%' AND item_id != 'active_title'").c_str()) == 0);
     
     // Clear unsold fish
-    ok = ok && (mysql_query(conn->get(), ("DELETE FROM fish_catches WHERE user_id = " + uid + " AND sold = FALSE").c_str()) == 0);
+    ok = ok && (mysql_query(conn->get(), ("DELETE FROM user_fish_catches WHERE user_id = " + uid + " AND sold = FALSE").c_str()) == 0);
     
     // Clear mining claims
-    ok = ok && (mysql_query(conn->get(), ("DELETE FROM mining_claims WHERE user_id = " + uid).c_str()) == 0);
+    ok = ok && (mysql_query(conn->get(), ("DELETE FROM user_mining_claims WHERE user_id = " + uid).c_str()) == 0);
     
     // Clear fish ponds
-    mysql_query(conn->get(), ("DELETE FROM pond_fish WHERE pond_id IN (SELECT id FROM fish_ponds WHERE user_id = " + uid + ")").c_str());
-    mysql_query(conn->get(), ("DELETE FROM fish_ponds WHERE user_id = " + uid).c_str());
+    mysql_query(conn->get(), ("DELETE FROM user_pond_fish WHERE pond_id IN (SELECT id FROM user_fish_ponds WHERE user_id = " + uid + ")").c_str());
+    mysql_query(conn->get(), ("DELETE FROM user_fish_ponds WHERE user_id = " + uid).c_str());
     
     // Reset skill tree
     mysql_query(conn->get(), ("DELETE FROM user_skill_points WHERE user_id = " + uid).c_str());
     
     // Clear cooldowns
-    mysql_query(conn->get(), ("DELETE FROM cooldowns WHERE user_id = " + uid).c_str());
+    mysql_query(conn->get(), ("DELETE FROM user_cooldowns WHERE user_id = " + uid).c_str());
     
     // Update/insert rebirth record
     std::ostringstream mult_ss;
@@ -233,14 +233,14 @@ static bool perform_rebirth(Database* db, uint64_t user_id) {
             if (c == '\'') escaped_meta += "\\'";
             else escaped_meta += c;
         }
-        std::string grant_sql = "INSERT INTO inventory (user_id, item_id, item_type, quantity, metadata, level) "
+        std::string grant_sql = "INSERT INTO user_inventory (user_id, item_id, item_type, quantity, metadata, level) "
                                 "VALUES (" + uid + ", '" + req->title_item_id + "', 'title', 1, '" + escaped_meta + "', 1) "
                                 "ON DUPLICATE KEY UPDATE quantity = 1";
         mysql_query(conn->get(), grant_sql.c_str()); // best-effort inside the transaction
         
         // Auto-equip the rebirth title
         std::string equip_meta = escaped_meta;
-        std::string equip_sql = "INSERT INTO inventory (user_id, item_id, item_type, quantity, metadata, level) "
+        std::string equip_sql = "INSERT INTO user_inventory (user_id, item_id, item_type, quantity, metadata, level) "
                                 "VALUES (" + uid + ", 'active_title', 'title_slot', 1, '" + equip_meta + "', 1) "
                                 "ON DUPLICATE KEY UPDATE metadata = '" + equip_meta + "'";
         mysql_query(conn->get(), equip_sql.c_str()); // best-effort

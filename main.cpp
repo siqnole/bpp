@@ -21,6 +21,8 @@
 #include "performance/write_batch_queue.h"
 #include "performance/api_cache_client.h"
 #include "performance/hybrid_database.h"
+#include "performance/message_cache.h"
+#include "performance/snipe_cache.h"
 #include "commands/utility.h"
 #include "commands/utility/autopurge.h"
 #include "commands/fun.h"
@@ -488,8 +490,13 @@ int main(int argc, char* argv[]) {
     cmd_handler.set_hybrid_database(&hybrid_db);
     std::cout << clr::GREEN << "✔ " << clr::RESET << "Initialized optimized command handler with hybrid caching\n";
 
+    // Initialize message content cache and snipe (deleted messages) cache
+    bronx::snipe::MessageCache message_cache;
+    bronx::snipe::SnipeCache snipe_cache(&db);
+    std::cout << clr::GREEN << "✔ " << clr::RESET << "Initialized snipe message cache\n";
+
     // Register commands (unchanged)
-    for (auto* cmd : commands::get_utility_commands(&cmd_handler, &db)) {
+    for (auto* cmd : commands::get_utility_commands(&cmd_handler, &db, &snipe_cache)) {
         cmd_handler.register_command(cmd);
     }
     
@@ -576,7 +583,7 @@ int main(int argc, char* argv[]) {
     commands::populate_extended_help(&cmd_handler);
 
     // Bot ready event
-    bot.on_ready([&bot, &cmd_handler, &db, &xp_batch_writer](const dpp::ready_t& event) {
+    bot.on_ready([&bot, &cmd_handler, &db, &xp_batch_writer, &snipe_cache](const dpp::ready_t& event) {
         if (dpp::run_once<struct register_commands>()) {
             std::cout << clr::BOLD_GREEN << "✔ logged in as " << bot.me.username << clr::RESET << " (" << clr::DIM << commands::get_build_version() << clr::RESET << ")!\n";
             std::cout << clr::CYAN << "⚙ " << clr::RESET << "prefix: " << clr::BOLD << cmd_handler.get_prefix() << clr::RESET << "\n";
@@ -685,7 +692,7 @@ int main(int argc, char* argv[]) {
             commands::register_shop_interactions(bot, &db);
             commands::register_fishing_interactions(bot, &db);
             commands::register_leaderboard_interactions(bot, &db);
-            commands::register_utility_interactions(bot, &db);
+            commands::register_utility_interactions(bot, &db, &snipe_cache);
             commands::register_owner_interactions(bot, &db, &cmd_handler);
             commands::utility::load_persistent_reaction_roles(bot);
             commands::utility::load_autopurges(bot);
@@ -723,7 +730,7 @@ int main(int argc, char* argv[]) {
                     if (ev.guild_id == 0) continue;  // skip global level-ups (no announcement)
                     
                     // Fetch the server leveling config to check if announcements are enabled
-                    auto cfg = db.get_server_leveling_config(ev.guild_id);
+                    auto cfg = db.get_guild_leveling_config(ev.guild_id);
                     if (!cfg || !cfg->announce_levelup) continue;
                     
                     std::string announcement = "\xF0\x9F\x8E\x89 <@" + std::to_string(ev.user_id) +
@@ -884,12 +891,12 @@ int main(int argc, char* argv[]) {
                     
                     auto now = std::chrono::system_clock::now();
                     
-                    for (uint64_t user_id : active_users) {
+                    for (auto& [user_id, guild_id] : active_users) {
                         // Get tier to determine interval
-                        int tier = db.get_autofisher_tier(user_id);
+                        int tier = db.get_autofisher_tier(user_id, guild_id);
                         if (tier == 0) {
                             // User no longer has autofisher item, deactivate
-                            db.deactivate_autofisher(user_id);
+                            db.deactivate_autofisher(user_id, guild_id);
                             std::cout << clr::YELLOW << "⚠ " << clr::RESET << "Deactivated autofisher for user " << user_id << " (no item)\n";
                             continue;
                         }
@@ -898,7 +905,7 @@ int main(int argc, char* argv[]) {
                         int interval_minutes = (tier == 2) ? 20 : 30;
                         
                         // Check if it's time to run
-                        auto last_run = db.get_autofisher_last_run(user_id);
+                        auto last_run = db.get_autofisher_last_run(user_id, guild_id);
                         bool should_run = false;
                         
                         if (!last_run) {
@@ -913,7 +920,7 @@ int main(int argc, char* argv[]) {
                         
                         if (should_run) {
                             // Always stamp last_run so the interval advances even on empty runs
-                            db.update_autofisher_last_run(user_id);
+                            db.update_autofisher_last_run(user_id, guild_id);
                             // Run autofishing
                             int64_t value = commands::fishing::run_autofish_for_user(&db, user_id);
                             std::cout << clr::CYAN << "🎣" << clr::RESET << " Autofisher completed for user " << user_id 
@@ -976,8 +983,11 @@ int main(int argc, char* argv[]) {
     });
 
     // PERFORMANCE OPTIMIZATION: Use optimized message handler
-    bot.on_message_create([&bot, &cmd_handler, &db, &async_stat_writer, verbose_events](const dpp::message_create_t& event) {
+    bot.on_message_create([&bot, &cmd_handler, &db, &async_stat_writer, &message_cache, verbose_events](const dpp::message_create_t& event) {
         auto _msg_t0 = std::chrono::steady_clock::now();
+
+        // Cache message content for snipe (before anything else)
+        message_cache.cache_message(event.msg);
 
         // Track XP for leveling system (before command processing)
         leveling::handle_message_xp(bot, event, &db);
@@ -1124,8 +1134,8 @@ int main(int argc, char* argv[]) {
         }
     });
 
-    // Stats: track message deletes
-    bot.on_message_delete([&async_stat_writer, verbose_events](const dpp::message_delete_t& event) {
+    // Stats: track message deletes + capture for snipe
+    bot.on_message_delete([&async_stat_writer, &message_cache, &snipe_cache, verbose_events](const dpp::message_delete_t& event) {
         if (event.guild_id != 0) {
             if (verbose_events) {
                 std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::RED << "message_delete" << clr::RESET
@@ -1134,6 +1144,23 @@ int main(int argc, char* argv[]) {
             }
             async_stat_writer.enqueue_message_event(
                 event.guild_id, 0, event.channel_id, "delete");
+
+            // Try to pop the message from our content cache for snipe
+            auto cached = message_cache.pop_message(static_cast<uint64_t>(event.id));
+            if (cached) {
+                bronx::snipe::DeletedMessage dm;
+                dm.message_id = cached->message_id;
+                dm.guild_id = cached->guild_id;
+                dm.channel_id = cached->channel_id;
+                dm.author_id = cached->author_id;
+                dm.author_tag = cached->author_tag;
+                dm.author_avatar = cached->author_avatar;
+                dm.content = cached->content;
+                dm.attachment_urls = cached->attachment_urls;
+                dm.embeds_summary = cached->embeds_json;
+                dm.deleted_at = std::chrono::system_clock::now();
+                snipe_cache.add_deleted(std::move(dm));
+            }
         }
     });
 
@@ -1192,8 +1219,12 @@ int main(int argc, char* argv[]) {
     static bronx::xp::XpBatchWriter* g_shutdown_writer = &xp_batch_writer;
     static bronx::perf::AsyncStatWriter* g_shutdown_stat_writer = &async_stat_writer;
     static bronx::batch::WriteBatchQueue* g_shutdown_batch = &write_batch;
+    static bronx::snipe::MessageCache* g_shutdown_msg_cache = &message_cache;
+    static bronx::snipe::SnipeCache* g_shutdown_snipe_cache = &snipe_cache;
     std::signal(SIGINT, [](int) {
         std::cout << "\n" << clr::BOLD_YELLOW << "⚠ Received SIGINT, shutting down gracefully..." << clr::RESET << "\n";
+        if (g_shutdown_snipe_cache) g_shutdown_snipe_cache->stop();
+        if (g_shutdown_msg_cache) g_shutdown_msg_cache->stop();
         if (g_shutdown_batch) g_shutdown_batch->stop();
         if (g_shutdown_writer) g_shutdown_writer->stop();
         if (g_shutdown_stat_writer) g_shutdown_stat_writer->stop();
@@ -1203,6 +1234,8 @@ int main(int argc, char* argv[]) {
 
     std::signal(SIGTERM, [](int) {
         std::cout << "\n" << clr::BOLD_YELLOW << "⚠ Received SIGTERM, shutting down gracefully..." << clr::RESET << "\n";
+        if (g_shutdown_snipe_cache) g_shutdown_snipe_cache->stop();
+        if (g_shutdown_msg_cache) g_shutdown_msg_cache->stop();
         if (g_shutdown_batch) g_shutdown_batch->stop();
         if (g_shutdown_writer) g_shutdown_writer->stop();
         if (g_shutdown_stat_writer) g_shutdown_stat_writer->stop();
@@ -1270,6 +1303,8 @@ int main(int argc, char* argv[]) {
     }
     
     // Cleanup — flush any remaining data before exit
+    snipe_cache.stop();
+    message_cache.stop();
     write_batch.stop();
     xp_batch_writer.stop();
     async_stat_writer.stop();

@@ -136,7 +136,7 @@ inline Command* create_servereconomy_command(Database* db) {
                 }
 
                 auto conn = db->get_pool()->acquire();
-                std::string query = "UPDATE guild_economy_settings SET ";
+                std::string query = "UPDATE guild_settings SET ";
                 std::vector<std::string> updates;
 
                 for (const auto& opt : subcommand.options) {
@@ -188,7 +188,7 @@ inline Command* create_servereconomy_command(Database* db) {
             } else if (subcommand.name == "features") {
                 // --- FEATURES ---
                 auto conn = db->get_pool()->acquire();
-                std::string query = "UPDATE guild_economy_settings SET ";
+                std::string query = "UPDATE guild_settings SET ";
                 std::vector<std::string> updates;
                 std::vector<std::string> changes;
 
@@ -257,7 +257,7 @@ inline Command* create_servereconomy_command(Database* db) {
                 }
 
                 auto conn = db->get_pool()->acquire();
-                std::string query = "UPDATE guild_economy_settings SET enable_tax = " +
+                std::string query = "UPDATE guild_settings SET enable_tax = " +
                                   std::string(enabled ? "TRUE" : "FALSE");
 
                 if (subcommand.options.size() > 1) {

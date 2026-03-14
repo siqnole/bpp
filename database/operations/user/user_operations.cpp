@@ -111,7 +111,7 @@ std::optional<UserData> Database::get_user(uint64_t user_id) {
     const char* query = "SELECT user_id, wallet, bank, bank_limit, interest_rate, interest_level, "
                        "UNIX_TIMESTAMP(last_interest_claim), UNIX_TIMESTAMP(last_daily), "
                        "UNIX_TIMESTAMP(last_work), UNIX_TIMESTAMP(last_beg), UNIX_TIMESTAMP(last_rob), "
-                       "total_gambled, total_won, total_lost, dev, admin, is_mod, vip, passive, prestige "
+                       "total_gambled, total_won, total_lost, dev, admin, is_mod, maintainer, contributor, vip, passive, prestige "
                        "FROM users WHERE user_id = ?";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -146,12 +146,12 @@ std::optional<UserData> Database::get_user(uint64_t user_id) {
     // Bind result
     UserData data;
     data.prestige = 0;
-    MYSQL_BIND bind_result[20];
+    MYSQL_BIND bind_result[22];
     memset(bind_result, 0, sizeof(bind_result));
     
     long long interest_claim_ts = 0, daily_ts = 0, work_ts = 0, beg_ts = 0, rob_ts = 0;
     my_bool interest_null = 1, daily_null = 1, work_null = 1, beg_null = 1, rob_null = 1;
-    my_bool dev_val = 0, admin_val = 0, mod_val = 0, vip_val = 0, passive_val = 0;
+    my_bool dev_val = 0, admin_val = 0, mod_val = 0, maintainer_val = 0, contributor_val = 0, vip_val = 0, passive_val = 0;
     
     // Bind all 20 columns
     int col = 0;
@@ -172,6 +172,8 @@ std::optional<UserData> Database::get_user(uint64_t user_id) {
     bind_result[col].buffer_type = MYSQL_TYPE_TINY; bind_result[col++].buffer = &dev_val;
     bind_result[col].buffer_type = MYSQL_TYPE_TINY; bind_result[col++].buffer = &admin_val;
     bind_result[col].buffer_type = MYSQL_TYPE_TINY; bind_result[col++].buffer = &mod_val;
+    bind_result[col].buffer_type = MYSQL_TYPE_TINY; bind_result[col++].buffer = &maintainer_val;
+    bind_result[col].buffer_type = MYSQL_TYPE_TINY; bind_result[col++].buffer = &contributor_val;
     bind_result[col].buffer_type = MYSQL_TYPE_TINY; bind_result[col++].buffer = &vip_val;
     bind_result[col].buffer_type = MYSQL_TYPE_TINY; bind_result[col++].buffer = &passive_val;
     bind_result[col].buffer_type = MYSQL_TYPE_LONG; bind_result[col++].buffer = &data.prestige;
@@ -209,11 +211,62 @@ std::optional<UserData> Database::get_user(uint64_t user_id) {
     data.dev = dev_val != 0;
     data.is_mod = mod_val != 0;
     data.admin = admin_val != 0;
+    data.maintainer = maintainer_val != 0;
+    data.contributor = contributor_val != 0;
     data.vip = vip_val != 0;
     data.passive = passive_val != 0;
     
     mysql_stmt_close(stmt);
     pool_->release(conn);
+    
+    // Load extended stats from user_stats_ext
+    {
+        auto stats_conn = pool_->acquire();
+        const char* stats_query = "SELECT stat_name, stat_value FROM user_stats_ext WHERE user_id = ?";
+        MYSQL_STMT* stats_stmt = mysql_stmt_init(stats_conn->get());
+        if (stats_stmt && mysql_stmt_prepare(stats_stmt, stats_query, strlen(stats_query)) == 0) {
+            MYSQL_BIND stats_bind[1];
+            memset(stats_bind, 0, sizeof(stats_bind));
+            stats_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+            stats_bind[0].buffer = (char*)&user_id;
+            stats_bind[0].is_unsigned = 1;
+            
+            if (mysql_stmt_bind_param(stats_stmt, stats_bind) == 0 &&
+                mysql_stmt_execute(stats_stmt) == 0) {
+                char stat_name_buf[64];
+                unsigned long stat_name_len = 0;
+                int64_t stat_val = 0;
+                
+                MYSQL_BIND stats_result[2];
+                memset(stats_result, 0, sizeof(stats_result));
+                stats_result[0].buffer_type = MYSQL_TYPE_STRING;
+                stats_result[0].buffer = stat_name_buf;
+                stats_result[0].buffer_length = sizeof(stat_name_buf);
+                stats_result[0].length = &stat_name_len;
+                stats_result[1].buffer_type = MYSQL_TYPE_LONGLONG;
+                stats_result[1].buffer = &stat_val;
+                
+                if (mysql_stmt_bind_result(stats_stmt, stats_result) == 0) {
+                    mysql_stmt_store_result(stats_stmt);
+                    while (mysql_stmt_fetch(stats_stmt) == 0) {
+                        std::string name(stat_name_buf, stat_name_len);
+                        if (name == "fish_caught") data.fish_caught = stat_val;
+                        else if (name == "fish_sold") data.fish_sold = stat_val;
+                        else if (name == "gambling_wins") data.gambling_wins = stat_val;
+                        else if (name == "gambling_losses") data.gambling_losses = stat_val;
+                        else if (name == "commands_used") data.commands_used = stat_val;
+                        else if (name == "daily_streak") data.daily_streak = static_cast<int>(stat_val);
+                        else if (name == "work_count") data.work_count = stat_val;
+                        else if (name == "ores_mined") data.ores_mined = stat_val;
+                        else if (name == "items_crafted") data.items_crafted = stat_val;
+                        else if (name == "trades_completed") data.trades_completed = stat_val;
+                    }
+                }
+            }
+            mysql_stmt_close(stats_stmt);
+        }
+        pool_->release(stats_conn);
+    }
     
     return data;
 }
@@ -238,8 +291,8 @@ int64_t Database::get_networth(uint64_t user_id) {
     return user_data ? (user_data->wallet + user_data->bank) : 0;
 }
 
-int64_t Database::get_fish_inventory_value(uint64_t user_id) {
-    auto inventory = get_inventory(user_id);
+int64_t Database::get_fish_inventory_value(uint64_t user_id, uint64_t guild_id) {
+    auto inventory = get_inventory(user_id, guild_id);
     int64_t total_value = 0;
     
     for (const auto& item : inventory) {
@@ -274,8 +327,8 @@ int64_t Database::get_fish_inventory_value(uint64_t user_id) {
     return total_value;
 }
 
-int64_t Database::get_total_networth(uint64_t user_id) {
-    return get_networth(user_id) + get_fish_inventory_value(user_id);
+int64_t Database::get_total_networth(uint64_t user_id, uint64_t guild_id) {
+    return get_networth(user_id) + get_fish_inventory_value(user_id, guild_id);
 }
 
 std::optional<int64_t> Database::update_wallet(uint64_t user_id, int64_t amount) {
@@ -763,7 +816,7 @@ bool Database::increment_stat(uint64_t user_id, const std::string& stat_name, in
     
     // Use INSERT ... ON DUPLICATE KEY UPDATE to atomically increment the stat
     const char* query = 
-        "INSERT INTO user_stats (user_id, stat_name, stat_value) VALUES (?, ?, ?) "
+        "INSERT INTO user_stats_ext (user_id, stat_name, stat_value) VALUES (?, ?, ?) "
         "ON DUPLICATE KEY UPDATE stat_value = stat_value + VALUES(stat_value)";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -811,7 +864,7 @@ int64_t Database::get_stat(uint64_t user_id, const std::string& stat_name) {
     auto conn = pool_->acquire();
     if (!conn) return 0;
     
-    const char* query = "SELECT stat_value FROM user_stats WHERE user_id = ? AND stat_name = ?";
+    const char* query = "SELECT stat_value FROM user_stats_ext WHERE user_id = ? AND stat_name = ?";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -974,7 +1027,7 @@ bool Database::perform_prestige(uint64_t user_id) {
     mysql_stmt_close(stmt);
     
     // 2. Delete fish inventory (unsold fish catches)
-    const char* fish_query = "DELETE FROM fish_catches WHERE user_id = ? AND sold = FALSE";
+    const char* fish_query = "DELETE FROM user_fish_catches WHERE user_id = ? AND sold = FALSE";
     stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, fish_query, strlen(fish_query)) == 0) {
         memset(bind, 0, sizeof(bind));
@@ -987,7 +1040,7 @@ bool Database::perform_prestige(uint64_t user_id) {
     mysql_stmt_close(stmt);
     
     // 3. Delete from inventory: fish, bait, rods, upgrades, potions (keep titles and other items)
-    const char* inv_query = "DELETE FROM inventory WHERE user_id = ? AND item_type IN ('collectible', 'bait', 'rod', 'upgrade', 'potion')";
+    const char* inv_query = "DELETE FROM user_inventory WHERE user_id = ? AND item_type IN ('collectible', 'bait', 'rod', 'upgrade', 'potion')";
     stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, inv_query, strlen(inv_query)) == 0) {
         memset(bind, 0, sizeof(bind));
@@ -1000,7 +1053,7 @@ bool Database::perform_prestige(uint64_t user_id) {
     mysql_stmt_close(stmt);
     
     // 4. Reset active fishing gear
-    const char* gear_query = "DELETE FROM active_fishing_gear WHERE user_id = ?";
+    const char* gear_query = "DELETE FROM user_fishing_gear WHERE user_id = ?";
     stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, gear_query, strlen(gear_query)) == 0) {
         memset(bind, 0, sizeof(bind));
@@ -1013,7 +1066,7 @@ bool Database::perform_prestige(uint64_t user_id) {
     mysql_stmt_close(stmt);
     
     // 5. Delete autofisher storage
-    const char* afs_query = "DELETE FROM autofish_storage WHERE user_id = ?";
+    const char* afs_query = "DELETE FROM user_autofish_storage WHERE user_id = ?";
     stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, afs_query, strlen(afs_query)) == 0) {
         memset(bind, 0, sizeof(bind));
@@ -1026,7 +1079,7 @@ bool Database::perform_prestige(uint64_t user_id) {
     mysql_stmt_close(stmt);
     
     // 6. Delete autofisher entry
-    const char* af_query = "DELETE FROM autofishers WHERE user_id = ?";
+    const char* af_query = "DELETE FROM user_autofishers WHERE user_id = ?";
     stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, af_query, strlen(af_query)) == 0) {
         memset(bind, 0, sizeof(bind));
@@ -1055,11 +1108,11 @@ bool Database::perform_prestige(uint64_t user_id) {
 // ========================================
 
 uint64_t Database::add_fish_catch(uint64_t user_id, const std::string& rarity, const std::string& fish_name, 
-                                   double weight, int64_t value, const std::string& rod_id, const std::string& bait_id) {
+                                   double weight, int64_t value, const std::string& rod_id, const std::string& bait_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) return 0;
     
-    const char* query = "INSERT INTO fish_catches (user_id, rarity, fish_name, weight, value, rod_id, bait_id, caught_at) "
+    const char* query = "INSERT INTO user_fish_catches (user_id, rarity, fish_name, weight, value, rod_id, bait_id, caught_at) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, NOW())";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
@@ -1123,13 +1176,13 @@ uint64_t Database::add_fish_catch(uint64_t user_id, const std::string& rarity, c
 // Batch insert multiple fish catches in a single multi-row INSERT statement.
 // This replaces N individual add_fish_catch() calls with 1 round-trip.
 // ---------------------------------------------------------------------------
-bool Database::add_fish_catches_batch(uint64_t user_id, const std::vector<FishCatchRow>& rows) {
+bool Database::add_fish_catches_batch(uint64_t user_id, const std::vector<FishCatchRow>& rows, uint64_t guild_id) {
     if (rows.empty()) return true;
     auto conn = pool_->acquire();
     if (!conn) return false;
 
     // Build multi-row INSERT using string escaping (prepared stmts can't do dynamic row counts)
-    std::string sql = "INSERT INTO fish_catches (user_id, rarity, fish_name, weight, value, rod_id, bait_id, caught_at) VALUES ";
+    std::string sql = "INSERT INTO user_fish_catches (user_id, rarity, fish_name, weight, value, rod_id, bait_id, caught_at) VALUES ";
     
     std::string uid_str = std::to_string(user_id);
     
@@ -1169,11 +1222,11 @@ bool Database::add_fish_catches_batch(uint64_t user_id, const std::vector<FishCa
     return ok;
 }
 
-int64_t Database::count_fish_caught_by_rarity(uint64_t user_id, const std::string& rarity) {
+int64_t Database::count_fish_caught_by_rarity(uint64_t user_id, const std::string& rarity, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) return 0;
     
-    const char* query = "SELECT COUNT(*) FROM fish_catches WHERE user_id = ? AND rarity = ?";
+    const char* query = "SELECT COUNT(*) FROM user_fish_catches WHERE user_id = ? AND rarity = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -1216,11 +1269,11 @@ int64_t Database::count_fish_caught_by_rarity(uint64_t user_id, const std::strin
     return count;
 }
 
-int64_t Database::count_total_fish_caught(uint64_t user_id) {
+int64_t Database::count_total_fish_caught(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) return 0;
     
-    const char* query = "SELECT COUNT(*) FROM fish_catches WHERE user_id = ?";
+    const char* query = "SELECT COUNT(*) FROM user_fish_catches WHERE user_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -1257,7 +1310,7 @@ int64_t Database::count_total_fish_caught(uint64_t user_id) {
     return count;
 }
 
-int64_t Database::count_prestige_fish_caught(uint64_t user_id) {
+int64_t Database::count_prestige_fish_caught(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) return 0;
     
@@ -1290,7 +1343,7 @@ int64_t Database::count_prestige_fish_caught(uint64_t user_id) {
     };
     
     // Build IN clause with placeholders
-    std::string query = "SELECT COUNT(*) FROM fish_catches WHERE user_id = ? AND fish_name IN (";
+    std::string query = "SELECT COUNT(*) FROM user_fish_catches WHERE user_id = ? AND fish_name IN (";
     for (size_t i = 0; i < prestige_fish.size(); i++) {
         query += (i == 0) ? "?" : ", ?";
     }
@@ -1340,12 +1393,12 @@ int64_t Database::count_prestige_fish_caught(uint64_t user_id) {
     return count;
 }
 
-std::map<std::string, int64_t> Database::get_fish_catch_counts_by_species(uint64_t user_id) {
+std::map<std::string, int64_t> Database::get_fish_catch_counts_by_species(uint64_t user_id, uint64_t guild_id) {
     std::map<std::string, int64_t> result;
     auto conn = pool_->acquire();
     if (!conn) return result;
 
-    const char* query = "SELECT fish_name, COUNT(*) FROM fish_catches WHERE user_id = ? GROUP BY fish_name";
+    const char* query = "SELECT fish_name, COUNT(*) FROM user_fish_catches WHERE user_id = ? GROUP BY fish_name";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         if (stmt) mysql_stmt_close(stmt);

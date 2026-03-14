@@ -108,15 +108,7 @@ inline bool is_whitelisted(const dpp::snowflake& guild_id, const dpp::snowflake&
                            const TextFilterConfig& config) {
     if (!config.use_whitelist) return false; // whitelist disabled => ignore
 
-    // Blacklist overrides whitelist
-    if (config.use_blacklist) {
-        if (config.blacklist_users.count(user_id) > 0) return false;
-        if (config.blacklist_channels.count(channel_id) > 0) return false;
-        for (const auto& role : user_roles) {
-            if (config.blacklist_roles.count(role) > 0) return false;
-        }
-    }
-
+    // Whitelist overrides blacklist — if explicitly whitelisted, always exempt
     if (config.whitelist_users.count(user_id) > 0) return true;
     if (config.whitelist_channels.count(channel_id) > 0) return true;
     for (const auto& role : user_roles) {

@@ -79,7 +79,7 @@ static void ensure_pond_tables(Database* db) {
     if (g_pond_tables_created) return;
     
     db->execute(
-        "CREATE TABLE IF NOT EXISTS fish_ponds ("
+        "CREATE TABLE IF NOT EXISTS user_fish_ponds ("
         "  user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,"
         "  pond_level INT NOT NULL DEFAULT 1,"
         "  capacity INT NOT NULL DEFAULT 5,"
@@ -90,7 +90,7 @@ static void ensure_pond_tables(Database* db) {
     );
     
     db->execute(
-        "CREATE TABLE IF NOT EXISTS pond_fish ("
+        "CREATE TABLE IF NOT EXISTS user_pond_fish ("
         "  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
         "  user_id BIGINT UNSIGNED NOT NULL,"
         "  fish_name VARCHAR(100) NOT NULL,"
@@ -99,7 +99,7 @@ static void ensure_pond_tables(Database* db) {
         "  base_value INT NOT NULL DEFAULT 10,"
         "  stocked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
         "  INDEX idx_user (user_id),"
-        "  FOREIGN KEY (user_id) REFERENCES fish_ponds(user_id) ON DELETE CASCADE"
+        "  FOREIGN KEY (user_id) REFERENCES user_fish_ponds(user_id) ON DELETE CASCADE"
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
     
@@ -127,7 +127,7 @@ static PondInfo get_pond(Database* db, uint64_t user_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return {0, 0, std::nullopt, false};
     
-    std::string sql = "SELECT pond_level, capacity, last_collect FROM fish_ponds WHERE user_id = " + std::to_string(user_id);
+    std::string sql = "SELECT pond_level, capacity, last_collect FROM user_fish_ponds WHERE user_id = " + std::to_string(user_id);
     if (mysql_query(conn->get(), sql.c_str()) == 0) {
         MYSQL_RES* res = mysql_store_result(conn->get());
         if (res) {
@@ -158,7 +158,7 @@ static std::vector<PondFish> get_pond_fish(Database* db, uint64_t user_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return fish;
     
-    std::string sql = "SELECT id, fish_name, fish_emoji, rarity, base_value FROM pond_fish WHERE user_id = " + std::to_string(user_id) + " ORDER BY base_value DESC";
+    std::string sql = "SELECT id, fish_name, fish_emoji, rarity, base_value FROM user_pond_fish WHERE user_id = " + std::to_string(user_id) + " ORDER BY base_value DESC";
     if (mysql_query(conn->get(), sql.c_str()) == 0) {
         MYSQL_RES* res = mysql_store_result(conn->get());
         if (res) {
@@ -182,7 +182,7 @@ static std::vector<PondFish> get_pond_fish(Database* db, uint64_t user_id) {
 static bool create_pond(Database* db, uint64_t user_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    std::string sql = "INSERT IGNORE INTO fish_ponds (user_id, pond_level, capacity) VALUES (" + std::to_string(user_id) + ", 1, 5)";
+    std::string sql = "INSERT IGNORE INTO user_fish_ponds (user_id, pond_level, capacity) VALUES (" + std::to_string(user_id) + ", 1, 5)";
     bool ok = mysql_query(conn->get(), sql.c_str()) == 0;
     db->get_pool()->release(conn);
     return ok;
@@ -191,7 +191,7 @@ static bool create_pond(Database* db, uint64_t user_id) {
 static bool upgrade_pond(Database* db, uint64_t user_id, int new_level, int new_capacity) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    std::string sql = "UPDATE fish_ponds SET pond_level = " + std::to_string(new_level) + ", capacity = " + std::to_string(new_capacity) + " WHERE user_id = " + std::to_string(user_id);
+    std::string sql = "UPDATE user_fish_ponds SET pond_level = " + std::to_string(new_level) + ", capacity = " + std::to_string(new_capacity) + " WHERE user_id = " + std::to_string(user_id);
     bool ok = mysql_query(conn->get(), sql.c_str()) == 0;
     db->get_pool()->release(conn);
     return ok;
@@ -206,7 +206,7 @@ static bool add_pond_fish(Database* db, uint64_t user_id, const std::string& nam
     mysql_real_escape_string(conn->get(), esc_emoji, emoji.c_str(), emoji.size());
     mysql_real_escape_string(conn->get(), esc_rarity, rarity.c_str(), rarity.size());
     
-    std::string sql = "INSERT INTO pond_fish (user_id, fish_name, fish_emoji, rarity, base_value) VALUES (" +
+    std::string sql = "INSERT INTO user_pond_fish (user_id, fish_name, fish_emoji, rarity, base_value) VALUES (" +
         std::to_string(user_id) + ", '" + esc_name + "', '" + esc_emoji + "', '" + esc_rarity + "', " + std::to_string(base_value) + ")";
     bool ok = mysql_query(conn->get(), sql.c_str()) == 0;
     db->get_pool()->release(conn);
@@ -216,7 +216,7 @@ static bool add_pond_fish(Database* db, uint64_t user_id, const std::string& nam
 static bool remove_pond_fish(Database* db, uint64_t user_id, uint64_t fish_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    std::string sql = "DELETE FROM pond_fish WHERE id = " + std::to_string(fish_id) + " AND user_id = " + std::to_string(user_id);
+    std::string sql = "DELETE FROM user_pond_fish WHERE id = " + std::to_string(fish_id) + " AND user_id = " + std::to_string(user_id);
     bool ok = mysql_query(conn->get(), sql.c_str()) == 0 && mysql_affected_rows(conn->get()) > 0;
     db->get_pool()->release(conn);
     return ok;
@@ -234,7 +234,7 @@ static int64_t collect_pond_income(Database* db, uint64_t user_id) {
     // Update last_collect
     auto conn = db->get_pool()->acquire();
     if (!conn) return 0;
-    std::string sql = "UPDATE fish_ponds SET last_collect = NOW() WHERE user_id = " + std::to_string(user_id);
+    std::string sql = "UPDATE user_fish_ponds SET last_collect = NOW() WHERE user_id = " + std::to_string(user_id);
     mysql_query(conn->get(), sql.c_str());
     db->get_pool()->release(conn);
     
@@ -244,7 +244,7 @@ static int64_t collect_pond_income(Database* db, uint64_t user_id) {
 static int count_pond_fish(Database* db, uint64_t user_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return 0;
-    std::string sql = "SELECT COUNT(*) FROM pond_fish WHERE user_id = " + std::to_string(user_id);
+    std::string sql = "SELECT COUNT(*) FROM user_pond_fish WHERE user_id = " + std::to_string(user_id);
     int count = 0;
     if (mysql_query(conn->get(), sql.c_str()) == 0) {
         MYSQL_RES* res = mysql_store_result(conn->get());

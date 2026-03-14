@@ -5,14 +5,14 @@
 namespace bronx {
 namespace db {
 
-bool Database::is_on_cooldown(uint64_t user_id, const std::string& command) {
+bool Database::is_on_cooldown(uint64_t user_id, const std::string& command, uint64_t guild_id) {
     auto conn = pool_->acquire();
     
-    const char* query = "SELECT expires_at FROM cooldowns WHERE user_id = ? AND command = ? AND expires_at > NOW()";
+    const char* query = "SELECT expires_at FROM user_cooldowns WHERE user_id = ? AND command = ? AND guild_id = ? AND expires_at > NOW()";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     mysql_stmt_prepare(stmt, query, strlen(query));
     
-    MYSQL_BIND bind[2];
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
@@ -20,6 +20,9 @@ bool Database::is_on_cooldown(uint64_t user_id, const std::string& command) {
     bind[1].buffer_type = MYSQL_TYPE_STRING;
     bind[1].buffer = (char*)command.c_str();
     bind[1].buffer_length = command.length();
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&guild_id;
+    bind[2].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     mysql_stmt_execute(stmt);
@@ -33,30 +36,33 @@ bool Database::is_on_cooldown(uint64_t user_id, const std::string& command) {
     return on_cooldown;
 }
 
-bool Database::set_cooldown(uint64_t user_id, const std::string& command, int seconds) {
+bool Database::set_cooldown(uint64_t user_id, const std::string& command, int seconds, uint64_t guild_id) {
     ensure_user_exists(user_id);
     
     auto conn = pool_->acquire();
     
-    const char* query = "INSERT INTO cooldowns (user_id, command, expires_at) "
-                       "VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND)) "
+    const char* query = "INSERT INTO user_cooldowns (user_id, guild_id, command, expires_at) "
+                       "VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND)) "
                        "ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND)";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     mysql_stmt_prepare(stmt, query, strlen(query));
     
-    MYSQL_BIND bind[4];
+    MYSQL_BIND bind[5];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
-    bind[1].buffer_type = MYSQL_TYPE_STRING;
-    bind[1].buffer = (char*)command.c_str();
-    bind[1].buffer_length = command.length();
-    bind[2].buffer_type = MYSQL_TYPE_LONG;
-    bind[2].buffer = (char*)&seconds;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)command.c_str();
+    bind[2].buffer_length = command.length();
     bind[3].buffer_type = MYSQL_TYPE_LONG;
     bind[3].buffer = (char*)&seconds;
+    bind[4].buffer_type = MYSQL_TYPE_LONG;
+    bind[4].buffer = (char*)&seconds;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
@@ -67,14 +73,14 @@ bool Database::set_cooldown(uint64_t user_id, const std::string& command, int se
     return success;
 }
 
-std::optional<std::chrono::system_clock::time_point> Database::get_cooldown_expiry(uint64_t user_id, const std::string& command) {
+std::optional<std::chrono::system_clock::time_point> Database::get_cooldown_expiry(uint64_t user_id, const std::string& command, uint64_t guild_id) {
     auto conn = pool_->acquire();
     
-    const char* query = "SELECT UNIX_TIMESTAMP(expires_at) FROM cooldowns WHERE user_id = ? AND command = ? AND expires_at > NOW()";
+    const char* query = "SELECT UNIX_TIMESTAMP(expires_at) FROM user_cooldowns WHERE user_id = ? AND command = ? AND guild_id = ? AND expires_at > NOW()";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     mysql_stmt_prepare(stmt, query, strlen(query));
     
-    MYSQL_BIND bind[2];
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
@@ -82,6 +88,9 @@ std::optional<std::chrono::system_clock::time_point> Database::get_cooldown_expi
     bind[1].buffer_type = MYSQL_TYPE_STRING;
     bind[1].buffer = (char*)command.c_str();
     bind[1].buffer_length = command.length();
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&guild_id;
+    bind[2].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     mysql_stmt_execute(stmt);
@@ -105,7 +114,7 @@ std::optional<std::chrono::system_clock::time_point> Database::get_cooldown_expi
     return expiry;
 }
 
-bool Database::try_claim_cooldown(uint64_t user_id, const std::string& command, int seconds) {
+bool Database::try_claim_cooldown(uint64_t user_id, const std::string& command, int seconds, uint64_t guild_id) {
     ensure_user_exists(user_id);
     
     auto conn = pool_->acquire();
@@ -114,11 +123,11 @@ bool Database::try_claim_cooldown(uint64_t user_id, const std::string& command, 
     mysql_query(conn->get(), "START TRANSACTION");
     
     // Try to get existing cooldown with FOR UPDATE lock
-    const char* select_query = "SELECT UNIX_TIMESTAMP(expires_at) FROM cooldowns WHERE user_id = ? AND command = ? FOR UPDATE";
+    const char* select_query = "SELECT UNIX_TIMESTAMP(expires_at) FROM user_cooldowns WHERE user_id = ? AND command = ? AND guild_id = ? FOR UPDATE";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     mysql_stmt_prepare(stmt, select_query, strlen(select_query));
     
-    MYSQL_BIND bind[2];
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
@@ -126,6 +135,9 @@ bool Database::try_claim_cooldown(uint64_t user_id, const std::string& command, 
     bind[1].buffer_type = MYSQL_TYPE_STRING;
     bind[1].buffer = (char*)command.c_str();
     bind[1].buffer_length = command.length();
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&guild_id;
+    bind[2].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     mysql_stmt_execute(stmt);
@@ -159,25 +171,28 @@ bool Database::try_claim_cooldown(uint64_t user_id, const std::string& command, 
     }
     
     // Either no cooldown exists or it's expired - set/update the cooldown
-    const char* upsert_query = "INSERT INTO cooldowns (user_id, command, expires_at) "
-                               "VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND)) "
+    const char* upsert_query = "INSERT INTO user_cooldowns (user_id, guild_id, command, expires_at) "
+                               "VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND)) "
                                "ON DUPLICATE KEY UPDATE expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND)";
     
     stmt = mysql_stmt_init(conn->get());
     mysql_stmt_prepare(stmt, upsert_query, strlen(upsert_query));
     
-    MYSQL_BIND upsert_bind[4];
+    MYSQL_BIND upsert_bind[5];
     memset(upsert_bind, 0, sizeof(upsert_bind));
     upsert_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     upsert_bind[0].buffer = (char*)&user_id;
     upsert_bind[0].is_unsigned = 1;
-    upsert_bind[1].buffer_type = MYSQL_TYPE_STRING;
-    upsert_bind[1].buffer = (char*)command.c_str();
-    upsert_bind[1].buffer_length = command.length();
-    upsert_bind[2].buffer_type = MYSQL_TYPE_LONG;
-    upsert_bind[2].buffer = (char*)&seconds;
+    upsert_bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    upsert_bind[1].buffer = (char*)&guild_id;
+    upsert_bind[1].is_unsigned = 1;
+    upsert_bind[2].buffer_type = MYSQL_TYPE_STRING;
+    upsert_bind[2].buffer = (char*)command.c_str();
+    upsert_bind[2].buffer_length = command.length();
     upsert_bind[3].buffer_type = MYSQL_TYPE_LONG;
     upsert_bind[3].buffer = (char*)&seconds;
+    upsert_bind[4].buffer_type = MYSQL_TYPE_LONG;
+    upsert_bind[4].buffer = (char*)&seconds;
     
     mysql_stmt_bind_param(stmt, upsert_bind);
     bool success = mysql_stmt_execute(stmt) == 0;

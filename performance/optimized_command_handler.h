@@ -172,6 +172,40 @@ public:
                 return;
             }
         }
+        
+        // Privacy opt-out check — completely ignore opted-out users
+        // Exception: allow the privacy command itself so they can opt back in
+        if (db_) {
+            if (db_->is_opted_out(user_id)) {
+                // peek at the command to see if it's the privacy command
+                std::string content_check = event.msg.content;
+                std::string content_check_lower = content_check;
+                std::transform(content_check_lower.begin(), content_check_lower.end(), content_check_lower.begin(), ::tolower);
+                bool is_privacy_cmd = false;
+                auto pfxs = get_all_prefixes(user_id, guild_id);
+                for (auto& p : pfxs) {
+                    std::string pl = p;
+                    std::transform(pl.begin(), pl.end(), pl.begin(), ::tolower);
+                    if (content_check_lower.rfind(pl, 0) == 0) {
+                        std::string after = content_check_lower.substr(pl.size());
+                        while (!after.empty() && after[0] == ' ') after.erase(after.begin());
+                        if (after.rfind("privacy", 0) == 0 || after.rfind("optin", 0) == 0 || after.rfind("opt-in", 0) == 0) {
+                            is_privacy_cmd = true;
+                            break;
+                        }
+                    }
+                }
+                if (!is_privacy_cmd) {
+                    auto embed = bronx::create_embed(
+                        "\xf0\x9f\x94\x92 **you have opted out of data collection**\n\n"
+                        "the bot will not process your commands or collect any data.\n"
+                        "to opt back in, use `b.privacy optin`",
+                        bronx::COLOR_INFO);
+                    bronx::send_message(bot, event, embed);
+                    return;
+                }
+            }
+        }
         double _t_ban = _elapsed();
 
         // Prepare mutable content
@@ -346,6 +380,22 @@ public:
                 cached_db_->is_global_blacklisted(user_id)) {
                 event.reply(dpp::message("You are banned from using this bot by BAC (Bronx AntiCheat).").set_flags(dpp::m_ephemeral));
                 return;
+            }
+        }
+        
+        // Privacy opt-out check — allow only /privacy command
+        if (db_) {
+            if (db_->is_opted_out(user_id)) {
+                std::string peek_cmd = event.command.get_command_name();
+                if (peek_cmd != "privacy") {
+                    auto embed = bronx::create_embed(
+                        "\xf0\x9f\x94\x92 **you have opted out of data collection**\n\n"
+                        "the bot will not process your commands or collect any data.\n"
+                        "to opt back in, use `/privacy optin`",
+                        bronx::COLOR_INFO);
+                    event.reply(dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
+                    return;
+                }
             }
         }
         double _t_ban = _elapsed();

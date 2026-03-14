@@ -1,670 +1,365 @@
 #include "xp_blacklist_operations.h"
 #include "../../core/database.h"
+#include <algorithm>
 #include <cstring>
 
 namespace bronx {
 namespace db {
 namespace xp_blacklist_operations {
 
+// Helper: convert string to XPBlacklistTargetType enum
+static XPBlacklistTargetType parse_target_type(const std::string& s) {
+    if (s == "role")    return XPBlacklistTargetType::Role;
+    if (s == "user")    return XPBlacklistTargetType::User;
+    return XPBlacklistTargetType::Channel; // default
+}
+
 // ============================================================================
-// CHANNEL BLACKLIST
+// ADD BLACKLIST
 // ============================================================================
 
-bool add_channel_blacklist(Database* db, uint64_t guild_id, uint64_t channel_id, uint64_t added_by, const std::string& reason) {
+bool add_blacklist(Database* db, uint64_t guild_id, const std::string& target_type,
+                   uint64_t target_id, uint64_t added_by, const std::string& reason) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    
-    const char* query = "INSERT INTO xp_blacklist_channels (guild_id, channel_id, added_by, reason) VALUES (?, ?, ?, ?) "
-                       "ON DUPLICATE KEY UPDATE reason=VALUES(reason)";
+
+    const char* query = "INSERT INTO guild_xp_blacklist (guild_id, target_type, target_id, added_by, reason) "
+                        "VALUES (?, ?, ?, ?, ?) "
+                        "ON DUPLICATE KEY UPDATE reason=VALUES(reason), added_by=VALUES(added_by)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
+
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         return false;
     }
-    
-    MYSQL_BIND bind[4];
+
+    MYSQL_BIND bind[5];
     memset(bind, 0, sizeof(bind));
-    
+
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
     bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&channel_id;
-    bind[1].is_unsigned = 1;
-    
+
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)target_type.c_str();
+    bind[1].buffer_length = target_type.size();
+
     bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[2].buffer = (char*)&added_by;
+    bind[2].buffer = (char*)&target_id;
     bind[2].is_unsigned = 1;
-    
-    bind[3].buffer_type = MYSQL_TYPE_STRING;
-    bind[3].buffer = (char*)reason.c_str();
-    bind[3].buffer_length = reason.size();
-    
+
+    bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[3].buffer = (char*)&added_by;
+    bind[3].is_unsigned = 1;
+
+    bind[4].buffer_type = MYSQL_TYPE_STRING;
+    bind[4].buffer = (char*)reason.c_str();
+    bind[4].buffer_length = reason.size();
+
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
-    
+
     mysql_stmt_close(stmt);
     db->get_pool()->release(conn);
     return success;
 }
 
-bool remove_channel_blacklist(Database* db, uint64_t guild_id, uint64_t channel_id) {
+// ============================================================================
+// REMOVE BLACKLIST
+// ============================================================================
+
+bool remove_blacklist(Database* db, uint64_t guild_id, const std::string& target_type, uint64_t target_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    
-    const char* query = "DELETE FROM xp_blacklist_channels WHERE guild_id = ? AND channel_id = ?";
+
+    const char* query = "DELETE FROM guild_xp_blacklist WHERE guild_id = ? AND target_type = ? AND target_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
+
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         return false;
     }
-    
-    MYSQL_BIND bind[2];
+
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
-    
+
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
     bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&channel_id;
-    bind[1].is_unsigned = 1;
-    
+
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)target_type.c_str();
+    bind[1].buffer_length = target_type.size();
+
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&target_id;
+    bind[2].is_unsigned = 1;
+
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
-    
+
     mysql_stmt_close(stmt);
     db->get_pool()->release(conn);
     return success;
 }
 
-bool is_channel_blacklisted(Database* db, uint64_t guild_id, uint64_t channel_id) {
+// ============================================================================
+// IS BLACKLISTED
+// ============================================================================
+
+bool is_blacklisted(Database* db, uint64_t guild_id, const std::string& target_type, uint64_t target_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    
-    const char* query = "SELECT COUNT(*) FROM xp_blacklist_channels WHERE guild_id = ? AND channel_id = ?";
+
+    const char* query = "SELECT 1 FROM guild_xp_blacklist WHERE guild_id = ? AND target_type = ? AND target_id = ? LIMIT 1";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt) {
         db->get_pool()->release(conn);
         return false;
     }
-    
+
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         return false;
     }
-    
-    MYSQL_BIND bind[2];
+
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
-    
+
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
     bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&channel_id;
-    bind[1].is_unsigned = 1;
-    
+
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)target_type.c_str();
+    bind[1].buffer_length = target_type.size();
+
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&target_id;
+    bind[2].is_unsigned = 1;
+
     mysql_stmt_bind_param(stmt, bind);
-    
+
     if (mysql_stmt_execute(stmt) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         return false;
     }
-    
+
     MYSQL_BIND resbind[1];
     memset(resbind, 0, sizeof(resbind));
-    
-    uint64_t count = 0;
+
+    uint64_t one = 0;
     resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[0].buffer = &count;
+    resbind[0].buffer = &one;
     resbind[0].is_unsigned = 1;
-    
+
     mysql_stmt_bind_result(stmt, resbind);
-    mysql_stmt_fetch(stmt);
-    
+    bool found = (mysql_stmt_fetch(stmt) == 0);
+
     mysql_stmt_close(stmt);
     db->get_pool()->release(conn);
-    
-    return count > 0;
+    return found;
 }
 
-std::vector<XPBlacklistChannel> get_blacklisted_channels(Database* db, uint64_t guild_id) {
-    std::vector<XPBlacklistChannel> result;
+// ============================================================================
+// GET BLACKLIST
+// ============================================================================
+
+std::vector<XPBlacklistEntry> get_blacklist(Database* db, uint64_t guild_id, const std::string& target_type) {
+    std::vector<XPBlacklistEntry> result;
     auto conn = db->get_pool()->acquire();
     if (!conn) return result;
-    
-    const char* query = "SELECT id, guild_id, channel_id, added_by, reason, UNIX_TIMESTAMP(created_at) "
-                       "FROM xp_blacklist_channels WHERE guild_id = ? ORDER BY created_at DESC";
+
+    // Build query — optionally filter by target_type
+    std::string query_str;
+    if (target_type.empty()) {
+        query_str = "SELECT id, guild_id, target_type, target_id, added_by, reason, UNIX_TIMESTAMP(created_at) "
+                    "FROM guild_xp_blacklist WHERE guild_id = ? ORDER BY created_at DESC";
+    } else {
+        query_str = "SELECT id, guild_id, target_type, target_id, added_by, reason, UNIX_TIMESTAMP(created_at) "
+                    "FROM guild_xp_blacklist WHERE guild_id = ? AND target_type = ? ORDER BY created_at DESC";
+    }
+
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+
+    if (mysql_stmt_prepare(stmt, query_str.c_str(), query_str.size()) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         return result;
     }
-    
-    MYSQL_BIND bind[1];
+
+    // Bind params
+    MYSQL_BIND bind[2];
     memset(bind, 0, sizeof(bind));
+
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
     bind[0].is_unsigned = 1;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    
+
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)target_type.c_str();
+    bind[1].buffer_length = target_type.size();
+
+    int param_count = target_type.empty() ? 1 : 2;
+    // mysql_stmt_bind_param needs the full array up to param_count
+    // but we always pass the array; MySQL will only use param_count params
+    // Actually we must only bind exactly the number of params the query has:
+    if (param_count == 1) {
+        mysql_stmt_bind_param(stmt, bind);  // only bind[0] used
+    } else {
+        mysql_stmt_bind_param(stmt, bind);
+    }
+
     if (mysql_stmt_execute(stmt) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         return result;
     }
-    
-    MYSQL_BIND resbind[6];
+
+    // Bind result columns: id, guild_id, target_type, target_id, added_by, reason, timestamp
+    MYSQL_BIND resbind[7];
     memset(resbind, 0, sizeof(resbind));
-    
-    uint64_t id, gid, cid, added_by;
-    char reason[256];
+
+    uint64_t id, gid, tid, added_by;
+    char tt_buf[16];
+    unsigned long tt_len;
+    char reason_buf[256];
     unsigned long reason_len;
     my_bool reason_null;
     uint64_t timestamp;
-    
+
     resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     resbind[0].buffer = &id;
     resbind[0].is_unsigned = 1;
-    
+
     resbind[1].buffer_type = MYSQL_TYPE_LONGLONG;
     resbind[1].buffer = &gid;
     resbind[1].is_unsigned = 1;
-    
-    resbind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[2].buffer = &cid;
-    resbind[2].is_unsigned = 1;
-    
+
+    resbind[2].buffer_type = MYSQL_TYPE_STRING;
+    resbind[2].buffer = tt_buf;
+    resbind[2].buffer_length = sizeof(tt_buf);
+    resbind[2].length = &tt_len;
+
     resbind[3].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[3].buffer = &added_by;
+    resbind[3].buffer = &tid;
     resbind[3].is_unsigned = 1;
-    
-    resbind[4].buffer_type = MYSQL_TYPE_STRING;
-    resbind[4].buffer = reason;
-    resbind[4].buffer_length = sizeof(reason);
-    resbind[4].length = &reason_len;
-    resbind[4].is_null = &reason_null;
-    
-    resbind[5].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[5].buffer = &timestamp;
-    resbind[5].is_unsigned = 1;
-    
+
+    resbind[4].buffer_type = MYSQL_TYPE_LONGLONG;
+    resbind[4].buffer = &added_by;
+    resbind[4].is_unsigned = 1;
+
+    resbind[5].buffer_type = MYSQL_TYPE_STRING;
+    resbind[5].buffer = reason_buf;
+    resbind[5].buffer_length = sizeof(reason_buf);
+    resbind[5].length = &reason_len;
+    resbind[5].is_null = &reason_null;
+
+    resbind[6].buffer_type = MYSQL_TYPE_LONGLONG;
+    resbind[6].buffer = &timestamp;
+    resbind[6].is_unsigned = 1;
+
     mysql_stmt_bind_result(stmt, resbind);
-    
+
     while (mysql_stmt_fetch(stmt) == 0) {
-        XPBlacklistChannel entry;
+        XPBlacklistEntry entry;
         entry.id = id;
         entry.guild_id = gid;
-        entry.channel_id = cid;
+        entry.target_type = parse_target_type(std::string(tt_buf, tt_len));
+        entry.target_id = tid;
         entry.added_by = added_by;
-        entry.reason = reason_null ? "" : std::string(reason, reason_len);
+        entry.reason = reason_null ? "" : std::string(reason_buf, reason_len);
         entry.created_at = std::chrono::system_clock::from_time_t(timestamp);
         result.push_back(entry);
     }
-    
+
     mysql_stmt_close(stmt);
     db->get_pool()->release(conn);
     return result;
 }
 
 // ============================================================================
-// ROLE BLACKLIST
+// SHOULD BLOCK XP  (single query, check in C++)
 // ============================================================================
 
-bool add_role_blacklist(Database* db, uint64_t guild_id, uint64_t role_id, uint64_t added_by, const std::string& reason) {
+bool should_block_xp(Database* db, uint64_t guild_id, uint64_t channel_id,
+                     uint64_t user_id, const std::vector<uint64_t>& user_role_ids) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    
-    const char* query = "INSERT INTO xp_blacklist_roles (guild_id, role_id, added_by, reason) VALUES (?, ?, ?, ?) "
-                       "ON DUPLICATE KEY UPDATE reason=VALUES(reason)";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[4];
-    memset(bind, 0, sizeof(bind));
-    
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&guild_id;
-    bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&role_id;
-    bind[1].is_unsigned = 1;
-    
-    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[2].buffer = (char*)&added_by;
-    bind[2].is_unsigned = 1;
-    
-    bind[3].buffer_type = MYSQL_TYPE_STRING;
-    bind[3].buffer = (char*)reason.c_str();
-    bind[3].buffer_length = reason.size();
-    
-    mysql_stmt_bind_param(stmt, bind);
-    bool success = mysql_stmt_execute(stmt) == 0;
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return success;
-}
 
-bool remove_role_blacklist(Database* db, uint64_t guild_id, uint64_t role_id) {
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return false;
-    
-    const char* query = "DELETE FROM xp_blacklist_roles WHERE guild_id = ? AND role_id = ?";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[2];
-    memset(bind, 0, sizeof(bind));
-    
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&guild_id;
-    bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&role_id;
-    bind[1].is_unsigned = 1;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    bool success = mysql_stmt_execute(stmt) == 0;
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return success;
-}
-
-bool is_role_blacklisted(Database* db, uint64_t guild_id, uint64_t role_id) {
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return false;
-    
-    const char* query = "SELECT COUNT(*) FROM xp_blacklist_roles WHERE guild_id = ? AND role_id = ?";
+    const char* query = "SELECT target_type, target_id FROM guild_xp_blacklist WHERE guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt) {
         db->get_pool()->release(conn);
         return false;
     }
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[2];
-    memset(bind, 0, sizeof(bind));
-    
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&guild_id;
-    bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&role_id;
-    bind[1].is_unsigned = 1;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    
-    if (mysql_stmt_execute(stmt) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND resbind[1];
-    memset(resbind, 0, sizeof(resbind));
-    
-    uint64_t count = 0;
-    resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[0].buffer = &count;
-    resbind[0].is_unsigned = 1;
-    
-    mysql_stmt_bind_result(stmt, resbind);
-    mysql_stmt_fetch(stmt);
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    
-    return count > 0;
-}
 
-std::vector<XPBlacklistRole> get_blacklisted_roles(Database* db, uint64_t guild_id) {
-    std::vector<XPBlacklistRole> result;
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return result;
-    
-    const char* query = "SELECT id, guild_id, role_id, added_by, reason, UNIX_TIMESTAMP(created_at) "
-                       "FROM xp_blacklist_roles WHERE guild_id = ? ORDER BY created_at DESC";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
-        return result;
+        return false;
     }
-    
+
     MYSQL_BIND bind[1];
     memset(bind, 0, sizeof(bind));
+
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
     bind[0].is_unsigned = 1;
-    
+
     mysql_stmt_bind_param(stmt, bind);
-    
+
     if (mysql_stmt_execute(stmt) != 0) {
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
-        return result;
+        return false;
     }
-    
-    MYSQL_BIND resbind[6];
+
+    MYSQL_BIND resbind[2];
     memset(resbind, 0, sizeof(resbind));
-    
-    uint64_t id, gid, rid, added_by;
-    char reason[256];
-    unsigned long reason_len;
-    my_bool reason_null;
-    uint64_t timestamp;
-    
-    resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[0].buffer = &id;
-    resbind[0].is_unsigned = 1;
-    
+
+    char tt_buf[16];
+    unsigned long tt_len;
+    uint64_t tid;
+
+    resbind[0].buffer_type = MYSQL_TYPE_STRING;
+    resbind[0].buffer = tt_buf;
+    resbind[0].buffer_length = sizeof(tt_buf);
+    resbind[0].length = &tt_len;
+
     resbind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[1].buffer = &gid;
+    resbind[1].buffer = &tid;
     resbind[1].is_unsigned = 1;
-    
-    resbind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[2].buffer = &rid;
-    resbind[2].is_unsigned = 1;
-    
-    resbind[3].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[3].buffer = &added_by;
-    resbind[3].is_unsigned = 1;
-    
-    resbind[4].buffer_type = MYSQL_TYPE_STRING;
-    resbind[4].buffer = reason;
-    resbind[4].buffer_length = sizeof(reason);
-    resbind[4].length = &reason_len;
-    resbind[4].is_null = &reason_null;
-    
-    resbind[5].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[5].buffer = &timestamp;
-    resbind[5].is_unsigned = 1;
-    
+
     mysql_stmt_bind_result(stmt, resbind);
-    
+
+    bool blocked = false;
     while (mysql_stmt_fetch(stmt) == 0) {
-        XPBlacklistRole entry;
-        entry.id = id;
-        entry.guild_id = gid;
-        entry.role_id = rid;
-        entry.added_by = added_by;
-        entry.reason = reason_null ? "" : std::string(reason, reason_len);
-        entry.created_at = std::chrono::system_clock::from_time_t(timestamp);
-        result.push_back(entry);
-    }
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return result;
-}
+        std::string tt(tt_buf, tt_len);
 
-// ============================================================================
-// USER BLACKLIST
-// ============================================================================
-
-bool add_user_blacklist(Database* db, uint64_t guild_id, uint64_t user_id, uint64_t added_by, const std::string& reason) {
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return false;
-    
-    const char* query = "INSERT INTO xp_blacklist_users (guild_id, user_id, added_by, reason) VALUES (?, ?, ?, ?) "
-                       "ON DUPLICATE KEY UPDATE reason=VALUES(reason)";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[4];
-    memset(bind, 0, sizeof(bind));
-    
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&guild_id;
-    bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&user_id;
-    bind[1].is_unsigned = 1;
-    
-    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[2].buffer = (char*)&added_by;
-    bind[2].is_unsigned = 1;
-    
-    bind[3].buffer_type = MYSQL_TYPE_STRING;
-    bind[3].buffer = (char*)reason.c_str();
-    bind[3].buffer_length = reason.size();
-    
-    mysql_stmt_bind_param(stmt, bind);
-    bool success = mysql_stmt_execute(stmt) == 0;
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return success;
-}
-
-bool remove_user_blacklist(Database* db, uint64_t guild_id, uint64_t user_id) {
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return false;
-    
-    const char* query = "DELETE FROM xp_blacklist_users WHERE guild_id = ? AND user_id = ?";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[2];
-    memset(bind, 0, sizeof(bind));
-    
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&guild_id;
-    bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&user_id;
-    bind[1].is_unsigned = 1;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    bool success = mysql_stmt_execute(stmt) == 0;
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return success;
-}
-
-bool is_user_blacklisted(Database* db, uint64_t guild_id, uint64_t user_id) {
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return false;
-    
-    const char* query = "SELECT COUNT(*) FROM xp_blacklist_users WHERE guild_id = ? AND user_id = ?";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    if (!stmt) {
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[2];
-    memset(bind, 0, sizeof(bind));
-    
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&guild_id;
-    bind[0].is_unsigned = 1;
-    
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&user_id;
-    bind[1].is_unsigned = 1;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    
-    if (mysql_stmt_execute(stmt) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND resbind[1];
-    memset(resbind, 0, sizeof(resbind));
-    
-    uint64_t count = 0;
-    resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[0].buffer = &count;
-    resbind[0].is_unsigned = 1;
-    
-    mysql_stmt_bind_result(stmt, resbind);
-    mysql_stmt_fetch(stmt);
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    
-    return count > 0;
-}
-
-std::vector<XPBlacklistUser> get_blacklisted_users(Database* db, uint64_t guild_id) {
-    std::vector<XPBlacklistUser> result;
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return result;
-    
-    const char* query = "SELECT id, guild_id, user_id, added_by, reason, UNIX_TIMESTAMP(created_at) "
-                       "FROM xp_blacklist_users WHERE guild_id = ? ORDER BY created_at DESC";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return result;
-    }
-    
-    MYSQL_BIND bind[1];
-    memset(bind, 0, sizeof(bind));
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&guild_id;
-    bind[0].is_unsigned = 1;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    
-    if (mysql_stmt_execute(stmt) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return result;
-    }
-    
-    MYSQL_BIND resbind[6];
-    memset(resbind, 0, sizeof(resbind));
-    
-    uint64_t id, gid, uid, added_by;
-    char reason[256];
-    unsigned long reason_len;
-    my_bool reason_null;
-    uint64_t timestamp;
-    
-    resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[0].buffer = &id;
-    resbind[0].is_unsigned = 1;
-    
-    resbind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[1].buffer = &gid;
-    resbind[1].is_unsigned = 1;
-    
-    resbind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[2].buffer = &uid;
-    resbind[2].is_unsigned = 1;
-    
-    resbind[3].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[3].buffer = &added_by;
-    resbind[3].is_unsigned = 1;
-    
-    resbind[4].buffer_type = MYSQL_TYPE_STRING;
-    resbind[4].buffer = reason;
-    resbind[4].buffer_length = sizeof(reason);
-    resbind[4].length = &reason_len;
-    resbind[4].is_null = &reason_null;
-    
-    resbind[5].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[5].buffer = &timestamp;
-    resbind[5].is_unsigned = 1;
-    
-    mysql_stmt_bind_result(stmt, resbind);
-    
-    while (mysql_stmt_fetch(stmt) == 0) {
-        XPBlacklistUser entry;
-        entry.id = id;
-        entry.guild_id = gid;
-        entry.user_id = uid;
-        entry.added_by = added_by;
-        entry.reason = reason_null ? "" : std::string(reason, reason_len);
-        entry.created_at = std::chrono::system_clock::from_time_t(timestamp);
-        result.push_back(entry);
-    }
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return result;
-}
-
-// ============================================================================
-// COMBINED CHECK
-// ============================================================================
-
-bool should_block_xp(Database* db, uint64_t guild_id, uint64_t channel_id, uint64_t user_id, const std::vector<uint64_t>& user_role_ids) {
-    // Check channel blacklist
-    if (is_channel_blacklisted(db, guild_id, channel_id)) {
-        return true;
-    }
-    
-    // Check user blacklist
-    if (is_user_blacklisted(db, guild_id, user_id)) {
-        return true;
-    }
-    
-    // Check role blacklist
-    for (uint64_t role_id : user_role_ids) {
-        if (is_role_blacklisted(db, guild_id, role_id)) {
-            return true;
+        if (tt == "channel" && tid == channel_id) {
+            blocked = true;
+            break;
+        }
+        if (tt == "user" && tid == user_id) {
+            blocked = true;
+            break;
+        }
+        if (tt == "role") {
+            if (std::find(user_role_ids.begin(), user_role_ids.end(), tid) != user_role_ids.end()) {
+                blocked = true;
+                break;
+            }
         }
     }
-    
-    return false;
+
+    mysql_stmt_close(stmt);
+    db->get_pool()->release(conn);
+    return blocked;
 }
 
 } // namespace xp_blacklist_operations

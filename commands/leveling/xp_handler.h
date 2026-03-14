@@ -19,14 +19,14 @@ static ::std::mutex xp_cooldown_mutex;
 // Cached server leveling config — avoids a DB round-trip on every message
 // ---------------------------------------------------------------------------
 struct CachedLevelingConfig {
-    bronx::db::ServerLevelingConfig config;
+    bronx::db::GuildLevelingConfig config;
     std::chrono::steady_clock::time_point fetched_at;
 };
 static std::unordered_map<uint64_t, CachedLevelingConfig> leveling_config_cache;
 static std::mutex leveling_config_mutex;
 static constexpr auto LEVELING_CONFIG_TTL = std::chrono::seconds(60);
 
-inline std::optional<bronx::db::ServerLevelingConfig> get_cached_leveling_config(
+inline std::optional<bronx::db::GuildLevelingConfig> get_cached_leveling_config(
         bronx::db::Database* db, uint64_t guild_id) {
     {
         std::lock_guard<std::mutex> lock(leveling_config_mutex);
@@ -38,10 +38,10 @@ inline std::optional<bronx::db::ServerLevelingConfig> get_cached_leveling_config
         }
     }
     // Cache miss or expired — fetch from DB
-    auto cfg = db->get_server_leveling_config(guild_id);
+    auto cfg = db->get_guild_leveling_config(guild_id);
     if (!cfg) {
-        db->create_server_leveling_config(guild_id);
-        cfg = db->get_server_leveling_config(guild_id);
+        db->create_guild_leveling_config(guild_id);
+        cfg = db->get_guild_leveling_config(guild_id);
     }
     if (cfg) {
         std::lock_guard<std::mutex> lock(leveling_config_mutex);
@@ -170,7 +170,7 @@ inline void handle_message_xp(dpp::cluster& bot, const dpp::message_create_t& ev
     // -------------------------------------------------------------------
     if (g_xp_batch_writer) {
         g_xp_batch_writer->enqueue_global_xp(user_id, xp_to_award);
-        g_xp_batch_writer->enqueue_server_xp(user_id, guild_id, xp_to_award);
+        g_xp_batch_writer->enqueue_guild_xp(user_id, guild_id, xp_to_award);
         if (config->reward_coins && config->coins_per_message > 0) {
             g_xp_batch_writer->enqueue_coins(user_id, config->coins_per_message);
         }
@@ -182,7 +182,7 @@ inline void handle_message_xp(dpp::cluster& bot, const dpp::message_create_t& ev
         
         uint32_t new_server_level = 0;
         bool server_leveled_up = false;
-        db->add_server_xp(user_id, guild_id, xp_to_award, new_server_level, server_leveled_up);
+        db->add_xp(user_id, xp_to_award, new_server_level, server_leveled_up, guild_id);
         
         if (config->reward_coins && config->coins_per_message > 0) {
             db->update_wallet(user_id, config->coins_per_message);

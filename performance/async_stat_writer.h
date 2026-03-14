@@ -250,6 +250,21 @@ private:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ))");
 
+        // Guild activity log — tracks settings changes from Dashboard (DB) and Discord (DC)
+        execute(R"(CREATE TABLE IF NOT EXISTS guild_activity_log (
+            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            guild_id BIGINT UNSIGNED NOT NULL,
+            user_id BIGINT UNSIGNED NULL,
+            user_name VARCHAR(100) NULL,
+            user_avatar VARCHAR(255) NULL,
+            source ENUM('DB', 'DC') NOT NULL DEFAULT 'DC',
+            action VARCHAR(500) NOT NULL,
+            old_value VARCHAR(255) NULL,
+            new_value VARCHAR(255) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_guild_time (guild_id, created_at DESC)
+        ))");
+
         // User activity daily — tracks messages, voice, commands per user per day
         execute(R"(CREATE TABLE IF NOT EXISTS user_activity_daily (
             guild_id BIGINT UNSIGNED NOT NULL,
@@ -305,6 +320,7 @@ public:
         if (!running_.exchange(false)) return;
         cv_.notify_all();
         if (flush_thread_.joinable()) flush_thread_.join();
+        flush_voice_sessions();  // write accumulated voice minutes for active sessions
         flush();  // final drain
     }
 
@@ -357,15 +373,52 @@ public:
         pending_message_events_.push_back({guild_id, user_id, channel_id, event_type});
     }
 
-    // Buffer a guild voice event (join / leave)
+    // Buffer a guild voice event (join / leave) + track session duration
     void enqueue_voice_event(uint64_t guild_id, uint64_t user_id, uint64_t channel_id, const std::string& event_type) {
         if (verbose_) {
             std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[34m+voice\033[0m "
                       << event_type << " guild=" << guild_id << " user=" << user_id
                       << " ch=" << channel_id << "\n";
         }
+        // Track voice sessions for duration computation
+        {
+            std::lock_guard<std::mutex> lk(voice_session_mutex_);
+            auto key = std::make_pair(guild_id, user_id);
+            if (event_type == "join") {
+                voice_sessions_[key] = {channel_id, std::chrono::steady_clock::now()};
+            } else if (event_type == "leave") {
+                auto it = voice_sessions_.find(key);
+                if (it != voice_sessions_.end()) {
+                    auto dur = std::chrono::steady_clock::now() - it->second.join_time;
+                    int minutes = static_cast<int>(std::chrono::duration_cast<std::chrono::minutes>(dur).count());
+                    // Cap at 24h to filter out stale sessions
+                    if (minutes > 0 && minutes < 1440) {
+                        std::lock_guard<std::mutex> vlk(voice_minutes_mutex_);
+                        pending_voice_minutes_.push_back({guild_id, user_id, minutes});
+                    }
+                    voice_sessions_.erase(it);
+                }
+            }
+        }
         std::lock_guard<std::mutex> lk(voice_mutex_);
         pending_voice_events_.push_back({guild_id, user_id, channel_id, event_type});
+    }
+
+    // Flush all active voice sessions (call on shutdown to avoid losing in-progress time)
+    void flush_voice_sessions() {
+        std::lock_guard<std::mutex> lk(voice_session_mutex_);
+        auto now = std::chrono::steady_clock::now();
+        for (auto& [key, session] : voice_sessions_) {
+            int minutes = static_cast<int>(std::chrono::duration_cast<std::chrono::minutes>(now - session.join_time).count());
+            if (minutes > 0 && minutes < 1440) {
+                try {
+                    bronx::db::stats_operations::add_user_daily_voice_minutes(db_, key.first, key.second, minutes);
+                } catch (const std::exception& e) {
+                    std::cerr << "[async_stat] flush_voice_sessions failed: " << e.what() << "\n";
+                }
+            }
+        }
+        voice_sessions_.clear();
     }
 
     // Buffer a guild boost event (boost / unboost)
@@ -389,6 +442,19 @@ public:
         auto key = std::to_string(guild_id) + ":" + command_name + ":" + std::to_string(channel_id);
         pending_cmd_usage_[key] = {guild_id, command_name, channel_id,
                                    pending_cmd_usage_.count(key) ? pending_cmd_usage_[key].count + 1 : 1};
+    }
+
+    // Buffer an activity log entry (for Recent Activity dashboard feature)
+    // Source: 'DC' = Discord (bot command), 'DB' = Dashboard (web UI)
+    void enqueue_activity_log(uint64_t guild_id, uint64_t user_id, const std::string& user_name,
+                              const std::string& action, const std::string& old_value = "",
+                              const std::string& new_value = "") {
+        if (verbose_) {
+            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[32m+activity\033[0m "
+                      << action << " guild=" << guild_id << " user=" << user_name << "\n";
+        }
+        std::lock_guard<std::mutex> lk(activity_mutex_);
+        pending_activity_logs_.push_back({guild_id, user_id, user_name, action, old_value, new_value});
     }
 
     // Force an immediate flush
@@ -420,6 +486,26 @@ private:
         std::string event_type;
     };
 
+    struct VoiceSession {
+        uint64_t channel_id;
+        std::chrono::steady_clock::time_point join_time;
+    };
+
+    struct VoiceMinuteEntry {
+        uint64_t guild_id;
+        uint64_t user_id;
+        int minutes;
+    };
+
+    // Hash for pair<uint64_t, uint64_t> used by voice session map
+    struct UintPairHash {
+        std::size_t operator()(const std::pair<uint64_t, uint64_t>& p) const {
+            auto h1 = std::hash<uint64_t>{}(p.first);
+            auto h2 = std::hash<uint64_t>{}(p.second);
+            return h1 ^ (h2 << 32);
+        }
+    };
+
     struct BoostEvent {
         uint64_t guild_id;
         uint64_t user_id;
@@ -432,6 +518,15 @@ private:
         std::string command_name;
         uint64_t channel_id;
         int count;
+    };
+
+    struct ActivityLogEntry {
+        uint64_t guild_id;
+        uint64_t user_id;
+        std::string user_name;
+        std::string action;
+        std::string old_value;
+        std::string new_value;
     };
 
     // Key for stat deltas: (user_id, stat_name)
@@ -461,11 +556,20 @@ private:
     std::mutex voice_mutex_;
     std::vector<VoiceEvent> pending_voice_events_;
 
+    std::mutex voice_session_mutex_;
+    std::unordered_map<std::pair<uint64_t, uint64_t>, VoiceSession, UintPairHash> voice_sessions_;
+
+    std::mutex voice_minutes_mutex_;
+    std::vector<VoiceMinuteEntry> pending_voice_minutes_;
+
     std::mutex boost_mutex_;
     std::vector<BoostEvent> pending_boost_events_;
 
     std::mutex cmd_usage_mutex_;
     std::unordered_map<std::string, CmdUsageEntry> pending_cmd_usage_;
+
+    std::mutex activity_mutex_;
+    std::vector<ActivityLogEntry> pending_activity_logs_;
 
     bronx::db::Database* db_;
     RemoteStatsConnection remote_stats_;  // Aiven replication for dashboard
@@ -544,9 +648,24 @@ private:
             cmd_usage.swap(pending_cmd_usage_);
         }
 
+        // Flush voice minute entries (computed from session durations)
+        std::vector<VoiceMinuteEntry> voice_mins;
+        {
+            std::lock_guard<std::mutex> lk(voice_minutes_mutex_);
+            voice_mins.swap(pending_voice_minutes_);
+        }
+
+        // Flush activity log entries (for Recent Activity dashboard)
+        std::vector<ActivityLogEntry> activity_logs;
+        {
+            std::lock_guard<std::mutex> lk(activity_mutex_);
+            activity_logs.swap(pending_activity_logs_);
+        }
+
         // Nothing to do?
         if (logs.empty() && stats.empty() && member_events.empty() && msg_events.empty()
-            && voice_events.empty() && boost_events.empty() && cmd_usage.empty()) return;
+            && voice_events.empty() && boost_events.empty() && cmd_usage.empty() && voice_mins.empty()
+            && activity_logs.empty()) return;
 
         if (verbose_) {
             std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[1mflush\033[0m"
@@ -621,6 +740,10 @@ private:
         for (const auto& ev : msg_events) {
             try {
                 bronx::db::stats_operations::log_message_event(db_, ev.guild_id, ev.user_id, ev.channel_id, ev.event_type);
+                // Also update user_activity_daily for top-10 / leaderboard queries
+                if (ev.user_id != 0) {
+                    bronx::db::stats_operations::increment_user_daily_messages(db_, ev.guild_id, ev.user_id, ev.event_type);
+                }
             } catch (const std::exception& e) {
                 std::cerr << "[async_stat] log_message_event failed: " << e.what() << "\n";
             }
@@ -645,6 +768,15 @@ private:
                     + std::to_string(ev.guild_id) + ", " + std::to_string(ev.user_id) + ", "
                     + std::to_string(ev.channel_id) + ", '" + ev.event_type + "')";
                 remote_stats_.execute(sql);
+            }
+        }
+
+        // Write computed voice minutes to user_activity_daily
+        for (const auto& vm : voice_mins) {
+            try {
+                bronx::db::stats_operations::add_user_daily_voice_minutes(db_, vm.guild_id, vm.user_id, vm.minutes);
+            } catch (const std::exception& e) {
+                std::cerr << "[async_stat] add_user_daily_voice_minutes failed: " << e.what() << "\n";
             }
         }
 
@@ -680,8 +812,41 @@ private:
             }
         }
 
+        // Write activity log entries (source = 'DC' for Discord)
+        for (const auto& al : activity_logs) {
+            // Escape strings for SQL (basic escape for single quotes)
+            auto escape = [](const std::string& s) {
+                std::string out;
+                out.reserve(s.size() * 1.1);
+                for (char c : s) {
+                    if (c == '\'') out += "''";
+                    else if (c == '\\') out += "\\\\";
+                    else out += c;
+                }
+                return out;
+            };
+
+            std::string sql = "INSERT INTO guild_activity_log (guild_id, user_id, user_name, source, action, old_value, new_value) VALUES ("
+                + std::to_string(al.guild_id) + ", "
+                + std::to_string(al.user_id) + ", '"
+                + escape(al.user_name) + "', 'DC', '"
+                + escape(al.action) + "', "
+                + (al.old_value.empty() ? "NULL" : "'" + escape(al.old_value) + "'") + ", "
+                + (al.new_value.empty() ? "NULL" : "'" + escape(al.new_value) + "'") + ")";
+
+            try {
+                db_->execute(sql);
+            } catch (const std::exception& e) {
+                std::cerr << "[async_stat] activity_log insert failed: " << e.what() << "\n";
+            }
+            // Replicate to Aiven for dashboard (where the web UI queries from)
+            if (remote_stats_.is_connected()) {
+                remote_stats_.execute(sql);
+            }
+        }
+
         if (!logs.empty() || !stats.empty() || !member_events.empty() || !msg_events.empty()
-            || !voice_events.empty() || !boost_events.empty() || !cmd_usage.empty()) {
+            || !voice_events.empty() || !boost_events.empty() || !cmd_usage.empty() || !activity_logs.empty()) {
             // Only log occasionally to avoid spam
             static std::atomic<uint64_t> flush_count{0};
             if (++flush_count % 20 == 1) {

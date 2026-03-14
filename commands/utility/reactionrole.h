@@ -145,7 +145,7 @@ inline void sync_existing_reactions(dpp::cluster& bot, uint64_t message_id, uint
 inline void load_persistent_reaction_roles(dpp::cluster& bot) {
     if (!rr_db) return;
     // make sure the table exists (migrations may not have been applied)
-    rr_db->execute("CREATE TABLE IF NOT EXISTS reaction_roles ("
+    rr_db->execute("CREATE TABLE IF NOT EXISTS guild_reaction_roles ("
                    "guild_id BIGINT UNSIGNED NOT NULL,"
                    "message_id BIGINT UNSIGNED NOT NULL,"
                    "channel_id BIGINT UNSIGNED NOT NULL,"
@@ -161,19 +161,19 @@ inline void load_persistent_reaction_roles(dpp::cluster& bot) {
                    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
     // add guild_id column if it doesn't exist (for tables created before this fix)
     // use a try-catch via execute which will silently fail if column already exists
-    rr_db->execute("ALTER TABLE reaction_roles ADD COLUMN guild_id BIGINT UNSIGNED NOT NULL DEFAULT 0 FIRST;");
-    rr_db->execute("CREATE INDEX idx_guild ON reaction_roles (guild_id);");
+    rr_db->execute("ALTER TABLE guild_reaction_roles ADD COLUMN guild_id BIGINT UNSIGNED NOT NULL DEFAULT 0 FIRST;");
+    rr_db->execute("CREATE INDEX idx_guild ON guild_reaction_roles (guild_id);");
     // make sure the column charset is utf8mb4 as well (existing tables may have
     // latin1 defaults). this will convert any existing data in-place.
-    rr_db->execute("ALTER TABLE reaction_roles CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;");
+    rr_db->execute("ALTER TABLE guild_reaction_roles CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;");
     // also ensure the specific column is set correctly (some MySQL versions keep
     // the old charset on the column even after a table conversion)
-    rr_db->execute("ALTER TABLE reaction_roles MODIFY emoji_raw VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;");
+    rr_db->execute("ALTER TABLE guild_reaction_roles MODIFY emoji_raw VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;");
     // sanitize any legacy values in the table by stripping all <,>, and : characters from the ends
-    rr_db->execute("UPDATE reaction_roles SET emoji_raw = TRIM(BOTH ':' FROM TRIM(BOTH '<>' FROM emoji_raw))");
+    rr_db->execute("UPDATE guild_reaction_roles SET emoji_raw = TRIM(BOTH ':' FROM TRIM(BOTH '<>' FROM emoji_raw))");
     // remove any duplicates that might result from the normalization above
     rr_db->execute(R"SQL(
-        DELETE r1 FROM reaction_roles r1
+        DELETE r1 FROM guild_reaction_roles r1
         INNER JOIN reaction_roles r2
           ON r1.message_id = r2.message_id
          AND r1.emoji_raw = r2.emoji_raw

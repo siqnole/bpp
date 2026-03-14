@@ -47,8 +47,9 @@ void register_antispam(dpp::cluster& bot) {
             }
         }
 
-        // If whitelisting is enabled and the user/channel/role is whitelisted (and not blacklisted), skip checks
-        if (is_whitelisted && !is_blacklisted) {
+        // If whitelisting is enabled and the user/channel/role is whitelisted, skip checks
+        // Whitelist overrides blacklist — if you're whitelisted, you're always exempt
+        if (is_whitelisted) {
             return;
         }
 

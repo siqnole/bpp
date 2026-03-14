@@ -507,7 +507,7 @@ inline void send_completion(dpp::cluster& bot, const dpp::button_click_t& event,
         // Apply module toggles using direct SQL update
         auto conn = db->get_pool()->acquire();
         if (conn) {
-            std::string query = "UPDATE guild_economy_settings SET "
+            std::string query = "UPDATE guild_settings SET "
                               "allow_gambling = " + std::string(state.config["gambling"] == "on" ? "1" : "0") + ", "
                               "allow_fishing = " + std::string(state.config["fishing"] == "on" ? "1" : "0") + ", "
                               "allow_trading = " + std::string(state.config["trading"] == "on" ? "1" : "0") + ", "
@@ -519,15 +519,15 @@ inline void send_completion(dpp::cluster& bot, const dpp::button_click_t& event,
     }
     
     // Configure leveling
-    auto leveling_config = db->get_server_leveling_config(guild_id);
+    auto leveling_config = db->get_guild_leveling_config(guild_id);
     if (!leveling_config) {
-        db->create_server_leveling_config(guild_id);
-        leveling_config = db->get_server_leveling_config(guild_id);
+        db->create_guild_leveling_config(guild_id);
+        leveling_config = db->get_guild_leveling_config(guild_id);
     }
     
     if (leveling_config) {
         leveling_config->enabled = leveling_enabled;
-        db->update_server_leveling_config(*leveling_config);
+        db->update_guild_leveling_config(*leveling_config);
     }
     
     // Apply moderation settings

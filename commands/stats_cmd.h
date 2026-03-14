@@ -329,10 +329,10 @@ inline void handle_stats_summary(dpp::cluster& bot, bronx::db::Database* db,
             std::string gt = gtype.empty() ? "line" : gtype;
             trend_img = render_series_as(gt, "server overview (" + std::to_string(days) + "d)", labels,
                 {
-                    {"messages",     ch::COL_ACCENT, msg_vals},
-                    {"active users", ch::COL_CYAN,   active_vals},
-                    {"new members",  ch::COL_GREEN,  newmem_vals},
-                    {"commands",     ch::COL_YELLOW, cmd_vals}
+                    {"messages",     ch::COL_ACCENT, msg_vals,    1},
+                    {"active users", ch::COL_CYAN,   active_vals, 0},
+                    {"new members",  ch::COL_GREEN,  newmem_vals, 0},
+                    {"commands",     ch::COL_YELLOW, cmd_vals,    0}
                 });
         }
     }
@@ -486,8 +486,21 @@ inline void handle_stats_messages(dpp::cluster& bot, bronx::db::Database* db,
     reply_fn(msg);
 }
 
+// ── helper: range label ────────────────────────────────────────
+inline std::string range_label(int days) {
+    if (days == 0) return "today";
+    return "last " + std::to_string(days) + " days";
+}
+
+// ── helper: format minutes as "Xh Ym" ─────────────────────────
+inline std::string fmt_duration(int64_t minutes) {
+    if (minutes >= 60)
+        return std::to_string(minutes / 60) + "h " + std::to_string(minutes % 60) + "m";
+    return std::to_string(minutes) + "m";
+}
+
 // ================================================================
-//  stats voice — voice joins & leaves line chart
+//  stats voice — voice activity with session durations
 // ================================================================
 inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
                                uint64_t guild_id, uint64_t channel_id,
@@ -505,6 +518,7 @@ inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
         return;
     }
 
+    // Build daily join/leave series
     std::vector<std::string> labels;
     std::vector<double> join_vals, leave_vals;
     int64_t total_joins = 0, total_leaves = 0;
@@ -516,23 +530,48 @@ inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
         total_leaves += v.leaves;
     }
 
+    // Build daily voice-minutes series (aligned with join/leave labels)
+    auto daily_mins = sq::daily_voice_minutes_series(db, guild_id, days);
+    std::unordered_map<std::string, int64_t> mins_by_date;
+    for (auto& dm : daily_mins) mins_by_date[dm.date] = dm.minutes;
+    std::vector<double> min_vals;
+    for (auto& v : voice) {
+        auto it = mins_by_date.find(v.date);
+        min_vals.push_back(it != mins_by_date.end() ? (double)it->second : 0.0);
+    }
+
     std::string gt = gtype.empty() ? "line" : gtype;
     std::string img = render_series_as(gt,
         "voice stats (" + std::to_string(days) + "d)",
         labels,
         {
-            {"joins",  ch::COL_GREEN, join_vals},
-            {"leaves", ch::COL_RED,   leave_vals}
+            {"joins",   ch::COL_GREEN, join_vals},
+            {"leaves",  ch::COL_RED,   leave_vals},
+            {"vc mins", ch::COL_CYAN,  min_vals}
         });
 
+    // Aggregate stats
     auto total_sessions = sq::total_voice_sessions(db, guild_id, days);
     auto unique_users   = sq::unique_voice_users(db, guild_id, days);
+    auto voice_mins     = sq::total_voice_minutes(db, guild_id, days);
+    int64_t avg_session  = total_sessions > 0 ? voice_mins / total_sessions : 0;
 
     std::string desc = "**voice stats** -- last " + std::to_string(days) + " days\n";
+    desc += "total time: **" + fmt_duration(voice_mins) + "**\n";
+    desc += "avg session: **" + fmt_duration(avg_session) + "**\n";
     desc += "total sessions: **" + ch::fmt_num(total_sessions) + "**\n";
     desc += "unique users: **" + ch::fmt_num(unique_users) + "**\n";
-    desc += "total joins: **" + ch::fmt_num(total_joins) + "**\n";
-    desc += "total leaves: **" + ch::fmt_num(total_leaves) + "**";
+    desc += "total joins: **" + ch::fmt_num(total_joins) + "** · leaves: **" + ch::fmt_num(total_leaves) + "**";
+
+    // Top voice users by duration
+    auto top_vu = sq::top_voice_users(db, guild_id, days, 5);
+    if (!top_vu.empty()) {
+        desc += "\n\n**top users by vc time**\n";
+        for (size_t i = 0; i < top_vu.size(); ++i) {
+            desc += "`" + std::to_string(i + 1) + ".` <@" + std::to_string(top_vu[i].user_id) + "> -- **"
+                  + fmt_duration(top_vu[i].total_minutes) + "** (" + ch::fmt_num(top_vu[i].sessions) + " sessions)\n";
+        }
+    }
 
     auto embed = bronx::create_embed(desc);
     if (!img.empty()) embed.set_image("attachment://voice.png");
@@ -692,20 +731,6 @@ inline void handle_stats_channel(dpp::cluster& bot, bronx::db::Database* db,
     reply_fn(msg);
 }
 
-
-// ── helper: range label ────────────────────────────────────────
-inline std::string range_label(int days) {
-    if (days == 0) return "today";
-    return "last " + std::to_string(days) + " days";
-}
-
-// ── helper: format minutes as "Xh Ym" ─────────────────────────
-inline std::string fmt_duration(int64_t minutes) {
-    if (minutes >= 60)
-        return std::to_string(minutes / 60) + "h " + std::to_string(minutes % 60) + "m";
-    return std::to_string(minutes) + "m";
-}
-
 // ================================================================
 //  stats top — top 10 users by messages, VC hours, commands
 //  top_filter: "all", "messages", "voice", or "commands"
@@ -836,9 +861,9 @@ inline void handle_stats_user(dpp::cluster& bot, bronx::db::Database* db,
         chart_img = ch::render_line_chart(
             "daily activity — " + name, labels,
             {
-                {"messages", ch::COL_ACCENT, msg_vals},
-                {"commands", ch::COL_GREEN,  cmd_vals},
-                {"VC mins",  ch::COL_CYAN,   vc_vals}
+                {"messages", ch::COL_ACCENT, msg_vals, 1},
+                {"commands", ch::COL_GREEN,  cmd_vals, 0},
+                {"VC mins",  ch::COL_CYAN,   vc_vals,  0}
             });
     }
 
