@@ -4,6 +4,7 @@
 #include "../database/core/database.h"
 #include "../database/operations/economy/server_economy_operations.h"
 #include "../database/operations/moderation/permission_operations.h"
+#include "../performance/async_stat_writer.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <string>
@@ -58,6 +59,18 @@ inline Command* create_servereconomy_command(Database* db) {
                 std::string mode = std::get<std::string>(subcommand.options[0].value);
 
                 if (set_economy_mode(db, guild_id, mode)) {
+                    // Log activity for dashboard
+                    if (bronx::perf::g_stat_writer) {
+                        std::string user_name = event.command.usr.global_name.empty()
+                            ? event.command.usr.username
+                            : event.command.usr.global_name;
+                        std::string action = mode == "server"
+                            ? "Switched to <b>server economy</b> mode"
+                            : "Switched to <b>global economy</b> mode";
+                        bronx::perf::g_stat_writer->enqueue_activity_log(
+                            guild_id, event.command.usr.id, user_name, action);
+                    }
+
                     dpp::embed embed = dpp::embed()
                         .set_color(bronx::COLOR_SUCCESS)
                         .set_title(bronx::EMOJI_CHECK + " Economy Mode Updated")
