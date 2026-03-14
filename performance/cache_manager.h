@@ -49,17 +49,21 @@ private:
         auto scope_it = scopes.find(name);
         if (scope_it != scopes.end()) {
             const auto& entries = scope_it->second;
-            // 1) Check exclusive
+            // 1) Check exclusive — if ANY exclusive entries exist, caller must match at least one
+            bool has_exclusive = false;
+            bool matched_exclusive = false;
             for (const auto& e : entries) {
                 if (e.exclusive && e.enabled) {
-                    if (e.scope_type == "user" && user_id == e.scope_id) return true;
-                    if (e.scope_type == "channel" && channel_id == e.scope_id) return true;
+                    has_exclusive = true;
+                    if (e.scope_type == "user" && user_id == e.scope_id) { matched_exclusive = true; break; }
+                    if (e.scope_type == "channel" && channel_id == e.scope_id) { matched_exclusive = true; break; }
                     if (e.scope_type == "role") {
-                        for (uint64_t r : roles) { if (r == e.scope_id) return true; }
+                        for (uint64_t r : roles) { if (r == e.scope_id) { matched_exclusive = true; break; } }
+                        if (matched_exclusive) break;
                     }
-                    return false; // exclusive exists but caller doesn't match
                 }
             }
+            if (has_exclusive) return matched_exclusive;
             // 2) User override
             if (user_id != 0) {
                 for (const auto& e : entries) {

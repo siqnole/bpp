@@ -8,6 +8,7 @@
 #include "../database/operations/economy/server_economy_operations.h"
 #include "../embed_style.h"
 #include "../command.h"
+#include "../performance/async_stat_writer.h"
 #include "quiet_moderation/antispam_config.h"
 #include "quiet_moderation/text_filter_config.h"
 #include "quiet_moderation/url_guard.h"
@@ -630,6 +631,29 @@ inline void send_completion(dpp::cluster& bot, const dpp::button_click_t& event,
     msg.add_embed(embed);
 
     event.reply(dpp::ir_update_message, msg);
+
+    // Log activity for Recent Activity dashboard
+    if (bronx::perf::g_stat_writer) {
+        std::string user_name = event.command.usr.global_name.empty() 
+            ? event.command.usr.username 
+            : event.command.usr.global_name;
+        
+        // Log the setup completion with key settings
+        std::stringstream action;
+        action << "Completed initial setup: ";
+        action << "<b>" << (economy_mode == "server" ? "server economy" : "global economy") << "</b>, ";
+        action << "leveling <b>" << (leveling_enabled ? "on" : "off") << "</b>";
+        if (any_moderation) {
+            action << ", moderation <b>on</b>";
+        }
+        
+        bronx::perf::g_stat_writer->enqueue_activity_log(
+            guild_id,
+            event.command.usr.id,
+            user_name,
+            action.str()
+        );
+    }
 
     // Clean up setup state
     active_setups.erase(guild_id);

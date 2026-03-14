@@ -81,11 +81,11 @@ bool Database::is_guild_command_enabled(uint64_t guild_id, const std::string& co
                                            const std::vector<uint64_t>& roles) {
     auto conn = pool_->acquire();
     
-    // FIRST: Check if there's an exclusive scope setting
-    // Exclusive means ONLY that scope can use it, all others are blocked
+    // FIRST: Check ALL exclusive scope settings
+    // If any exclusive entries exist, caller must match at least one
     {
         const char* exclusive_query = "SELECT scope_type, scope_id FROM guild_command_scope_settings "
-                                     "WHERE guild_id = ? AND command = ? AND exclusive = TRUE AND enabled = TRUE LIMIT 1";
+                                     "WHERE guild_id = ? AND command = ? AND exclusive = TRUE AND enabled = TRUE";
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (mysql_stmt_prepare(stmt, exclusive_query, strlen(exclusive_query)) == 0) {
             MYSQL_BIND bind[2];
@@ -114,21 +114,25 @@ bool Database::is_guild_command_enabled(uint64_t guild_id, const std::string& co
                 result[1].is_unsigned = 1;
                 mysql_stmt_bind_result(stmt, result);
                 
-                if (mysql_stmt_fetch(stmt) == 0) {
-                    // Found an exclusive setting - ONLY allow if user matches the exclusive scope
+                mysql_stmt_store_result(stmt);
+                bool has_exclusive = false;
+                bool matched_exclusive = false;
+                while (mysql_stmt_fetch(stmt) == 0) {
+                    has_exclusive = true;
                     std::string exclusive_scope(scope_type_buf, scope_type_length);
-                    mysql_stmt_close(stmt);
-                    pool_->release(conn);
-                    
-                    if (exclusive_scope == "user" && user_id == exclusive_scope_id) return true;
-                    if (exclusive_scope == "channel" && channel_id == exclusive_scope_id) return true;
+                    if (exclusive_scope == "user" && user_id == exclusive_scope_id) { matched_exclusive = true; break; }
+                    if (exclusive_scope == "channel" && channel_id == exclusive_scope_id) { matched_exclusive = true; break; }
                     if (exclusive_scope == "role") {
                         for (uint64_t r : roles) {
-                            if (r == exclusive_scope_id) return true;
+                            if (r == exclusive_scope_id) { matched_exclusive = true; break; }
                         }
+                        if (matched_exclusive) break;
                     }
-                    // Not in the exclusive scope - deny
-                    return false;
+                }
+                if (has_exclusive) {
+                    mysql_stmt_close(stmt);
+                    pool_->release(conn);
+                    return matched_exclusive;
                 }
             }
         }
@@ -358,11 +362,11 @@ bool Database::is_guild_module_enabled(uint64_t guild_id, const std::string& mod
                                           const std::vector<uint64_t>& roles) {
     auto conn = pool_->acquire();
     
-    // FIRST: Check if there's an exclusive scope setting
-    // Exclusive means ONLY that scope can use it, all others are blocked
+    // FIRST: Check ALL exclusive scope settings
+    // If any exclusive entries exist, caller must match at least one
     {
         const char* exclusive_query = "SELECT scope_type, scope_id FROM guild_module_scope_settings "
-                                     "WHERE guild_id = ? AND module = ? AND exclusive = TRUE AND enabled = TRUE LIMIT 1";
+                                     "WHERE guild_id = ? AND module = ? AND exclusive = TRUE AND enabled = TRUE";
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (mysql_stmt_prepare(stmt, exclusive_query, strlen(exclusive_query)) == 0) {
             MYSQL_BIND bind[2];
@@ -391,21 +395,25 @@ bool Database::is_guild_module_enabled(uint64_t guild_id, const std::string& mod
                 result[1].is_unsigned = 1;
                 mysql_stmt_bind_result(stmt, result);
                 
-                if (mysql_stmt_fetch(stmt) == 0) {
-                    // Found an exclusive setting - ONLY allow if user matches the exclusive scope
+                mysql_stmt_store_result(stmt);
+                bool has_exclusive = false;
+                bool matched_exclusive = false;
+                while (mysql_stmt_fetch(stmt) == 0) {
+                    has_exclusive = true;
                     std::string exclusive_scope(scope_type_buf, scope_type_length);
-                    mysql_stmt_close(stmt);
-                    pool_->release(conn);
-                    
-                    if (exclusive_scope == "user" && user_id == exclusive_scope_id) return true;
-                    if (exclusive_scope == "channel" && channel_id == exclusive_scope_id) return true;
+                    if (exclusive_scope == "user" && user_id == exclusive_scope_id) { matched_exclusive = true; break; }
+                    if (exclusive_scope == "channel" && channel_id == exclusive_scope_id) { matched_exclusive = true; break; }
                     if (exclusive_scope == "role") {
                         for (uint64_t r : roles) {
-                            if (r == exclusive_scope_id) return true;
+                            if (r == exclusive_scope_id) { matched_exclusive = true; break; }
                         }
+                        if (matched_exclusive) break;
                     }
-                    // Not in the exclusive scope - deny
-                    return false;
+                }
+                if (has_exclusive) {
+                    mysql_stmt_close(stmt);
+                    pool_->release(conn);
+                    return matched_exclusive;
                 }
             }
         }
