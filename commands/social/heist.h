@@ -101,7 +101,7 @@ static void ensure_heist_tables(Database* db) {
     if (g_heist_tables_created) return;
     
     db->execute(
-        "CREATE TABLE IF NOT EXISTS heists ("
+        "CREATE TABLE IF NOT EXISTS guild_heists ("
         "  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
         "  channel_id BIGINT UNSIGNED NOT NULL,"
         "  guild_id BIGINT UNSIGNED NOT NULL,"
@@ -116,7 +116,7 @@ static void ensure_heist_tables(Database* db) {
     );
     
     db->execute(
-        "CREATE TABLE IF NOT EXISTS heist_participants ("
+        "CREATE TABLE IF NOT EXISTS guild_heist_participants ("
         "  heist_id BIGINT UNSIGNED NOT NULL,"
         "  user_id BIGINT UNSIGNED NOT NULL,"
         "  role VARCHAR(20) NOT NULL DEFAULT 'muscle',"

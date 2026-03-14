@@ -39,55 +39,42 @@ uint64_t Database::calculate_xp_for_next_level(uint32_t current_level) {
     return leveling_operations::calculate_xp_for_next_level(current_level);
 }
 
-// User XP operations
-std::optional<UserXP> Database::get_user_xp(uint64_t user_id) {
-    return leveling_operations::get_user_xp(this, user_id);
+// User XP operations (guild_id=0 → global XP)
+std::optional<UserXP> Database::get_user_xp(uint64_t user_id, uint64_t guild_id) {
+    return leveling_operations::get_user_xp(this, user_id, guild_id);
 }
 
-bool Database::create_user_xp(uint64_t user_id) {
-    return leveling_operations::create_user_xp(this, user_id);
+bool Database::create_user_xp(uint64_t user_id, uint64_t guild_id) {
+    return leveling_operations::create_user_xp(this, user_id, guild_id);
 }
 
-bool Database::add_xp(uint64_t user_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up) {
-    return leveling_operations::add_xp(this, user_id, xp_amount, new_level, leveled_up);
+bool Database::add_xp(uint64_t user_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up, uint64_t guild_id) {
+    return leveling_operations::add_xp(this, user_id, xp_amount, new_level, leveled_up, guild_id);
 }
 
-bool Database::set_xp(uint64_t user_id, uint64_t xp_amount) {
-    return leveling_operations::set_xp(this, user_id, xp_amount);
+bool Database::set_xp(uint64_t user_id, uint64_t xp_amount, uint64_t guild_id) {
+    return leveling_operations::set_xp(this, user_id, xp_amount, guild_id);
 }
 
-// Server XP operations  
-std::optional<ServerXP> Database::get_server_xp(uint64_t user_id, uint64_t guild_id) {
-    return leveling_operations::get_server_xp(this, user_id, guild_id);
+bool Database::reset_guild_xp(uint64_t guild_id) {
+    return leveling_operations::reset_guild_xp(this, guild_id);
 }
 
-bool Database::create_server_xp(uint64_t user_id, uint64_t guild_id) {
-    return leveling_operations::create_server_xp(this, user_id, guild_id);
+bool Database::reset_user_guild_xp(uint64_t user_id, uint64_t guild_id) {
+    return leveling_operations::reset_user_guild_xp(this, user_id, guild_id);
 }
 
-bool Database::add_server_xp(uint64_t user_id, uint64_t guild_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up) {
-    return leveling_operations::add_server_xp(this, user_id, guild_id, xp_amount, new_level, leveled_up);
+// Guild leveling configuration
+std::optional<GuildLevelingConfig> Database::get_guild_leveling_config(uint64_t guild_id) {
+    return leveling_operations::get_guild_config(this, guild_id);
 }
 
-bool Database::reset_server_xp(uint64_t guild_id) {
-    return leveling_operations::reset_server_xp(this, guild_id);
+bool Database::create_guild_leveling_config(uint64_t guild_id) {
+    return leveling_operations::create_guild_config(this, guild_id);
 }
 
-bool Database::reset_user_server_xp(uint64_t user_id, uint64_t guild_id) {
-    return leveling_operations::reset_user_server_xp(this, user_id, guild_id);
-}
-
-// Server leveling configuration
-std::optional<ServerLevelingConfig> Database::get_server_leveling_config(uint64_t guild_id) {
-    return leveling_operations::get_server_config(this, guild_id);
-}
-
-bool Database::create_server_leveling_config(uint64_t guild_id) {
-    return leveling_operations::create_server_config(this, guild_id);
-}
-
-bool Database::update_server_leveling_config(const ServerLevelingConfig& config) {
-    return leveling_operations::update_server_config(this, config);
+bool Database::update_guild_leveling_config(const GuildLevelingConfig& config) {
+    return leveling_operations::update_guild_config(this, config);
 }
 
 // Level roles
@@ -131,14 +118,14 @@ int Database::get_user_server_xp_rank(uint64_t user_id, uint64_t guild_id) {
 // Namespace function implementations
 namespace leveling_operations {
 
-std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id) {
+std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) {
         db->log_error("get_user_xp acquire failed");
         return {};
     }
     
-    const char* query = "SELECT user_id, total_xp, level, last_xp_gain FROM user_xp WHERE user_id = ?";
+    const char* query = "SELECT user_id, guild_id, total_xp, level, last_xp_gain FROM user_xp WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -148,10 +135,14 @@ std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id) {
         return {};
     }
     
-    MYSQL_BIND bind[1];
+    MYSQL_BIND bind[2];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     
@@ -162,10 +153,10 @@ std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id) {
         return {};
     }
     
-    MYSQL_BIND resbind[4];
+    MYSQL_BIND resbind[5];
     memset(resbind, 0, sizeof(resbind));
     
-    uint64_t uid, total_xp;
+    uint64_t uid, gid, total_xp;
     uint32_t level;
     MYSQL_TIME last_msg;
     my_bool last_msg_null;
@@ -174,14 +165,17 @@ std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id) {
     resbind[0].buffer = &uid;
     resbind[0].is_unsigned = 1;
     resbind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[1].buffer = &total_xp;
+    resbind[1].buffer = &gid;
     resbind[1].is_unsigned = 1;
-    resbind[2].buffer_type = MYSQL_TYPE_LONG;
-    resbind[2].buffer = &level;
+    resbind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    resbind[2].buffer = &total_xp;
     resbind[2].is_unsigned = 1;
-    resbind[3].buffer_type = MYSQL_TYPE_DATETIME;
-    resbind[3].buffer = &last_msg;
-    resbind[3].is_null = &last_msg_null;
+    resbind[3].buffer_type = MYSQL_TYPE_LONG;
+    resbind[3].buffer = &level;
+    resbind[3].is_unsigned = 1;
+    resbind[4].buffer_type = MYSQL_TYPE_DATETIME;
+    resbind[4].buffer = &last_msg;
+    resbind[4].is_null = &last_msg_null;
     
     mysql_stmt_bind_result(stmt, resbind);
     
@@ -189,6 +183,7 @@ std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id) {
     if (mysql_stmt_fetch(stmt) == 0) {
         UserXP uxp;
         uxp.user_id = uid;
+        uxp.guild_id = gid;
         uxp.total_xp = total_xp;
         uxp.level = level;
         
@@ -211,14 +206,14 @@ std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id) {
     return result;
 }
 
-bool create_user_xp(Database* db, uint64_t user_id) {
+bool create_user_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) {
         db->log_error("create_user_xp acquire failed");
         return false;
     }
     
-    const char* query = "INSERT INTO user_xp (user_id, total_xp, level) VALUES (?, 0, 1) ON DUPLICATE KEY UPDATE user_id=user_id";
+    const char* query = "INSERT INTO user_xp (user_id, guild_id, total_xp, level) VALUES (?, ?, 0, 1) ON DUPLICATE KEY UPDATE user_id=user_id";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -228,10 +223,14 @@ bool create_user_xp(Database* db, uint64_t user_id) {
         return false;
     }
     
-    MYSQL_BIND bind[1];
+    MYSQL_BIND bind[2];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
@@ -241,11 +240,11 @@ bool create_user_xp(Database* db, uint64_t user_id) {
     return success;
 }
 
-bool add_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up) {
-    auto current = get_user_xp(db, user_id);
+bool add_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up, uint64_t guild_id) {
+    auto current = get_user_xp(db, user_id, guild_id);
     if (!current) {
-        create_user_xp(db, user_id);
-        current = get_user_xp(db, user_id);
+        create_user_xp(db, user_id, guild_id);
+        current = get_user_xp(db, user_id, guild_id);
         if (!current) return false;
     }
     
@@ -260,7 +259,7 @@ bool add_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint32_t& new_le
     new_level = calculate_level_from_xp(new_xp);
     leveled_up = new_level > old_level;
     
-    const char* query = "UPDATE user_xp SET total_xp = ?, level = ?, last_xp_gain = NOW() WHERE user_id = ?";
+    const char* query = "UPDATE user_xp SET total_xp = ?, level = ?, last_xp_gain = NOW() WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -270,14 +269,20 @@ bool add_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint32_t& new_le
         return false;
     }
     
-    MYSQL_BIND bind[3];
+    MYSQL_BIND bind[4];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&new_xp;
+    bind[0].is_unsigned = 1;
     bind[1].buffer_type = MYSQL_TYPE_LONG;
     bind[1].buffer = (char*)&new_level;
+    bind[1].is_unsigned = 1;
     bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[2].buffer = (char*)&user_id;
+    bind[2].is_unsigned = 1;
+    bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[3].buffer = (char*)&guild_id;
+    bind[3].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
@@ -287,7 +292,7 @@ bool add_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint32_t& new_le
     return success;
 }
 
-bool set_xp(Database* db, uint64_t user_id, uint64_t xp_amount) {
+bool set_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) {
         db->log_error("set_xp acquire failed");
@@ -296,7 +301,7 @@ bool set_xp(Database* db, uint64_t user_id, uint64_t xp_amount) {
     
     uint32_t level = calculate_level_from_xp(xp_amount);
     
-    const char* query ="UPDATE user_xp SET total_xp = ?, level = ? WHERE user_id = ?";
+    const char* query = "UPDATE user_xp SET total_xp = ?, level = ? WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -306,166 +311,20 @@ bool set_xp(Database* db, uint64_t user_id, uint64_t xp_amount) {
         return false;
     }
     
-    MYSQL_BIND bind[3];
-    memset(bind, 0, sizeof(bind));
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&xp_amount;
-    bind[1].buffer_type = MYSQL_TYPE_LONG;
-    bind[1].buffer = (char*)&level;
-    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[2].buffer = (char*)&user_id;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    bool success = mysql_stmt_execute(stmt) == 0;
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return success;
-}
-
-// Implement remaining operations
-std::optional<ServerXP> get_server_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return {};
-    
-    const char* query = "SELECT user_id, guild_id, server_xp, server_level, last_server_xp_gain FROM server_xp WHERE user_id = ? AND guild_id = ?";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return {};
-    }
-    
-    MYSQL_BIND bind[2];
-    memset(bind, 0, sizeof(bind));
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&user_id;
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&guild_id;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    if (mysql_stmt_execute(stmt) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return {};
-    }
-    
-    MYSQL_BIND resbind[5];
-    memset(resbind, 0, sizeof(resbind));
-    
-    uint64_t uid, gid, sxp;
-    uint32_t slvl;
-    MYSQL_TIME last_msg;
-    my_bool last_msg_null;
-    
-    resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[0].buffer = &uid;
-    resbind[0].is_unsigned = 1;
-    resbind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[1].buffer = &gid;
-    resbind[1].is_unsigned = 1;
-    resbind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    resbind[2].buffer = &sxp;
-    resbind[2].is_unsigned = 1;
-    resbind[3].buffer_type = MYSQL_TYPE_LONG;
-    resbind[3].buffer = &slvl;
-    resbind[3].is_unsigned = 1;
-    resbind[4].buffer_type = MYSQL_TYPE_DATETIME;
-    resbind[4].buffer = &last_msg;
-    resbind[4].is_null = &last_msg_null;
-    
-    mysql_stmt_bind_result(stmt, resbind);
-    
-    std::optional<ServerXP> result;
-    if (mysql_stmt_fetch(stmt) == 0) {
-        ServerXP sx;
-        sx.user_id = uid;
-        sx.guild_id = gid;
-        sx.server_xp = sxp;
-        sx.server_level = slvl;
-        
-        if (!last_msg_null) {
-            std::tm tm = {0};
-            tm.tm_year = last_msg.year - 1900;
-            tm.tm_mon = last_msg.month - 1;
-            tm.tm_mday = last_msg.day;
-            tm.tm_hour = last_msg.hour;
-            tm.tm_min = last_msg.minute;
-            tm.tm_sec = last_msg.second;
-            sx.last_message_xp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
-        }
-        result = sx;
-    }
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return result;
-}
-
-bool create_server_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return false;
-    
-    const char* query = "INSERT INTO server_xp (user_id, guild_id, server_xp, server_level) VALUES (?, ?, 0, 1) ON DUPLICATE KEY UPDATE user_id=user_id";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
-    MYSQL_BIND bind[2];
-    memset(bind, 0, sizeof(bind));
-    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&user_id;
-    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&guild_id;
-    
-    mysql_stmt_bind_param(stmt, bind);
-    bool success = mysql_stmt_execute(stmt) == 0;
-    
-    mysql_stmt_close(stmt);
-    db->get_pool()->release(conn);
-    return success;
-}
-
-bool add_server_xp(Database* db, uint64_t user_id, uint64_t guild_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up) {
-    auto current = get_server_xp(db, user_id, guild_id);
-    if (!current) {
-        create_server_xp(db, user_id, guild_id);
-        current = get_server_xp(db, user_id, guild_id);
-        if (!current) return false;
-    }
-    
-    auto conn = db->get_pool()->acquire();
-    if (!conn) return false;
-    
-    uint64_t new_xp = current->server_xp + xp_amount;
-    uint32_t old_level = current->server_level;
-    new_level = calculate_level_from_xp(new_xp);
-    leveled_up = new_level > old_level;
-    
-    const char* query = "UPDATE server_xp SET server_xp = ?, server_level = ?, last_server_xp_gain = NOW() WHERE user_id = ? AND guild_id = ?";
-    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-    
-    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        return false;
-    }
-    
     MYSQL_BIND bind[4];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[0].buffer = (char*)&new_xp;
+    bind[0].buffer = (char*)&xp_amount;
+    bind[0].is_unsigned = 1;
     bind[1].buffer_type = MYSQL_TYPE_LONG;
-    bind[1].buffer = (char*)&new_level;
+    bind[1].buffer = (char*)&level;
+    bind[1].is_unsigned = 1;
     bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[2].buffer = (char*)&user_id;
+    bind[2].is_unsigned = 1;
     bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[3].buffer = (char*)&guild_id;
+    bind[3].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
@@ -475,11 +334,11 @@ bool add_server_xp(Database* db, uint64_t user_id, uint64_t guild_id, uint64_t x
     return success;
 }
 
-bool reset_server_xp(Database* db, uint64_t guild_id) {
+bool reset_guild_xp(Database* db, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
     
-    const char* query = "UPDATE server_xp SET server_xp = 0, server_level = 1 WHERE guild_id = ?";
+    const char* query = "UPDATE user_xp SET total_xp = 0, level = 1 WHERE guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -492,6 +351,7 @@ bool reset_server_xp(Database* db, uint64_t guild_id) {
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
+    bind[0].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
@@ -501,11 +361,11 @@ bool reset_server_xp(Database* db, uint64_t guild_id) {
     return success;
 }
 
-bool reset_user_server_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
+bool reset_user_guild_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
     
-    const char* query = "UPDATE server_xp SET server_xp = 0, server_level = 1 WHERE user_id = ? AND guild_id = ?";
+    const char* query = "UPDATE user_xp SET total_xp = 0, level = 1 WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -518,8 +378,10 @@ bool reset_user_server_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
     bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
@@ -529,13 +391,13 @@ bool reset_user_server_xp(Database* db, uint64_t user_id, uint64_t guild_id) {
     return success;
 }
 
-std::optional<ServerLevelingConfig> get_server_config(Database* db, uint64_t guild_id) {
+std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return {};
     
     const char* query = "SELECT guild_id, enabled, coin_rewards, coins_per_message, min_xp, "
                         "max_xp, min_message_length, xp_cooldown, level_up_channel "
-                        "FROM server_leveling_config WHERE guild_id = ?";
+                        "FROM guild_leveling_config WHERE guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -548,6 +410,7 @@ std::optional<ServerLevelingConfig> get_server_config(Database* db, uint64_t gui
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
+    bind[0].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     if (mysql_stmt_execute(stmt) != 0) {
@@ -587,9 +450,9 @@ std::optional<ServerLevelingConfig> get_server_config(Database* db, uint64_t gui
     
     mysql_stmt_bind_result(stmt, resbind);
     
-    std::optional<ServerLevelingConfig> result;
+    std::optional<GuildLevelingConfig> result;
     if (mysql_stmt_fetch(stmt) == 0) {
-        ServerLevelingConfig cfg;
+        GuildLevelingConfig cfg;
         cfg.guild_id = gid;
         cfg.enabled = enabled;
         cfg.reward_coins = reward_coins;
@@ -608,11 +471,11 @@ std::optional<ServerLevelingConfig> get_server_config(Database* db, uint64_t gui
     return result;
 }
 
-bool create_server_config(Database* db, uint64_t guild_id) {
+bool create_guild_config(Database* db, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
     
-    const char* query = "INSERT INTO server_leveling_config (guild_id) VALUES (?) ON DUPLICATE KEY UPDATE guild_id=guild_id";
+    const char* query = "INSERT INTO guild_leveling_config (guild_id) VALUES (?) ON DUPLICATE KEY UPDATE guild_id=guild_id";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -625,6 +488,7 @@ bool create_server_config(Database* db, uint64_t guild_id) {
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&guild_id;
+    bind[0].is_unsigned = 1;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;
@@ -634,11 +498,11 @@ bool create_server_config(Database* db, uint64_t guild_id) {
     return success;
 }
 
-bool update_server_config(Database* db, const ServerLevelingConfig& config) {
+bool update_guild_config(Database* db, const GuildLevelingConfig& config) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
     
-    const char* query = "UPDATE server_leveling_config SET enabled=?, coin_rewards=?, coins_per_message=?, "
+    const char* query = "UPDATE guild_leveling_config SET enabled=?, coin_rewards=?, coins_per_message=?, "
                         "min_xp=?, max_xp=?, min_message_length=?, xp_cooldown=?, "
                         "level_up_channel=? WHERE guild_id=?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -690,7 +554,7 @@ std::vector<LevelRole> get_level_roles(Database* db, uint64_t guild_id) {
     if (!conn) return {};
     
     const char* query = "SELECT id, guild_id, level, role_id, role_name, description, remove_previous "
-                        "FROM level_roles WHERE guild_id = ? ORDER BY level ASC";
+                        "FROM guild_level_roles WHERE guild_id = ? ORDER BY level ASC";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -772,7 +636,7 @@ bool create_level_role(Database* db, const LevelRole& role) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
     
-    const char* query = "INSERT INTO level_roles (guild_id, level, role_id, role_name, description, remove_previous) "
+    const char* query = "INSERT INTO guild_level_roles (guild_id, level, role_id, role_name, description, remove_previous) "
                         "VALUES (?, ?, ?, ?, ?, ?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
@@ -820,7 +684,7 @@ bool delete_level_role(Database* db, uint64_t guild_id, uint32_t level) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
     
-    const char* query = "DELETE FROM level_roles WHERE guild_id = ? AND level = ?";
+    const char* query = "DELETE FROM guild_level_roles WHERE guild_id = ? AND level = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -848,7 +712,7 @@ bool delete_level_role_by_id(Database* db, uint64_t id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
     
-    const char* query = "DELETE FROM level_roles WHERE id = ?";
+    const char* query = "DELETE FROM guild_level_roles WHERE id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -874,9 +738,9 @@ std::vector<LeaderboardEntry> get_global_xp_leaderboard(Database* db, int limit)
     auto conn = db->get_pool()->acquire();
     if (!conn) return {};
     
-    std::string query = "SELECT u.user_id, ux.total_xp, ux.level FROM user_xp ux "
-                        "JOIN users u ON u.user_id = ux.user_id "
-                        "ORDER BY ux.total_xp DESC LIMIT " + std::to_string(limit);
+    std::string query = "SELECT user_id, total_xp, level FROM user_xp "
+                        "WHERE guild_id = 0 "
+                        "ORDER BY total_xp DESC LIMIT " + std::to_string(limit);
     
     if (mysql_query(conn->get(), query.c_str()) != 0) {
         db->get_pool()->release(conn);
@@ -910,9 +774,9 @@ std::vector<LeaderboardEntry> get_server_xp_leaderboard(Database* db, uint64_t g
     auto conn = db->get_pool()->acquire();
     if (!conn) return {};
     
-    std::string query = "SELECT sx.user_id, sx.server_xp, sx.server_level FROM server_xp sx "
-                        "WHERE sx.guild_id = " + std::to_string(guild_id) + " "
-                        "ORDER BY sx.server_xp DESC LIMIT " + std::to_string(limit);
+    std::string query = "SELECT user_id, total_xp, level FROM user_xp "
+                        "WHERE guild_id = " + std::to_string(guild_id) + " "
+                        "ORDER BY total_xp DESC LIMIT " + std::to_string(limit);
     
     if (mysql_query(conn->get(), query.c_str()) != 0) {
         db->get_pool()->release(conn);
@@ -946,8 +810,8 @@ int get_user_global_xp_rank(Database* db, uint64_t user_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return -1;
     
-    std::string query = "SELECT COUNT(*) + 1 FROM user_xp WHERE total_xp > "
-                        "(SELECT total_xp FROM user_xp WHERE user_id = " + std::to_string(user_id) + ")";
+    std::string query = "SELECT COUNT(*) + 1 FROM user_xp WHERE guild_id = 0 AND total_xp > "
+                        "(SELECT total_xp FROM user_xp WHERE user_id = " + std::to_string(user_id) + " AND guild_id = 0)";
     
     if (mysql_query(conn->get(), query.c_str()) != 0) {
         db->get_pool()->release(conn);
@@ -973,8 +837,8 @@ int get_user_server_xp_rank(Database* db, uint64_t user_id, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return -1;
     
-    std::string query = "SELECT COUNT(*) + 1 FROM server_xp WHERE guild_id = " + std::to_string(guild_id) + 
-                        " AND server_xp > (SELECT server_xp FROM server_xp WHERE user_id = " + std::to_string(user_id) + 
+    std::string query = "SELECT COUNT(*) + 1 FROM user_xp WHERE guild_id = " + std::to_string(guild_id) + 
+                        " AND total_xp > (SELECT total_xp FROM user_xp WHERE user_id = " + std::to_string(user_id) + 
                         " AND guild_id = " + std::to_string(guild_id) + ")";
     
     if (mysql_query(conn->get(), query.c_str()) != 0) {

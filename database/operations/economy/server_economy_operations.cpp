@@ -12,7 +12,7 @@ namespace server_economy_operations {
 bool create_guild_economy(Database* db, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     
-    const char* query = "INSERT IGNORE INTO guild_economy_settings (guild_id) VALUES (?)";
+    const char* query = "INSERT IGNORE INTO guild_settings (guild_id) VALUES (?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -53,7 +53,7 @@ std::optional<GuildEconomySettings> get_guild_economy_settings(Database* db, uin
                        "rob_cooldown, fish_cooldown, work_multiplier, gambling_multiplier, "
                        "fishing_multiplier, allow_gambling, allow_fishing, allow_trading, "
                        "allow_robbery, max_wallet, max_bank, max_networth, enable_tax, "
-                       "transaction_tax_percent FROM guild_economy_settings WHERE guild_id = ?";
+                       "transaction_tax_percent FROM guild_settings WHERE guild_id = ?";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -152,7 +152,7 @@ bool set_economy_mode(Database* db, uint64_t guild_id, const std::string& mode) 
     
     auto conn = db->get_pool()->acquire();
     
-    const char* query = "UPDATE guild_economy_settings SET economy_mode = ? WHERE guild_id = ?";
+    const char* query = "UPDATE guild_settings SET economy_mode = ? WHERE guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -205,7 +205,7 @@ bool ensure_server_user_exists(Database* db, uint64_t guild_id, uint64_t user_id
     auto settings = get_guild_economy_settings(db, guild_id);
     if (!settings) return false;
     
-    const char* query = "INSERT IGNORE INTO server_users (guild_id, user_id, wallet, bank_limit, interest_rate) "
+    const char* query = "INSERT IGNORE INTO users (guild_id, user_id, wallet, bank_limit, interest_rate) "
                        "VALUES (?, ?, ?, ?, ?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
@@ -257,7 +257,7 @@ std::optional<ServerUserData> get_server_user(Database* db, uint64_t guild_id, u
     const char* query = "SELECT guild_id, user_id, wallet, bank, bank_limit, interest_rate, "
                        "interest_level, UNIX_TIMESTAMP(last_interest_claim), UNIX_TIMESTAMP(last_daily), "
                        "UNIX_TIMESTAMP(last_work), UNIX_TIMESTAMP(last_beg), total_gambled, "
-                       "total_won, total_lost, commands_used FROM server_users "
+                       "total_won, total_lost, commands_used FROM users "
                        "WHERE guild_id = ? AND user_id = ?";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -373,7 +373,7 @@ std::optional<int64_t> update_server_wallet(Database* db, uint64_t guild_id, uin
     
     auto conn = db->get_pool()->acquire();
     
-    const char* query = "UPDATE server_users SET wallet = wallet + ? "
+    const char* query = "UPDATE users SET wallet = wallet + ? "
                        "WHERE guild_id = ? AND user_id = ? AND wallet + ? >= 0";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -430,7 +430,7 @@ std::optional<int64_t> update_server_bank(Database* db, uint64_t guild_id, uint6
     
     auto conn = db->get_pool()->acquire();
     
-    const char* query = "UPDATE server_users SET bank = bank + ? "
+    const char* query = "UPDATE users SET bank = bank + ? "
                        "WHERE guild_id = ? AND user_id = ? AND bank + ? >= 0 AND bank + ? <= bank_limit";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -728,7 +728,7 @@ bool log_server_command(Database* db, uint64_t guild_id, uint64_t user_id, const
 
     auto conn = db->get_pool()->acquire();
 
-    const char* query = "INSERT INTO server_command_stats (guild_id, user_id, command_name) VALUES (?, ?, ?)";
+    const char* query = "INSERT INTO command_stats (guild_id, user_id, command_name) VALUES (?, ?, ?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
 
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {

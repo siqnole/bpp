@@ -203,7 +203,7 @@ std::vector<LeaderboardEntry> Database::get_fish_caught_leaderboard(uint64_t gui
     
     // Count fish from inventory table - always global, guild filtering done in command handler
     std::string query = "SELECT user_id, COUNT(*) as fish_count "
-                       "FROM inventory "
+                       "FROM user_inventory "
                        "WHERE item_type = 'collectible' "
                        "GROUP BY user_id "
                        "ORDER BY fish_count DESC LIMIT ?";
@@ -270,7 +270,7 @@ std::vector<LeaderboardEntry> Database::get_most_valuable_fish_leaderboard(uint6
     // Find the highest value fish each user owns - always global, guild filtering done in command handler
     std::string query = "SELECT i.user_id, "
                        "MAX(CAST(JSON_EXTRACT(i.metadata, '$.value') AS SIGNED)) as max_value "
-                       "FROM inventory i "
+                       "FROM user_inventory i "
                        "WHERE i.item_type = 'collectible' "
                        "GROUP BY i.user_id ORDER BY max_value DESC LIMIT ?";
     
@@ -426,7 +426,7 @@ std::vector<LeaderboardEntry> Database::get_stats_leaderboard(const std::string&
     
     // Always return global results - guild filtering done in command handler
     std::string query = "SELECT us.user_id, us.stat_value "
-                       "FROM user_stats us "
+                       "FROM user_stats_ext us "
                        "WHERE us.stat_name = ? "
                        "ORDER BY us.stat_value DESC LIMIT ?";
     

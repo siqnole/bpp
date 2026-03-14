@@ -9,19 +9,19 @@ namespace db {
 
 namespace loan_operations {
 
-bool create_loan(Database* db, uint64_t user_id, int64_t principal, double interest_rate) {
-    if (has_active_loan(db, user_id)) {
+bool create_loan(Database* db, uint64_t user_id, int64_t principal, double interest_rate, uint64_t guild_id) {
+    if (has_active_loan(db, user_id, guild_id)) {
         return false; // User already has a loan
     }
     
     auto conn = db->get_pool()->acquire();
     
-    // Calculate interest (applied immediately)
-    int64_t interest = static_cast<int64_t>(std::round(principal * (interest_rate / 100.0)));
-    int64_t total_owed = principal + interest;
+    // Calculate total owed (principal + interest)
+    int64_t interest_amount = static_cast<int64_t>(std::round(principal * (interest_rate / 100.0)));
+    int64_t total_owed = principal + interest_amount;
     
-    const char* query = "INSERT INTO loans (user_id, principal, interest, remaining, created_at) "
-                       "VALUES (?, ?, ?, ?, NOW())";
+    const char* query = "INSERT INTO user_loans (user_id, guild_id, principal, interest_rate, remaining, created_at) "
+                       "VALUES (?, ?, ?, ?, ?, NOW())";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -31,7 +31,7 @@ bool create_loan(Database* db, uint64_t user_id, int64_t principal, double inter
         return false;
     }
     
-    MYSQL_BIND bind[4];
+    MYSQL_BIND bind[5];
     memset(bind, 0, sizeof(bind));
     
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -39,13 +39,17 @@ bool create_loan(Database* db, uint64_t user_id, int64_t principal, double inter
     bind[0].is_unsigned = 1;
     
     bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[1].buffer = (char*)&principal;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     
     bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[2].buffer = (char*)&interest;
+    bind[2].buffer = (char*)&principal;
     
-    bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[3].buffer = (char*)&total_owed;
+    bind[3].buffer_type = MYSQL_TYPE_DOUBLE;
+    bind[3].buffer = (char*)&interest_rate;
+    
+    bind[4].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[4].buffer = (char*)&total_owed;
     
     if (mysql_stmt_bind_param(stmt, bind) != 0) {
         db->log_error("create_loan bind");
@@ -61,12 +65,12 @@ bool create_loan(Database* db, uint64_t user_id, int64_t principal, double inter
     return success;
 }
 
-std::optional<LoanData> get_loan(Database* db, uint64_t user_id) {
+std::optional<LoanData> get_loan(Database* db, uint64_t user_id, uint64_t guild_id) {
     auto conn = db->get_pool()->acquire();
     
-    const char* query = "SELECT user_id, principal, interest, remaining, "
+    const char* query = "SELECT user_id, guild_id, principal, interest_rate, remaining, "
                        "UNIX_TIMESTAMP(created_at), UNIX_TIMESTAMP(last_payment_at) "
-                       "FROM loans WHERE user_id = ?";
+                       "FROM user_loans WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -76,12 +80,16 @@ std::optional<LoanData> get_loan(Database* db, uint64_t user_id) {
         return std::nullopt;
     }
     
-    MYSQL_BIND bind[1];
+    MYSQL_BIND bind[2];
     memset(bind, 0, sizeof(bind));
     
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     
     if (mysql_stmt_bind_param(stmt, bind) != 0) {
         db->log_error("get_loan bind param");
@@ -102,7 +110,7 @@ std::optional<LoanData> get_loan(Database* db, uint64_t user_id) {
     int64_t created_timestamp, last_payment_timestamp;
     my_bool is_null_last_payment;
     
-    MYSQL_BIND result[6];
+    MYSQL_BIND result[7];
     memset(result, 0, sizeof(result));
     
     result[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -110,20 +118,24 @@ std::optional<LoanData> get_loan(Database* db, uint64_t user_id) {
     result[0].is_unsigned = 1;
     
     result[1].buffer_type = MYSQL_TYPE_LONGLONG;
-    result[1].buffer = &loan.principal;
+    result[1].buffer = &loan.guild_id;
+    result[1].is_unsigned = 1;
     
     result[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    result[2].buffer = &loan.interest;
+    result[2].buffer = &loan.principal;
     
-    result[3].buffer_type = MYSQL_TYPE_LONGLONG;
-    result[3].buffer = &loan.remaining;
+    result[3].buffer_type = MYSQL_TYPE_DOUBLE;
+    result[3].buffer = &loan.interest_rate;
     
     result[4].buffer_type = MYSQL_TYPE_LONGLONG;
-    result[4].buffer = &created_timestamp;
+    result[4].buffer = &loan.remaining;
     
     result[5].buffer_type = MYSQL_TYPE_LONGLONG;
-    result[5].buffer = &last_payment_timestamp;
-    result[5].is_null = &is_null_last_payment;
+    result[5].buffer = &created_timestamp;
+    
+    result[6].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[6].buffer = &last_payment_timestamp;
+    result[6].is_null = &is_null_last_payment;
     
     if (mysql_stmt_bind_result(stmt, result) != 0) {
         db->log_error("get_loan bind result");
@@ -156,8 +168,8 @@ std::optional<LoanData> get_loan(Database* db, uint64_t user_id) {
     return std::nullopt;
 }
 
-std::optional<int64_t> make_payment(Database* db, uint64_t user_id, int64_t amount) {
-    auto loan = get_loan(db, user_id);
+std::optional<int64_t> make_payment(Database* db, uint64_t user_id, int64_t amount, uint64_t guild_id) {
+    auto loan = get_loan(db, user_id, guild_id);
     if (!loan) return std::nullopt;
     
     if (amount <= 0 || amount > loan->remaining) {
@@ -171,10 +183,10 @@ std::optional<int64_t> make_payment(Database* db, uint64_t user_id, int64_t amou
     const char* query;
     if (new_remaining == 0) {
         // Loan fully paid off - delete the record
-        query = "DELETE FROM loans WHERE user_id = ?";
+        query = "DELETE FROM user_loans WHERE user_id = ? AND guild_id = ?";
     } else {
         // Update remaining balance
-        query = "UPDATE loans SET remaining = ?, last_payment_at = NOW() WHERE user_id = ?";
+        query = "UPDATE user_loans SET remaining = ?, last_payment_at = NOW() WHERE user_id = ? AND guild_id = ?";
     }
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -186,13 +198,17 @@ std::optional<int64_t> make_payment(Database* db, uint64_t user_id, int64_t amou
         return std::nullopt;
     }
     
-    MYSQL_BIND bind[2];
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
     
     if (new_remaining == 0) {
         bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
         bind[0].buffer = (char*)&user_id;
         bind[0].is_unsigned = 1;
+        
+        bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[1].buffer = (char*)&guild_id;
+        bind[1].is_unsigned = 1;
         
         if (mysql_stmt_bind_param(stmt, bind) != 0) {
             db->log_error("make_payment bind (delete)");
@@ -207,6 +223,10 @@ std::optional<int64_t> make_payment(Database* db, uint64_t user_id, int64_t amou
         bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
         bind[1].buffer = (char*)&user_id;
         bind[1].is_unsigned = 1;
+        
+        bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[2].buffer = (char*)&guild_id;
+        bind[2].is_unsigned = 1;
         
         if (mysql_stmt_bind_param(stmt, bind) != 0) {
             db->log_error("make_payment bind (update)");
@@ -225,48 +245,48 @@ std::optional<int64_t> make_payment(Database* db, uint64_t user_id, int64_t amou
     return new_remaining;
 }
 
-bool has_active_loan(Database* db, uint64_t user_id) {
-    return get_loan(db, user_id).has_value();
+bool has_active_loan(Database* db, uint64_t user_id, uint64_t guild_id) {
+    return get_loan(db, user_id, guild_id).has_value();
 }
 
-bool payoff_loan(Database* db, uint64_t user_id) {
-    auto loan = get_loan(db, user_id);
+bool payoff_loan(Database* db, uint64_t user_id, uint64_t guild_id) {
+    auto loan = get_loan(db, user_id, guild_id);
     if (!loan) return false;
     
-    auto result = make_payment(db, user_id, loan->remaining);
+    auto result = make_payment(db, user_id, loan->remaining, guild_id);
     return result.has_value() && *result == 0;
 }
 
-int64_t get_loan_balance(Database* db, uint64_t user_id) {
-    auto loan = get_loan(db, user_id);
+int64_t get_loan_balance(Database* db, uint64_t user_id, uint64_t guild_id) {
+    auto loan = get_loan(db, user_id, guild_id);
     return loan ? loan->remaining : 0;
 }
 
 } // namespace loan_operations
 
 // Add these methods to the Database class
-bool Database::create_loan(uint64_t user_id, int64_t principal, double interest_rate) {
-    return loan_operations::create_loan(this, user_id, principal, interest_rate);
+bool Database::create_loan(uint64_t user_id, int64_t principal, double interest_rate, uint64_t guild_id) {
+    return loan_operations::create_loan(this, user_id, principal, interest_rate, guild_id);
 }
 
-std::optional<LoanData> Database::get_loan(uint64_t user_id) {
-    return loan_operations::get_loan(this, user_id);
+std::optional<LoanData> Database::get_loan(uint64_t user_id, uint64_t guild_id) {
+    return loan_operations::get_loan(this, user_id, guild_id);
 }
 
-std::optional<int64_t> Database::make_loan_payment(uint64_t user_id, int64_t amount) {
-    return loan_operations::make_payment(this, user_id, amount);
+std::optional<int64_t> Database::make_loan_payment(uint64_t user_id, int64_t amount, uint64_t guild_id) {
+    return loan_operations::make_payment(this, user_id, amount, guild_id);
 }
 
-bool Database::has_active_loan(uint64_t user_id) {
-    return loan_operations::has_active_loan(this, user_id);
+bool Database::has_active_loan(uint64_t user_id, uint64_t guild_id) {
+    return loan_operations::has_active_loan(this, user_id, guild_id);
 }
 
-bool Database::payoff_loan(uint64_t user_id) {
-    return loan_operations::payoff_loan(this, user_id);
+bool Database::payoff_loan(uint64_t user_id, uint64_t guild_id) {
+    return loan_operations::payoff_loan(this, user_id, guild_id);
 }
 
-int64_t Database::get_loan_balance(uint64_t user_id) {
-    return loan_operations::get_loan_balance(this, user_id);
+int64_t Database::get_loan_balance(uint64_t user_id, uint64_t guild_id) {
+    return loan_operations::get_loan_balance(this, user_id, guild_id);
 }
 
 } // namespace db

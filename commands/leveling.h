@@ -60,21 +60,21 @@ std::vector<Command*> get_leveling_commands(Database* db) {
             
             // Get server XP if in a guild
             if (event.msg.guild_id) {
-                auto server_xp = db->get_server_xp(target_id, event.msg.guild_id);
+                auto server_xp = db->get_user_xp(target_id, event.msg.guild_id);
                 if (!server_xp) {
-                    db->create_server_xp(target_id, event.msg.guild_id);
-                    server_xp = db->get_server_xp(target_id, event.msg.guild_id);
+                    db->create_user_xp(target_id, event.msg.guild_id);
+                    server_xp = db->get_user_xp(target_id, event.msg.guild_id);
                 }
                 
-                description += "**Server Level**: " + std::to_string(server_xp->server_level) + "\n";
-                description += "**Server XP**: " + format_number(server_xp->server_xp) + "\n";
+                description += "**Server Level**: " + std::to_string(server_xp->level) + "\n";
+                description += "**Server XP**: " + format_number(server_xp->total_xp) + "\n";
                 
-                uint64_t s_xp_for_next = db->calculate_xp_for_next_level(server_xp->server_level);
-                uint64_t s_xp_for_current = db->calculate_xp_for_level(server_xp->server_level);
-                uint64_t s_xp_progress = server_xp->server_xp - s_xp_for_current;
+                uint64_t s_xp_for_next = db->calculate_xp_for_next_level(server_xp->level);
+                uint64_t s_xp_for_current = db->calculate_xp_for_level(server_xp->level);
+                uint64_t s_xp_progress = server_xp->total_xp - s_xp_for_current;
                 uint64_t s_xp_needed = s_xp_for_next - s_xp_for_current;
                 
-                description += "**Progress to Level " + std::to_string(server_xp->server_level + 1) + "**: ";
+                description += "**Progress to Level " + std::to_string(server_xp->level + 1) + "**: ";
                 description += format_number(s_xp_progress) + "/" + format_number(s_xp_needed) + "\n";
                 
                 int s_filled = static_cast<int>((static_cast<double>(s_xp_progress) / s_xp_needed) * bar_length);
@@ -125,14 +125,14 @@ std::vector<Command*> get_leveling_commands(Database* db) {
             
             // Get server XP if in a guild
             if (event.command.guild_id) {
-                auto server_xp = db->get_server_xp(target_id, event.command.guild_id);
+                auto server_xp = db->get_user_xp(target_id, event.command.guild_id);
                 if (!server_xp) {
-                    db->create_server_xp(target_id, event.command.guild_id);
-                    server_xp = db->get_server_xp(target_id, event.command.guild_id);
+                    db->create_user_xp(target_id, event.command.guild_id);
+                    server_xp = db->get_user_xp(target_id, event.command.guild_id);
                 }
                 
-                description += "**Server Level**: " + std::to_string(server_xp->server_level) + "\n";
-                description += "**Server XP**: " + format_number(server_xp->server_xp) + "\n";
+                description += "**Server Level**: " + std::to_string(server_xp->level) + "\n";
+                description += "**Server XP**: " + format_number(server_xp->total_xp) + "\n";
                 
                 int server_rank = db->get_user_server_xp_rank(target_id, event.command.guild_id);
                 if (server_rank > 0) {
@@ -174,10 +174,10 @@ std::vector<Command*> get_leveling_commands(Database* db) {
             }
             
             // Get or create config
-            auto config = db->get_server_leveling_config(guild_id);
+            auto config = db->get_guild_leveling_config(guild_id);
             if (!config) {
-                db->create_server_leveling_config(guild_id);
-                config = db->get_server_leveling_config(guild_id);
+                db->create_guild_leveling_config(guild_id);
+                config = db->get_guild_leveling_config(guild_id);
             }
             
             if (args.empty()) {
@@ -216,11 +216,11 @@ std::vector<Command*> get_leveling_commands(Database* db) {
             
             if (sub == "enable") {
                 config->enabled = true;
-                db->update_server_leveling_config(*config);
+                db->update_guild_leveling_config(*config);
                 bronx::send_message(bot, event, bronx::success("leveling enabled"));
             } else if (sub == "disable") {
                 config->enabled = false;
-                db->update_server_leveling_config(*config);
+                db->update_guild_leveling_config(*config);
                 bronx::send_message(bot, event, bronx::success("leveling disabled"));
             } else if (sub == "coins") {
                 if (args.size() < 2) {
@@ -231,11 +231,11 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                 std::transform(sub2.begin(), sub2.end(), sub2.begin(), ::tolower);
                 if (sub2 == "enable") {
                     config->reward_coins = true;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("coin rewards enabled"));
                 } else if (sub2 == "disable") {
                     config->reward_coins = false;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("coin rewards disabled"));
                 }
             } else if (sub == "coinamount") {
@@ -247,7 +247,7 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                     int amount = std::stoi(args[1]);
                     if (amount < 0) amount = 0;
                     config->coins_per_message = amount;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("set coins per message to $" + std::to_string(amount)));
                 } catch (...) {
                     bronx::send_message(bot, event, bronx::error("invalid number"));
@@ -264,7 +264,7 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                     if (max_xp < min_xp) max_xp = min_xp;
                     config->min_xp_per_message = min_xp;
                     config->max_xp_per_message = max_xp;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("set XP range to " + std::to_string(min_xp) + "-" + std::to_string(max_xp)));
                 } catch (...) {
                     bronx::send_message(bot, event, bronx::error("invalid numbers"));
@@ -278,7 +278,7 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                     int chars = std::stoi(args[1]);
                     if (chars < 0) chars = 0;
                     config->min_message_chars = chars;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("set minimum message length to " + std::to_string(chars) + " characters"));
                 } catch (...) {
                     bronx::send_message(bot, event, bronx::error("invalid number"));
@@ -292,7 +292,7 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                     int seconds = std::stoi(args[1]);
                     if (seconds < 0) seconds = 0;
                     config->xp_cooldown_seconds = seconds;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("set XP cooldown to " + std::to_string(seconds) + " seconds"));
                 } catch (...) {
                     bronx::send_message(bot, event, bronx::error("invalid number"));
@@ -306,11 +306,11 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                 std::transform(sub2.begin(), sub2.end(), sub2.begin(), ::tolower);
                 if (sub2 == "enable") {
                     config->announce_levelup = true;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("level-up announcements enabled"));
                 } else if (sub2 == "disable") {
                     config->announce_levelup = false;
-                    db->update_server_leveling_config(*config);
+                    db->update_guild_leveling_config(*config);
                     bronx::send_message(bot, event, bronx::success("level-up announcements disabled"));
                 }
             } else if (sub == "channel") {
@@ -370,14 +370,14 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                             }
                             
                             // Update the config
-                            auto config = db->get_server_leveling_config(guild_id);
+                            auto config = db->get_guild_leveling_config(guild_id);
                             if (!config) {
                                 bronx::send_message(bot, event, bronx::error("failed to retrieve configuration"));
                                 return;
                             }
                             
                             config->announcement_channel = channel_id;
-                            db->update_server_leveling_config(*config);
+                            db->update_guild_leveling_config(*config);
                             bronx::send_message(bot, event, bronx::success("set announcement channel to <#" + std::to_string(channel_id) + ">"));
                         });
                         return;
@@ -390,10 +390,10 @@ std::vector<Command*> get_leveling_commands(Database* db) {
                 }
                 
                 config->announcement_channel = channel_id;
-                db->update_server_leveling_config(*config);
+                db->update_guild_leveling_config(*config);
                 bronx::send_message(bot, event, bronx::success("set announcement channel to <#" + std::to_string(channel_id) + ">"));
             } else if (sub == "reset") {
-                if (db->reset_server_xp(guild_id)) {
+                if (db->reset_guild_xp(guild_id)) {
                     bronx::send_message(bot, event, bronx::success("reset all server XP"));
                 } else {
                     bronx::send_message(bot, event, bronx::error("failed to reset server XP"));

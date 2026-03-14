@@ -920,10 +920,10 @@ namespace permission_operations {
 namespace permission_operations {
     
     // Check if user is admin for this server
-    // ALWAYS checks server-specific permissions first, not global database
+    // Checks guild_bot_staff with role='admin', then global flags
     bool is_admin(Database* db, uint64_t user_id, uint64_t guild_id) {
-        // Check server-specific admin
-        if (is_server_admin(db, guild_id, user_id)) {
+        // Check server-specific admin via consolidated table
+        if (is_guild_staff(db, guild_id, user_id, "admin")) {
             return true;
         }
         
@@ -937,15 +937,15 @@ namespace permission_operations {
     }
     
     // Check if user is mod for this server
-    // ALWAYS checks server-specific permissions first
+    // Admins are implicitly mods; checks guild_bot_staff with role='mod'
     bool is_mod(Database* db, uint64_t user_id, uint64_t guild_id) {
         // Admins are also mods
         if (is_admin(db, user_id, guild_id)) {
             return true;
         }
         
-        // Check server-specific mod
-        if (is_server_mod(db, guild_id, user_id)) {
+        // Check server-specific mod via consolidated table
+        if (is_guild_staff(db, guild_id, user_id, "mod")) {
             return true;
         }
         
@@ -958,23 +958,27 @@ namespace permission_operations {
         return user && user->dev;
     }
     
-    // Server-specific admin management
-    bool add_server_admin(Database* db, uint64_t guild_id, uint64_t user_id, uint64_t granted_by) {
+    // ====================================================================
+    // Consolidated guild staff management (guild_bot_staff table)
+    // ====================================================================
+    
+    bool add_guild_staff(Database* db, uint64_t guild_id, uint64_t user_id,
+                         const std::string& role, uint64_t granted_by) {
         db->ensure_user_exists(user_id);
         auto conn = db->get_pool()->acquire();
         
-        const char* query = "INSERT INTO server_bot_admins (guild_id, user_id, granted_by) "
-                           "VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE granted_by = ?";
+        const char* query = "INSERT INTO guild_bot_staff (guild_id, user_id, role, granted_by) "
+                           "VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE role = ?, granted_by = ?";
         
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-            db->log_error("add_server_admin prepare");
+            db->log_error("add_guild_staff prepare");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
             return false;
         }
         
-        MYSQL_BIND bind[4];
+        MYSQL_BIND bind[6];
         memset(bind, 0, sizeof(bind));
         
         bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -985,16 +989,25 @@ namespace permission_operations {
         bind[1].buffer = (char*)&user_id;
         bind[1].is_unsigned = 1;
         
-        bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind[2].buffer = (char*)&granted_by;
-        bind[2].is_unsigned = 1;
+        bind[2].buffer_type = MYSQL_TYPE_STRING;
+        bind[2].buffer = (char*)role.c_str();
+        bind[2].buffer_length = role.length();
         
         bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
         bind[3].buffer = (char*)&granted_by;
         bind[3].is_unsigned = 1;
         
+        // ON DUPLICATE KEY UPDATE values
+        bind[4].buffer_type = MYSQL_TYPE_STRING;
+        bind[4].buffer = (char*)role.c_str();
+        bind[4].buffer_length = role.length();
+        
+        bind[5].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[5].buffer = (char*)&granted_by;
+        bind[5].is_unsigned = 1;
+        
         if (mysql_stmt_bind_param(stmt, bind) != 0) {
-            db->log_error("add_server_admin bind");
+            db->log_error("add_guild_staff bind");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
             return false;
@@ -1007,14 +1020,14 @@ namespace permission_operations {
         return success;
     }
     
-    bool remove_server_admin(Database* db, uint64_t guild_id, uint64_t user_id) {
+    bool remove_guild_staff(Database* db, uint64_t guild_id, uint64_t user_id) {
         auto conn = db->get_pool()->acquire();
         
-        const char* query = "DELETE FROM server_bot_admins WHERE guild_id = ? AND user_id = ?";
+        const char* query = "DELETE FROM guild_bot_staff WHERE guild_id = ? AND user_id = ?";
         
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-            db->log_error("remove_server_admin prepare");
+            db->log_error("remove_guild_staff prepare");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
             return false;
@@ -1032,7 +1045,7 @@ namespace permission_operations {
         bind[1].is_unsigned = 1;
         
         if (mysql_stmt_bind_param(stmt, bind) != 0) {
-            db->log_error("remove_server_admin bind");
+            db->log_error("remove_guild_staff bind");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
             return false;
@@ -1045,20 +1058,25 @@ namespace permission_operations {
         return success;
     }
     
-    bool is_server_admin(Database* db, uint64_t guild_id, uint64_t user_id) {
+    bool is_guild_staff(Database* db, uint64_t guild_id, uint64_t user_id, const std::string& role) {
         auto conn = db->get_pool()->acquire();
         
-        const char* query = "SELECT user_id FROM server_bot_admins WHERE guild_id = ? AND user_id = ?";
+        // If role is empty, check for any staff entry; otherwise filter by role
+        const char* query_any  = "SELECT 1 FROM guild_bot_staff WHERE guild_id = ? AND user_id = ? LIMIT 1";
+        const char* query_role = "SELECT 1 FROM guild_bot_staff WHERE guild_id = ? AND user_id = ? AND role = ? LIMIT 1";
+        
+        bool filter_role = !role.empty();
+        const char* query = filter_role ? query_role : query_any;
         
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-            db->log_error("is_server_admin prepare");
+            db->log_error("is_guild_staff prepare");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
             return false;
         }
         
-        MYSQL_BIND bind_param[2];
+        MYSQL_BIND bind_param[3];
         memset(bind_param, 0, sizeof(bind_param));
         
         bind_param[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -1069,29 +1087,30 @@ namespace permission_operations {
         bind_param[1].buffer = (char*)&user_id;
         bind_param[1].is_unsigned = 1;
         
-        if (mysql_stmt_bind_param(stmt, bind_param) != 0) {
-            db->log_error("is_server_admin bind");
-            mysql_stmt_close(stmt);
-            db->get_pool()->release(conn);
-            return false;
+        if (filter_role) {
+            bind_param[2].buffer_type = MYSQL_TYPE_STRING;
+            bind_param[2].buffer = (char*)role.c_str();
+            bind_param[2].buffer_length = role.length();
+            mysql_stmt_bind_param(stmt, bind_param);
+        } else {
+            mysql_stmt_bind_param(stmt, bind_param);
         }
         
         if (mysql_stmt_execute(stmt) != 0) {
-            db->log_error("is_server_admin execute");
+            db->log_error("is_guild_staff execute");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
             return false;
         }
         
-        uint64_t result_id;
+        int result_val;
         MYSQL_BIND bind_result[1];
         memset(bind_result, 0, sizeof(bind_result));
-        bind_result[0].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind_result[0].buffer = &result_id;
-        bind_result[0].is_unsigned = 1;
+        bind_result[0].buffer_type = MYSQL_TYPE_LONG;
+        bind_result[0].buffer = &result_val;
         
         if (mysql_stmt_bind_result(stmt, bind_result) != 0) {
-            db->log_error("is_server_admin bind result");
+            db->log_error("is_guild_staff bind result");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
             return false;
@@ -1104,103 +1123,24 @@ namespace permission_operations {
         return exists;
     }
     
-    bool add_server_mod(Database* db, uint64_t guild_id, uint64_t user_id, uint64_t granted_by) {
-        db->ensure_user_exists(user_id);
+    std::vector<GuildBotStaffRow> get_guild_staff(Database* db, uint64_t guild_id, const std::string& role) {
+        std::vector<GuildBotStaffRow> out;
         auto conn = db->get_pool()->acquire();
         
-        const char* query = "INSERT INTO server_bot_mods (guild_id, user_id, granted_by) "
-                           "VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE granted_by = ?";
+        const char* query_all  = "SELECT guild_id, user_id, role, granted_by, granted_at "
+                                 "FROM guild_bot_staff WHERE guild_id = ?";
+        const char* query_role = "SELECT guild_id, user_id, role, granted_by, granted_at "
+                                 "FROM guild_bot_staff WHERE guild_id = ? AND role = ?";
+        
+        bool filter_role = !role.empty();
+        const char* query = filter_role ? query_role : query_all;
         
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-            db->log_error("add_server_mod prepare");
+            db->log_error("get_guild_staff prepare");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
-            return false;
-        }
-        
-        MYSQL_BIND bind[4];
-        memset(bind, 0, sizeof(bind));
-        
-        bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind[0].buffer = (char*)&guild_id;
-        bind[0].is_unsigned = 1;
-        
-        bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind[1].buffer = (char*)&user_id;
-        bind[1].is_unsigned = 1;
-        
-        bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind[2].buffer = (char*)&granted_by;
-        bind[2].is_unsigned = 1;
-        
-        bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind[3].buffer = (char*)&granted_by;
-        bind[3].is_unsigned = 1;
-        
-        if (mysql_stmt_bind_param(stmt, bind) != 0) {
-            db->log_error("add_server_mod bind");
-            mysql_stmt_close(stmt);
-            db->get_pool()->release(conn);
-            return false;
-        }
-        
-        bool success = mysql_stmt_execute(stmt) == 0;
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        
-        return success;
-    }
-    
-    bool remove_server_mod(Database* db, uint64_t guild_id, uint64_t user_id) {
-        auto conn = db->get_pool()->acquire();
-        
-        const char* query = "DELETE FROM server_bot_mods WHERE guild_id = ? AND user_id = ?";
-        
-        MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-        if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-            db->log_error("remove_server_mod prepare");
-            mysql_stmt_close(stmt);
-            db->get_pool()->release(conn);
-            return false;
-        }
-        
-        MYSQL_BIND bind[2];
-        memset(bind, 0, sizeof(bind));
-        
-        bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind[0].buffer = (char*)&guild_id;
-        bind[0].is_unsigned = 1;
-        
-        bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind[1].buffer = (char*)&user_id;
-        bind[1].is_unsigned = 1;
-        
-        if (mysql_stmt_bind_param(stmt, bind) != 0) {
-            db->log_error("remove_server_mod bind");
-            mysql_stmt_close(stmt);
-            db->get_pool()->release(conn);
-            return false;
-        }
-        
-        bool success = mysql_stmt_execute(stmt) == 0;
-        mysql_stmt_close(stmt);
-        db->get_pool()->release(conn);
-        
-        return success;
-    }
-    
-    bool is_server_mod(Database* db, uint64_t guild_id, uint64_t user_id) {
-        auto conn = db->get_pool()->acquire();
-        
-        const char* query = "SELECT user_id FROM server_bot_mods WHERE guild_id = ? AND user_id = ?";
-        
-        MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
-        if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
-            db->log_error("is_server_mod prepare");
-            mysql_stmt_close(stmt);
-            db->get_pool()->release(conn);
-            return false;
+            return out;
         }
         
         MYSQL_BIND bind_param[2];
@@ -1210,46 +1150,84 @@ namespace permission_operations {
         bind_param[0].buffer = (char*)&guild_id;
         bind_param[0].is_unsigned = 1;
         
-        bind_param[1].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind_param[1].buffer = (char*)&user_id;
-        bind_param[1].is_unsigned = 1;
-        
-        if (mysql_stmt_bind_param(stmt, bind_param) != 0) {
-            db->log_error("is_server_mod bind");
-            mysql_stmt_close(stmt);
-            db->get_pool()->release(conn);
-            return false;
+        if (filter_role) {
+            bind_param[1].buffer_type = MYSQL_TYPE_STRING;
+            bind_param[1].buffer = (char*)role.c_str();
+            bind_param[1].buffer_length = role.length();
+            mysql_stmt_bind_param(stmt, bind_param);
+        } else {
+            mysql_stmt_bind_param(stmt, bind_param);
         }
         
         if (mysql_stmt_execute(stmt) != 0) {
-            db->log_error("is_server_mod execute");
+            db->log_error("get_guild_staff execute");
             mysql_stmt_close(stmt);
             db->get_pool()->release(conn);
-            return false;
+            return out;
         }
         
-        uint64_t result_id;
-        MYSQL_BIND bind_result[1];
-        memset(bind_result, 0, sizeof(bind_result));
-        bind_result[0].buffer_type = MYSQL_TYPE_LONGLONG;
-        bind_result[0].buffer = &result_id;
-        bind_result[0].is_unsigned = 1;
+        uint64_t r_guild_id = 0, r_user_id = 0, r_granted_by = 0;
+        char role_buf[16]; unsigned long role_len = 0;
+        MYSQL_TIME r_granted_at;
+        memset(&r_granted_at, 0, sizeof(r_granted_at));
         
-        if (mysql_stmt_bind_result(stmt, bind_result) != 0) {
-            db->log_error("is_server_mod bind result");
-            mysql_stmt_close(stmt);
-            db->get_pool()->release(conn);
-            return false;
+        MYSQL_BIND result[5];
+        memset(result, 0, sizeof(result));
+        
+        result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        result[0].buffer = (char*)&r_guild_id;
+        result[0].is_unsigned = 1;
+        
+        result[1].buffer_type = MYSQL_TYPE_LONGLONG;
+        result[1].buffer = (char*)&r_user_id;
+        result[1].is_unsigned = 1;
+        
+        result[2].buffer_type = MYSQL_TYPE_STRING;
+        result[2].buffer = role_buf;
+        result[2].buffer_length = sizeof(role_buf);
+        result[2].length = &role_len;
+        
+        result[3].buffer_type = MYSQL_TYPE_LONGLONG;
+        result[3].buffer = (char*)&r_granted_by;
+        result[3].is_unsigned = 1;
+        
+        result[4].buffer_type = MYSQL_TYPE_TIMESTAMP;
+        result[4].buffer = (char*)&r_granted_at;
+        result[4].buffer_length = sizeof(r_granted_at);
+        
+        mysql_stmt_bind_result(stmt, result);
+        
+        while (mysql_stmt_fetch(stmt) == 0) {
+            GuildBotStaffRow row;
+            row.guild_id = r_guild_id;
+            row.user_id = r_user_id;
+            std::string role_str(role_buf, role_len);
+            row.role = (role_str == "admin") ? GuildStaffRole::Admin : GuildStaffRole::Mod;
+            row.granted_by = r_granted_by;
+            
+            // Convert MYSQL_TIME to system_clock::time_point
+            struct tm t;
+            memset(&t, 0, sizeof(t));
+            t.tm_year = r_granted_at.year - 1900;
+            t.tm_mon  = r_granted_at.month - 1;
+            t.tm_mday = r_granted_at.day;
+            t.tm_hour = r_granted_at.hour;
+            t.tm_min  = r_granted_at.minute;
+            t.tm_sec  = r_granted_at.second;
+            row.granted_at = std::chrono::system_clock::from_time_t(timegm(&t));
+            
+            out.push_back(row);
         }
         
-        bool exists = mysql_stmt_fetch(stmt) == 0;
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
-        
-        return exists;
+        return out;
     }
     
+    // ====================================================================
     // Global permission management (for bot-wide permissions only)
+    // ====================================================================
+    
     bool set_global_admin(Database* db, uint64_t user_id, bool is_admin) {
         db->ensure_user_exists(user_id);
         
@@ -1380,6 +1358,220 @@ namespace permission_operations {
         perms.vip = user->vip;
         
         return perms;
+    }
+    
+    // ====================================================================
+    // Guild moderation config
+    // ====================================================================
+    
+    std::optional<GuildModerationConfig> get_guild_mod_config(Database* db, uint64_t guild_id) {
+        auto conn = db->get_pool()->acquire();
+        
+        const char* query = "SELECT guild_id, antispam_enabled, text_filter_enabled, url_guard_enabled, "
+                           "reaction_filter_enabled, antispam_config, text_filter_config, "
+                           "url_guard_config, reaction_filter_config "
+                           "FROM guild_moderation_config WHERE guild_id = ? LIMIT 1";
+        
+        MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+        if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+            db->log_error("get_guild_mod_config prepare");
+            mysql_stmt_close(stmt);
+            db->get_pool()->release(conn);
+            return std::nullopt;
+        }
+        
+        MYSQL_BIND bind_param[1];
+        memset(bind_param, 0, sizeof(bind_param));
+        bind_param[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind_param[0].buffer = (char*)&guild_id;
+        bind_param[0].is_unsigned = 1;
+        mysql_stmt_bind_param(stmt, bind_param);
+        
+        if (mysql_stmt_execute(stmt) != 0) {
+            db->log_error("get_guild_mod_config execute");
+            mysql_stmt_close(stmt);
+            db->get_pool()->release(conn);
+            return std::nullopt;
+        }
+        
+        uint64_t r_guild_id = 0;
+        my_bool r_antispam = 0, r_text_filter = 0, r_url_guard = 0, r_reaction_filter = 0;
+        char antispam_cfg[4096], text_filter_cfg[4096], url_guard_cfg[4096], reaction_filter_cfg[4096];
+        unsigned long antispam_cfg_len = 0, text_filter_cfg_len = 0, url_guard_cfg_len = 0, reaction_filter_cfg_len = 0;
+        my_bool antispam_cfg_null = 0, text_filter_cfg_null = 0, url_guard_cfg_null = 0, reaction_filter_cfg_null = 0;
+        
+        MYSQL_BIND result[9];
+        memset(result, 0, sizeof(result));
+        
+        result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        result[0].buffer = (char*)&r_guild_id;
+        result[0].is_unsigned = 1;
+        
+        result[1].buffer_type = MYSQL_TYPE_TINY;
+        result[1].buffer = (char*)&r_antispam;
+        
+        result[2].buffer_type = MYSQL_TYPE_TINY;
+        result[2].buffer = (char*)&r_text_filter;
+        
+        result[3].buffer_type = MYSQL_TYPE_TINY;
+        result[3].buffer = (char*)&r_url_guard;
+        
+        result[4].buffer_type = MYSQL_TYPE_TINY;
+        result[4].buffer = (char*)&r_reaction_filter;
+        
+        result[5].buffer_type = MYSQL_TYPE_STRING;
+        result[5].buffer = antispam_cfg;
+        result[5].buffer_length = sizeof(antispam_cfg);
+        result[5].length = &antispam_cfg_len;
+        result[5].is_null = &antispam_cfg_null;
+        
+        result[6].buffer_type = MYSQL_TYPE_STRING;
+        result[6].buffer = text_filter_cfg;
+        result[6].buffer_length = sizeof(text_filter_cfg);
+        result[6].length = &text_filter_cfg_len;
+        result[6].is_null = &text_filter_cfg_null;
+        
+        result[7].buffer_type = MYSQL_TYPE_STRING;
+        result[7].buffer = url_guard_cfg;
+        result[7].buffer_length = sizeof(url_guard_cfg);
+        result[7].length = &url_guard_cfg_len;
+        result[7].is_null = &url_guard_cfg_null;
+        
+        result[8].buffer_type = MYSQL_TYPE_STRING;
+        result[8].buffer = reaction_filter_cfg;
+        result[8].buffer_length = sizeof(reaction_filter_cfg);
+        result[8].length = &reaction_filter_cfg_len;
+        result[8].is_null = &reaction_filter_cfg_null;
+        
+        mysql_stmt_bind_result(stmt, result);
+        
+        if (mysql_stmt_fetch(stmt) != 0) {
+            mysql_stmt_close(stmt);
+            db->get_pool()->release(conn);
+            return std::nullopt;
+        }
+        
+        GuildModerationConfig cfg;
+        cfg.guild_id = r_guild_id;
+        cfg.antispam_enabled = r_antispam;
+        cfg.text_filter_enabled = r_text_filter;
+        cfg.url_guard_enabled = r_url_guard;
+        cfg.reaction_filter_enabled = r_reaction_filter;
+        cfg.antispam_config = antispam_cfg_null ? "" : std::string(antispam_cfg, antispam_cfg_len);
+        cfg.text_filter_config = text_filter_cfg_null ? "" : std::string(text_filter_cfg, text_filter_cfg_len);
+        cfg.url_guard_config = url_guard_cfg_null ? "" : std::string(url_guard_cfg, url_guard_cfg_len);
+        cfg.reaction_filter_config = reaction_filter_cfg_null ? "" : std::string(reaction_filter_cfg, reaction_filter_cfg_len);
+        
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        return cfg;
+    }
+    
+    bool upsert_guild_mod_config(Database* db, const GuildModerationConfig& config) {
+        auto conn = db->get_pool()->acquire();
+        
+        const char* query =
+            "INSERT INTO guild_moderation_config "
+            "(guild_id, antispam_enabled, text_filter_enabled, url_guard_enabled, "
+            "reaction_filter_enabled, antispam_config, text_filter_config, "
+            "url_guard_config, reaction_filter_config) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON DUPLICATE KEY UPDATE "
+            "antispam_enabled = ?, text_filter_enabled = ?, url_guard_enabled = ?, "
+            "reaction_filter_enabled = ?, antispam_config = ?, text_filter_config = ?, "
+            "url_guard_config = ?, reaction_filter_config = ?";
+        
+        MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+        if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+            db->log_error("upsert_guild_mod_config prepare");
+            mysql_stmt_close(stmt);
+            db->get_pool()->release(conn);
+            return false;
+        }
+        
+        my_bool antispam_val = config.antispam_enabled ? 1 : 0;
+        my_bool text_filter_val = config.text_filter_enabled ? 1 : 0;
+        my_bool url_guard_val = config.url_guard_enabled ? 1 : 0;
+        my_bool reaction_filter_val = config.reaction_filter_enabled ? 1 : 0;
+        
+        // 9 INSERT values + 8 ON DUPLICATE KEY UPDATE values = 17 binds
+        MYSQL_BIND bind[17];
+        memset(bind, 0, sizeof(bind));
+        
+        // INSERT values
+        bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[0].buffer = (char*)&config.guild_id;
+        bind[0].is_unsigned = 1;
+        
+        bind[1].buffer_type = MYSQL_TYPE_TINY;
+        bind[1].buffer = (char*)&antispam_val;
+        
+        bind[2].buffer_type = MYSQL_TYPE_TINY;
+        bind[2].buffer = (char*)&text_filter_val;
+        
+        bind[3].buffer_type = MYSQL_TYPE_TINY;
+        bind[3].buffer = (char*)&url_guard_val;
+        
+        bind[4].buffer_type = MYSQL_TYPE_TINY;
+        bind[4].buffer = (char*)&reaction_filter_val;
+        
+        bind[5].buffer_type = MYSQL_TYPE_STRING;
+        bind[5].buffer = (char*)config.antispam_config.c_str();
+        bind[5].buffer_length = config.antispam_config.length();
+        
+        bind[6].buffer_type = MYSQL_TYPE_STRING;
+        bind[6].buffer = (char*)config.text_filter_config.c_str();
+        bind[6].buffer_length = config.text_filter_config.length();
+        
+        bind[7].buffer_type = MYSQL_TYPE_STRING;
+        bind[7].buffer = (char*)config.url_guard_config.c_str();
+        bind[7].buffer_length = config.url_guard_config.length();
+        
+        bind[8].buffer_type = MYSQL_TYPE_STRING;
+        bind[8].buffer = (char*)config.reaction_filter_config.c_str();
+        bind[8].buffer_length = config.reaction_filter_config.length();
+        
+        // ON DUPLICATE KEY UPDATE values (same data, different bind slots)
+        bind[9].buffer_type = MYSQL_TYPE_TINY;
+        bind[9].buffer = (char*)&antispam_val;
+        
+        bind[10].buffer_type = MYSQL_TYPE_TINY;
+        bind[10].buffer = (char*)&text_filter_val;
+        
+        bind[11].buffer_type = MYSQL_TYPE_TINY;
+        bind[11].buffer = (char*)&url_guard_val;
+        
+        bind[12].buffer_type = MYSQL_TYPE_TINY;
+        bind[12].buffer = (char*)&reaction_filter_val;
+        
+        bind[13].buffer_type = MYSQL_TYPE_STRING;
+        bind[13].buffer = (char*)config.antispam_config.c_str();
+        bind[13].buffer_length = config.antispam_config.length();
+        
+        bind[14].buffer_type = MYSQL_TYPE_STRING;
+        bind[14].buffer = (char*)config.text_filter_config.c_str();
+        bind[14].buffer_length = config.text_filter_config.length();
+        
+        bind[15].buffer_type = MYSQL_TYPE_STRING;
+        bind[15].buffer = (char*)config.url_guard_config.c_str();
+        bind[15].buffer_length = config.url_guard_config.length();
+        
+        bind[16].buffer_type = MYSQL_TYPE_STRING;
+        bind[16].buffer = (char*)config.reaction_filter_config.c_str();
+        bind[16].buffer_length = config.reaction_filter_config.length();
+        
+        if (mysql_stmt_bind_param(stmt, bind) != 0) {
+            db->log_error("upsert_guild_mod_config bind");
+            mysql_stmt_close(stmt);
+            db->get_pool()->release(conn);
+            return false;
+        }
+        
+        bool success = mysql_stmt_execute(stmt) == 0;
+        mysql_stmt_close(stmt);
+        db->get_pool()->release(conn);
+        
+        return success;
     }
     
 }

@@ -28,7 +28,7 @@ using LevelUpCallback = std::function<void(const std::vector<LevelUpEvent>&)>;
 //
 // Usage:
 //   writer.enqueue_global_xp(user_id, xp);
-//   writer.enqueue_server_xp(user_id, guild_id, xp);
+//   writer.enqueue_guild_xp(user_id, guild_id, xp);
 //   writer.enqueue_coins(user_id, coins);
 //
 // The flush interval (default 5 s) controls the worst-case staleness of the
@@ -73,10 +73,10 @@ public:
         global_xp_deltas_[user_id] += xp;
     }
 
-    void enqueue_server_xp(uint64_t user_id, uint64_t guild_id, uint64_t xp) {
-        std::lock_guard<std::mutex> lk(server_mutex_);
+    void enqueue_guild_xp(uint64_t user_id, uint64_t guild_id, uint64_t xp) {
+        std::lock_guard<std::mutex> lk(guild_mutex_);
         auto key = std::make_pair(user_id, guild_id);
-        server_xp_deltas_[key] += xp;
+        guild_xp_deltas_[key] += xp;
     }
 
     void enqueue_coins(uint64_t user_id, int64_t coins) {
@@ -92,7 +92,7 @@ private:
     std::mutex global_mutex_;
     std::unordered_map<uint64_t, uint64_t> global_xp_deltas_;
 
-    // ---- server XP accumulator (key = {user_id, guild_id}) ----
+    // ---- guild XP accumulator (key = {user_id, guild_id}) ----
     struct PairHash {
         std::size_t operator()(const std::pair<uint64_t, uint64_t>& p) const {
             // fast hash combine
@@ -101,8 +101,8 @@ private:
             return h1 ^ (h2 * 0x9e3779b97f4a7c15ULL + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
         }
     };
-    std::mutex server_mutex_;
-    std::unordered_map<std::pair<uint64_t, uint64_t>, uint64_t, PairHash> server_xp_deltas_;
+    std::mutex guild_mutex_;
+    std::unordered_map<std::pair<uint64_t, uint64_t>, uint64_t, PairHash> guild_xp_deltas_;
 
     // ---- coin accumulator ----
     std::mutex coin_mutex_;
@@ -137,14 +137,14 @@ private:
     void flush() {
         // 1. Swap out the maps under their respective mutexes (fast)
         decltype(global_xp_deltas_) global_snap;
-        decltype(server_xp_deltas_) server_snap;
+        decltype(guild_xp_deltas_) guild_snap;
         decltype(coin_deltas_) coin_snap;
 
         { std::lock_guard<std::mutex> lk(global_mutex_);  global_snap.swap(global_xp_deltas_); }
-        { std::lock_guard<std::mutex> lk(server_mutex_);  server_snap.swap(server_xp_deltas_); }
+        { std::lock_guard<std::mutex> lk(guild_mutex_);   guild_snap.swap(guild_xp_deltas_); }
         { std::lock_guard<std::mutex> lk(coin_mutex_);    coin_snap.swap(coin_deltas_); }
 
-        if (global_snap.empty() && server_snap.empty() && coin_snap.empty()) return;
+        if (global_snap.empty() && guild_snap.empty() && coin_snap.empty()) return;
 
         std::vector<LevelUpEvent> level_ups;
 
@@ -153,9 +153,9 @@ private:
             flush_global_xp(user_id, xp_delta, level_ups);
         }
 
-        // 3. Flush server XP
-        for (auto& [key, xp_delta] : server_snap) {
-            flush_server_xp(key.first, key.second, xp_delta, level_ups);
+        // 3. Flush guild XP
+        for (auto& [key, xp_delta] : guild_snap) {
+            flush_guild_xp(key.first, key.second, xp_delta, level_ups);
         }
 
         // 4. Flush coins
@@ -187,11 +187,12 @@ private:
         if (!conn) return;
 
         // Atomic upsert: inserts if new, otherwise adds delta
+        // v2 schema: user_xp PK is (user_id, guild_id); guild_id=0 means global
         const char* query =
-            "INSERT INTO user_xp (user_id, total_xp, level, last_xp_gain) "
-            "VALUES (?, ?, 1, NOW()) "
+            "INSERT INTO user_xp (user_id, guild_id, total_xp, level, last_message_xp) "
+            "VALUES (?, 0, ?, 1, NOW()) "
             "ON DUPLICATE KEY UPDATE total_xp = total_xp + VALUES(total_xp), "
-            "last_xp_gain = NOW()";
+            "last_message_xp = NOW()";
 
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -214,7 +215,7 @@ private:
         mysql_stmt_close(stmt);
 
         // Now read back the current total_xp + level to recalculate level
-        const char* sel = "SELECT total_xp, level FROM user_xp WHERE user_id = ?";
+        const char* sel = "SELECT total_xp, level FROM user_xp WHERE user_id = ? AND guild_id = 0";
         stmt = mysql_stmt_init(conn->get());
         if (!stmt || mysql_stmt_prepare(stmt, sel, strlen(sel)) != 0) {
             if (stmt) mysql_stmt_close(stmt);
@@ -249,7 +250,7 @@ private:
                     mysql_stmt_free_result(stmt);
                     mysql_stmt_close(stmt);
 
-                    const char* upd = "UPDATE user_xp SET level = ? WHERE user_id = ?";
+                    const char* upd = "UPDATE user_xp SET level = ? WHERE user_id = ? AND guild_id = 0";
                     stmt = mysql_stmt_init(conn->get());
                     if (stmt && mysql_stmt_prepare(stmt, upd, strlen(upd)) == 0) {
                         MYSQL_BIND ub[2];
@@ -279,18 +280,18 @@ private:
     }
 
     // ---------------------------------------------------------------------------
-    // Atomic server XP flush
+    // Atomic guild XP flush (v2 schema: unified user_xp table with guild_id)
     // ---------------------------------------------------------------------------
-    void flush_server_xp(uint64_t user_id, uint64_t guild_id, uint64_t xp_delta,
+    void flush_guild_xp(uint64_t user_id, uint64_t guild_id, uint64_t xp_delta,
                          std::vector<LevelUpEvent>& level_ups) {
         auto conn = db_->get_pool()->acquire();
         if (!conn) return;
 
         const char* query =
-            "INSERT INTO server_xp (user_id, guild_id, server_xp, server_level, last_server_xp_gain) "
+            "INSERT INTO user_xp (user_id, guild_id, total_xp, level, last_message_xp) "
             "VALUES (?, ?, ?, 1, NOW()) "
-            "ON DUPLICATE KEY UPDATE server_xp = server_xp + VALUES(server_xp), "
-            "last_server_xp_gain = NOW()";
+            "ON DUPLICATE KEY UPDATE total_xp = total_xp + VALUES(total_xp), "
+            "last_message_xp = NOW()";
 
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -316,7 +317,7 @@ private:
         mysql_stmt_close(stmt);
 
         // Read back to check for level-up
-        const char* sel = "SELECT server_xp, server_level FROM server_xp WHERE user_id = ? AND guild_id = ?";
+        const char* sel = "SELECT total_xp, level FROM user_xp WHERE user_id = ? AND guild_id = ?";
         stmt = mysql_stmt_init(conn->get());
         if (!stmt || mysql_stmt_prepare(stmt, sel, strlen(sel)) != 0) {
             if (stmt) mysql_stmt_close(stmt);
@@ -353,7 +354,7 @@ private:
                     mysql_stmt_free_result(stmt);
                     mysql_stmt_close(stmt);
 
-                    const char* upd = "UPDATE server_xp SET server_level = ? WHERE user_id = ? AND guild_id = ?";
+                    const char* upd = "UPDATE user_xp SET level = ? WHERE user_id = ? AND guild_id = ?";
                     stmt = mysql_stmt_init(conn->get());
                     if (stmt && mysql_stmt_prepare(stmt, upd, strlen(upd)) == 0) {
                         MYSQL_BIND ub[3];

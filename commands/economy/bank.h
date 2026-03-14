@@ -54,7 +54,7 @@ inline dpp::embed create_bank_menu_embed(const UserData& user, Database* db) {
     if (loan) {
         description += "**Active Loan:**\n";
         description += "└ Principal: " + format_money(loan->principal) + "\n";
-        description += "└ Interest: " + format_money(loan->interest) + " (" + 
+        description += "└ Interest: " + format_money(loan->interest_rate) + " (" + 
                       std::to_string((int)LOAN_INTEREST_RATE) + "%)\n";
         description += "└ **Remaining: " + format_money(loan->remaining) + "**\n\n";
     }
@@ -117,9 +117,9 @@ inline dpp::embed create_loan_menu_embed(const UserData& user, Database* db) {
     } else {
         description = "**Active Loan Details:**\n\n";
         description += "**Principal:** " + format_money(loan->principal) + "\n";
-        description += "**Interest:** " + format_money(loan->interest) + " (" + 
+        description += "**Interest:** " + format_money(loan->interest_rate) + " (" + 
                       std::to_string((int)LOAN_INTEREST_RATE) + "%)\n";
-        description += "**Amount Paid:** " + format_money((loan->principal + loan->interest) - loan->remaining) + "\n";
+        description += "**Amount Paid:** " + format_money((loan->principal + loan->interest_rate) - loan->remaining) + "\n";
         description += "**Remaining:** " + format_money(loan->remaining) + "\n\n";
         
         // Show payment options

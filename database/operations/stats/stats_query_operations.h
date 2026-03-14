@@ -510,7 +510,7 @@ inline std::vector<UserActivityEntry> top_users_messages(Database* db, uint64_t 
     if (!db) return out;
     std::string sql =
         "SELECT user_id, SUM(messages) AS total "
-        "FROM user_activity_daily "
+        "FROM guild_user_activity_daily "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND " + date_condition("stat_date", days) + " "
         "GROUP BY user_id ORDER BY total DESC LIMIT " + std::to_string(limit);
@@ -536,7 +536,7 @@ inline std::vector<UserActivityEntry> top_users_voice(Database* db, uint64_t gui
     if (!db) return out;
     std::string sql =
         "SELECT user_id, SUM(voice_minutes) AS total "
-        "FROM user_activity_daily "
+        "FROM guild_user_activity_daily "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND " + date_condition("stat_date", days) + " "
         "GROUP BY user_id ORDER BY total DESC LIMIT " + std::to_string(limit);
@@ -562,7 +562,7 @@ inline std::vector<UserActivityEntry> top_users_commands(Database* db, uint64_t 
     if (!db) return out;
     std::string sql =
         "SELECT user_id, SUM(commands_used) AS total "
-        "FROM user_activity_daily "
+        "FROM guild_user_activity_daily "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND " + date_condition("stat_date", days) + " "
         "GROUP BY user_id ORDER BY total DESC LIMIT " + std::to_string(limit);
@@ -588,7 +588,7 @@ inline std::vector<UserDailyBreakdown> user_daily_breakdown(Database* db, uint64
     if (!db) return out;
     std::string sql =
         "SELECT stat_date, messages, voice_minutes, commands_used "
-        "FROM user_activity_daily "
+        "FROM guild_user_activity_daily "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND user_id='" + std::to_string(user_id) + "' "
         "AND " + date_condition("stat_date", days) + " "
@@ -708,10 +708,10 @@ inline UserTotals user_totals(Database* db, uint64_t guild_id, uint64_t user_id,
     if (!db) return t;
     std::string sql =
         "SELECT SUM(messages), SUM(voice_minutes), SUM(commands_used), "
-        "(SELECT stat_date FROM user_activity_daily "
+        "(SELECT stat_date FROM guild_user_activity_daily "
         " WHERE guild_id='" + std::to_string(guild_id) + "' AND user_id='" + std::to_string(user_id) + "'"
         " ORDER BY messages DESC LIMIT 1) "
-        "FROM user_activity_daily "
+        "FROM guild_user_activity_daily "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND user_id='" + std::to_string(user_id) + "' "
         "AND " + date_condition("stat_date", days);
@@ -902,6 +902,32 @@ inline int64_t total_voice_minutes(Database* db, uint64_t guild_id, int days = 7
     mysql_free_result(res);
     db->get_pool()->release(conn);
     return sec / 60;
+}
+
+// ── daily voice minutes from user_activity_daily ───────────────
+struct DailyVoiceMinutes { std::string date; int64_t minutes; };
+inline std::vector<DailyVoiceMinutes> daily_voice_minutes_series(Database* db, uint64_t guild_id, int days = 7) {
+    std::vector<DailyVoiceMinutes> out;
+    if (!db) return out;
+    std::string sql =
+        "SELECT stat_date, SUM(voice_minutes) AS mins "
+        "FROM guild_user_activity_daily "
+        "WHERE guild_id='" + std::to_string(guild_id) + "' "
+        "AND " + date_condition("stat_date", days) + " "
+        "GROUP BY stat_date ORDER BY stat_date";
+    std::shared_ptr<Connection> conn;
+    MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
+    if (!res) return out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res))) {
+        DailyVoiceMinutes d;
+        d.date    = row[0] ? row[0] : "";
+        d.minutes = row[1] ? std::stoll(row[1]) : 0;
+        out.push_back(d);
+    }
+    mysql_free_result(res);
+    db->get_pool()->release(conn);
+    return out;
 }
 
 } // namespace stats_queries

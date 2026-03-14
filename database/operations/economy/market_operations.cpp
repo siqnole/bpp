@@ -14,7 +14,7 @@ std::vector<MarketItem> Database::get_market_items(uint64_t guild_id) {
         return {};
     }
     const char* query = "SELECT guild_id, item_id, name, description, category, price, max_quantity, metadata, expires_at "
-                        "FROM market_items WHERE guild_id = ? AND (expires_at IS NULL OR expires_at > NOW()) "
+                        "FROM guild_market_items WHERE guild_id = ? AND (expires_at IS NULL OR expires_at > NOW()) "
                         "ORDER BY category ASC, price ASC";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     std::vector<MarketItem> results;
@@ -118,7 +118,7 @@ std::optional<MarketItem> Database::get_market_item(uint64_t guild_id, const std
         return std::nullopt;
     }
     const char* query = "SELECT guild_id, item_id, name, description, category, price, max_quantity, metadata, expires_at "
-                        "FROM market_items WHERE guild_id = ? AND item_id = ?";
+                        "FROM guild_market_items WHERE guild_id = ? AND item_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         log_error("get_market_item prepare");
@@ -221,7 +221,7 @@ bool Database::create_market_item(const MarketItem& item) {
         log_error("create_market_item acquire failed");
         return false;
     }
-    const char* query = "INSERT INTO market_items (guild_id, item_id, name, description, category, price, max_quantity, metadata, expires_at) "
+    const char* query = "INSERT INTO guild_market_items (guild_id, item_id, name, description, category, price, max_quantity, metadata, expires_at) "
                         "VALUES (?,?,?,?,?,?,?,?,?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -285,7 +285,7 @@ bool Database::update_market_item(const MarketItem& item) {
         log_error("update_market_item acquire failed");
         return false;
     }
-    const char* query = "UPDATE market_items SET name = ?, description = ?, category = ?, price = ?, max_quantity = ?, metadata = ?, expires_at = ? "
+    const char* query = "UPDATE guild_market_items SET name = ?, description = ?, category = ?, price = ?, max_quantity = ?, metadata = ?, expires_at = ? "
                         "WHERE guild_id = ? AND item_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -349,7 +349,7 @@ bool Database::delete_market_item(uint64_t guild_id, const std::string& item_id)
         log_error("delete_market_item acquire failed");
         return false;
     }
-    const char* query = "DELETE FROM market_items WHERE guild_id = ? AND item_id = ?";
+    const char* query = "DELETE FROM guild_market_items WHERE guild_id = ? AND item_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         log_error("delete_market_item prepare");
@@ -379,7 +379,7 @@ bool Database::adjust_market_item_quantity(uint64_t guild_id, const std::string&
         log_error("adjust_market_item_quantity acquire failed");
         return false;
     }
-    const char* query = "UPDATE market_items SET max_quantity = max_quantity + ? WHERE guild_id = ? AND item_id = ?";
+    const char* query = "UPDATE guild_market_items SET max_quantity = max_quantity + ? WHERE guild_id = ? AND item_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         log_error("adjust_market_item_quantity prepare");

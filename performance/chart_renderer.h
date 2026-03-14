@@ -92,7 +92,7 @@ inline std::string fmt_num(int64_t n) {
 // ── chart data types ───────────────────────────────────────────
 struct BarItem  { std::string label; int64_t value; };
 struct LinePoint { std::string label; double value; };
-struct LineSeries { std::string name; RGBA colour; std::vector<double> values; };
+struct LineSeries { std::string name; RGBA colour; std::vector<double> values; int axis = 0; /* 0=left, 1=right */ };
 struct PieSlice   { std::string label; double value; RGBA colour; };
 struct ScatterPoint { double x; double y; };
 struct ScatterSeries { std::string name; RGBA colour; std::vector<ScatterPoint> points; };
@@ -196,7 +196,11 @@ inline std::string render_line_chart(
     set_colour(cr, COL_CARD);
     cairo_fill(cr);
 
-    const int pad_l = 58, pad_r = 20, pad_t = 48, pad_b = 40;
+    // Determine if we have a right-axis series
+    bool has_right_axis = false;
+    for (auto& s : series) if (s.axis == 1) { has_right_axis = true; break; }
+
+    const int pad_l = 58, pad_r = has_right_axis ? 58 : 20, pad_t = 48, pad_b = 40;
     double chart_w = width - pad_l - pad_r;
     double chart_h = height - pad_t - pad_b;
 
@@ -208,16 +212,26 @@ inline std::string render_line_chart(
         cairo_show_text(cr, title.c_str());
     }
 
-    // find max value across all series
-    double max_val = 1;
+    // compute max for left axis (axis==0) and right axis (axis==1)
+    auto nice_max = [](double mx) -> double {
+        if (mx < 5) return 5;
+        double nice = std::pow(10, std::floor(std::log10(mx)));
+        return std::ceil(mx / nice) * nice;
+    };
+    double max_left = 1, max_right = 1;
     for (auto& s : series)
-        for (auto v : s.values) max_val = std::max(max_val, v);
-    // round up to nice number
-    double nice = std::pow(10, std::floor(std::log10(max_val)));
-    max_val = std::ceil(max_val / nice) * nice;
-    if (max_val < 5) max_val = 5;
+        for (auto v : s.values) {
+            if (s.axis == 0) max_left  = std::max(max_left, v);
+            else             max_right = std::max(max_right, v);
+        }
+    max_left  = nice_max(max_left);
+    max_right = nice_max(max_right);
 
-    // grid lines (5 horizontal)
+    // Find representative colour for right-axis label tinting
+    RGBA right_axis_col = COL_DIM;
+    for (auto& s : series) if (s.axis == 1) { right_axis_col = s.colour; break; }
+
+    // grid lines (5 horizontal) + left Y-axis labels
     for (int i = 0; i <= 4; ++i) {
         double gy = pad_t + chart_h * (1.0 - i / 4.0);
         set_colour(cr, COL_GRID);
@@ -226,12 +240,20 @@ inline std::string render_line_chart(
         cairo_line_to(cr, width - pad_r, gy);
         cairo_stroke(cr);
 
-        // y-axis label
+        // left y-axis label
         set_font(cr, 10, false);
         set_colour(cr, COL_DIM);
-        std::string yl = fmt_num(static_cast<int64_t>(max_val * i / 4.0));
+        std::string yl = fmt_num(static_cast<int64_t>(max_left * i / 4.0));
         cairo_move_to(cr, pad_l - text_width(cr, yl) - 6, gy + 4);
         cairo_show_text(cr, yl.c_str());
+
+        // right y-axis label (if dual axis)
+        if (has_right_axis) {
+            std::string yr = fmt_num(static_cast<int64_t>(max_right * i / 4.0));
+            cairo_set_source_rgba(cr, right_axis_col.r, right_axis_col.g, right_axis_col.b, 0.6);
+            cairo_move_to(cr, width - pad_r + 6, gy + 4);
+            cairo_show_text(cr, yr.c_str());
+        }
     }
 
     // x-axis labels (show at most 10)
@@ -244,15 +266,16 @@ inline std::string render_line_chart(
         cairo_show_text(cr, labels[i].c_str());
     }
 
-    // draw each series
+    // draw each series (use per-axis max for Y normalization)
     for (auto& s : series) {
         if (s.values.size() < 2) continue;
+        double s_max = (s.axis == 0) ? max_left : max_right;
         cairo_set_source_rgba(cr, s.colour.r, s.colour.g, s.colour.b, 0.9);
         cairo_set_line_width(cr, 2);
 
         for (size_t i = 0; i < s.values.size(); ++i) {
             double px = pad_l + (double)i / (s.values.size() - 1) * chart_w;
-            double py = pad_t + chart_h * (1.0 - s.values[i] / max_val);
+            double py = pad_t + chart_h * (1.0 - s.values[i] / s_max);
             if (i == 0) cairo_move_to(cr, px, py);
             else        cairo_line_to(cr, px, py);
         }
@@ -270,7 +293,7 @@ inline std::string render_line_chart(
         cairo_set_source_rgba(cr, s.colour.r, s.colour.g, s.colour.b, 1.0);
         for (size_t i = 0; i < s.values.size(); ++i) {
             double px = pad_l + (double)i / (s.values.size() - 1) * chart_w;
-            double py = pad_t + chart_h * (1.0 - s.values[i] / max_val);
+            double py = pad_t + chart_h * (1.0 - s.values[i] / s_max);
             cairo_arc(cr, px, py, 3, 0, 2 * M_PI);
             cairo_fill(cr);
         }

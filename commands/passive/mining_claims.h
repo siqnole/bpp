@@ -69,7 +69,7 @@ static void ensure_claim_tables(Database* db) {
     if (g_claim_tables_created) return;
     
     db->execute(
-        "CREATE TABLE IF NOT EXISTS mining_claims ("
+        "CREATE TABLE IF NOT EXISTS user_mining_claims ("
         "  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
         "  user_id BIGINT UNSIGNED NOT NULL,"
         "  ore_name VARCHAR(100) NOT NULL,"
@@ -110,7 +110,7 @@ static std::vector<ClaimInfo> get_user_claims(Database* db, uint64_t user_id) {
     
     // Only return non-expired claims
     std::string sql = "SELECT id, ore_name, ore_emoji, rarity, yield_min, yield_max, ore_value, expires_at, last_collect "
-                      "FROM mining_claims WHERE user_id = " + std::to_string(user_id) + " AND expires_at > NOW() ORDER BY id";
+                      "FROM user_mining_claims WHERE user_id = " + std::to_string(user_id) + " AND expires_at > NOW() ORDER BY id";
     if (mysql_query(conn->get(), sql.c_str()) == 0) {
         MYSQL_RES* res = mysql_store_result(conn->get());
         if (res) {
@@ -153,7 +153,7 @@ static bool create_claim(Database* db, uint64_t user_id, const std::string& ore_
     mysql_real_escape_string(conn->get(), esc_emoji, ore_emoji.c_str(), ore_emoji.size());
     mysql_real_escape_string(conn->get(), esc_rarity, rarity.c_str(), rarity.size());
     
-    std::string sql = "INSERT INTO mining_claims (user_id, ore_name, ore_emoji, rarity, yield_min, yield_max, ore_value, expires_at) VALUES (" +
+    std::string sql = "INSERT INTO user_mining_claims (user_id, ore_name, ore_emoji, rarity, yield_min, yield_max, ore_value, expires_at) VALUES (" +
         std::to_string(user_id) + ", '" + esc_name + "', '" + esc_emoji + "', '" + esc_rarity + "', " +
         std::to_string(yield_min) + ", " + std::to_string(yield_max) + ", " + std::to_string(ore_value) +
         ", DATE_ADD(NOW(), INTERVAL 7 DAY))";
@@ -165,7 +165,7 @@ static bool create_claim(Database* db, uint64_t user_id, const std::string& ore_
 static bool renew_claim(Database* db, uint64_t claim_id, uint64_t user_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    std::string sql = "UPDATE mining_claims SET expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY) WHERE id = " +
+    std::string sql = "UPDATE user_mining_claims SET expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY) WHERE id = " +
         std::to_string(claim_id) + " AND user_id = " + std::to_string(user_id);
     bool ok = mysql_query(conn->get(), sql.c_str()) == 0 && mysql_affected_rows(conn->get()) > 0;
     db->get_pool()->release(conn);
@@ -175,7 +175,7 @@ static bool renew_claim(Database* db, uint64_t claim_id, uint64_t user_id) {
 static bool abandon_claim(Database* db, uint64_t claim_id, uint64_t user_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return false;
-    std::string sql = "DELETE FROM mining_claims WHERE id = " + std::to_string(claim_id) + " AND user_id = " + std::to_string(user_id);
+    std::string sql = "DELETE FROM user_mining_claims WHERE id = " + std::to_string(claim_id) + " AND user_id = " + std::to_string(user_id);
     bool ok = mysql_query(conn->get(), sql.c_str()) == 0 && mysql_affected_rows(conn->get()) > 0;
     db->get_pool()->release(conn);
     return ok;
@@ -184,7 +184,7 @@ static bool abandon_claim(Database* db, uint64_t claim_id, uint64_t user_id) {
 static void update_claim_collect(Database* db, uint64_t claim_id) {
     auto conn = db->get_pool()->acquire();
     if (!conn) return;
-    std::string sql = "UPDATE mining_claims SET last_collect = NOW() WHERE id = " + std::to_string(claim_id);
+    std::string sql = "UPDATE user_mining_claims SET last_collect = NOW() WHERE id = " + std::to_string(claim_id);
     mysql_query(conn->get(), sql.c_str());
     db->get_pool()->release(conn);
 }

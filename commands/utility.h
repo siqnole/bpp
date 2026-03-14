@@ -17,6 +17,7 @@
 #include "utility/role.h"
 #include "utility/giveaways.h"
 #include "utility/privacy.h"
+#include "utility/snipe.h"
 #ifdef HAVE_LIBCURL
 #include "utility/steal.h"
 #endif
@@ -25,7 +26,7 @@
 namespace commands {
 
 // Main entry point for all utility commands
-::std::vector<Command*> get_utility_commands(CommandHandler* handler, bronx::db::Database* db = nullptr) {
+::std::vector<Command*> get_utility_commands(CommandHandler* handler, bronx::db::Database* db = nullptr, bronx::snipe::SnipeCache* snipe_cache = nullptr) {
     static ::std::vector<Command*> cmds;
     
     // Only initialize once
@@ -59,6 +60,10 @@ namespace commands {
         if (db) {
             cmds.push_back(utility::get_privacy_command(db));
         }
+        // Snipe command (requires snipe cache)
+        if (snipe_cache) {
+            cmds.push_back(utility::get_snipe_command(snipe_cache));
+        }
         // Giveaway commands (require db)
         if (db) {
             auto giveaway_cmds = utility::get_giveaway_commands(db);
@@ -72,7 +77,7 @@ namespace commands {
 }
 
 // Register utility interaction handlers
-inline void register_utility_interactions(dpp::cluster& bot, bronx::db::Database* db = nullptr) {
+inline void register_utility_interactions(dpp::cluster& bot, bronx::db::Database* db = nullptr, bronx::snipe::SnipeCache* snipe_cache = nullptr) {
     utility::register_poll_interactions(bot);
     utility::register_reactionrole_interactions(bot);
     utility::register_status_interactions(bot);
@@ -80,6 +85,9 @@ inline void register_utility_interactions(dpp::cluster& bot, bronx::db::Database
     if (db) {
         utility::register_giveaway_interactions(bot, db);
         utility::register_privacy_interactions(bot, db);
+    }
+    if (snipe_cache) {
+        utility::register_snipe_interactions(bot, snipe_cache);
     }
 }
 

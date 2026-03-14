@@ -223,8 +223,8 @@ bool Database::connect() {
                 "INDEX idx_world_events_type (event_type)) ENGINE=InnoDB");
 
             // --- column additions (MySQL-compatible) ---
-            migrations.push_back("CALL _add_col_if_missing('inventory','level','INT NOT NULL DEFAULT 1')");
-            migrations.push_back("CALL _add_col_if_missing('inventory','metadata','TEXT')");
+            migrations.push_back("CALL _add_col_if_missing('user_inventory','level','INT NOT NULL DEFAULT 1')");
+            migrations.push_back("CALL _add_col_if_missing('user_inventory','metadata','TEXT')");
             migrations.push_back("CALL _add_col_if_missing('shop_items','required_level','INT NOT NULL DEFAULT 0')");
             migrations.push_back("CALL _add_col_if_missing('shop_items','level','INT NOT NULL DEFAULT 1')");
             migrations.push_back("CALL _add_col_if_missing('shop_items','usable','BOOLEAN NOT NULL DEFAULT FALSE')");
@@ -233,15 +233,15 @@ bool Database::connect() {
             // --- data migrations ---
             // Fix zero-datetime rows that block ALTER under strict mode
             migrations.push_back(
-                "UPDATE inventory SET acquired_at = NOW() "
+                "UPDATE user_inventory SET acquired_at = NOW() "
                 "WHERE acquired_at = '0000-00-00 00:00:00' OR acquired_at IS NULL");
             // Expand inventory item_type ENUM to cover all shop categories
             migrations.push_back(
-                "ALTER TABLE inventory MODIFY COLUMN item_type "
+                "ALTER TABLE user_inventory MODIFY COLUMN item_type "
                 "ENUM('potion','upgrade','rod','bait','collectible','other',"
                 "'automation','boosts','title','tools','pickaxe','minecart','bag') NOT NULL");
             migrations.push_back(
-                "UPDATE inventory i JOIN shop_items s ON i.item_id = s.item_id "
+                "UPDATE user_inventory i JOIN shop_items s ON i.item_id = s.item_id "
                 "SET i.item_type = s.category");
             migrations.push_back(
                 "UPDATE shop_items SET metadata = JSON_SET(COALESCE(metadata,'{}'), '$.bonus', 0) "
@@ -250,7 +250,7 @@ bool Database::connect() {
                 "UPDATE shop_items SET metadata = JSON_SET(COALESCE(metadata,'{}'), '$.multiplier', 0) "
                 "WHERE category = 'bait' AND (metadata IS NULL OR JSON_EXTRACT(metadata,'$.multiplier') IS NULL)");
             migrations.push_back(
-                "UPDATE inventory i JOIN shop_items s ON i.item_id = s.item_id "
+                "UPDATE user_inventory i JOIN shop_items s ON i.item_id = s.item_id "
                 "SET i.metadata = JSON_SET(COALESCE(i.metadata, '{}'), "
                 "'$.bonus', COALESCE(JSON_EXTRACT(i.metadata,'$.bonus'), JSON_EXTRACT(s.metadata,'$.bonus'),0), "
                 "'$.multiplier', COALESCE(JSON_EXTRACT(i.metadata,'$.multiplier'), JSON_EXTRACT(s.metadata,'$.multiplier'),0)) "
@@ -262,7 +262,7 @@ bool Database::connect() {
                 "UPDATE shop_items SET metadata = JSON_REMOVE(metadata, '$.unlocks[0]') "
                 "WHERE item_id = 'bait_rare' AND JSON_CONTAINS(metadata,'\"common fish\"','$.unlocks')");
             migrations.push_back(
-                "UPDATE inventory i JOIN shop_items s ON i.item_id = s.item_id "
+                "UPDATE user_inventory i JOIN shop_items s ON i.item_id = s.item_id "
                 "SET i.metadata = JSON_REMOVE(i.metadata, '$.unlocks[0]') "
                 "WHERE s.item_id = 'bait_rare' AND JSON_CONTAINS(i.metadata,'\"common fish\"','$.unlocks')");
             migrations.push_back(
@@ -272,21 +272,21 @@ bool Database::connect() {
                 "UPDATE shop_items SET metadata = JSON_ARRAY_APPEND(metadata,'$.unlocks','\"celestial kraken\"') "
                 "WHERE item_id='bait_legendary' AND NOT JSON_CONTAINS(metadata,'\"celestial kraken\"','$.unlocks')");
             migrations.push_back(
-                "UPDATE inventory i JOIN shop_items s ON i.item_id=s.item_id "
+                "UPDATE user_inventory i JOIN shop_items s ON i.item_id=s.item_id "
                 "SET i.metadata = JSON_ARRAY_APPEND(i.metadata,'$.unlocks','\"abyssal leviathan\"') "
                 "WHERE s.item_id='bait_epic' AND NOT JSON_CONTAINS(i.metadata,'\"abyssal leviathan\"','$.unlocks')");
             migrations.push_back(
-                "UPDATE inventory i JOIN shop_items s ON i.item_id=s.item_id "
+                "UPDATE user_inventory i JOIN shop_items s ON i.item_id=s.item_id "
                 "SET i.metadata = JSON_ARRAY_APPEND(i.metadata,'$.unlocks','\"celestial kraken\"') "
                 "WHERE s.item_id='bait_legendary' AND NOT JSON_CONTAINS(i.metadata,'\"celestial kraken\"','$.unlocks')");
 
             // --- legacy fishing item migration ---
-            migrations.push_back("UPDATE inventory SET item_id='rod_wood', level=1 WHERE item_id='fishing_rod'");
-            migrations.push_back("UPDATE inventory SET item_id='bait_common', level=1 WHERE item_id='bait'");
-            migrations.push_back("UPDATE fish_catches SET rod_id='rod_wood' WHERE rod_id='fishing_rod'");
-            migrations.push_back("UPDATE fish_catches SET bait_id='bait_common' WHERE bait_id='bait'");
-            migrations.push_back("UPDATE active_fishing_gear SET active_rod_id='rod_wood' WHERE active_rod_id='fishing_rod'");
-            migrations.push_back("UPDATE active_fishing_gear SET active_bait_id='bait_common' WHERE active_bait_id='bait'");
+            migrations.push_back("UPDATE user_inventory SET item_id='rod_wood', level=1 WHERE item_id='fishing_rod'");
+            migrations.push_back("UPDATE user_inventory SET item_id='bait_common', level=1 WHERE item_id='bait'");
+            migrations.push_back("UPDATE user_fish_catches SET rod_id='rod_wood' WHERE rod_id='fishing_rod'");
+            migrations.push_back("UPDATE user_fish_catches SET bait_id='bait_common' WHERE bait_id='bait'");
+            migrations.push_back("UPDATE user_fishing_gear SET active_rod_id='rod_wood' WHERE active_rod_id='fishing_rod'");
+            migrations.push_back("UPDATE user_fishing_gear SET active_bait_id='bait_common' WHERE active_bait_id='bait'");
             migrations.push_back("DELETE FROM shop_items WHERE item_id IN ('fishing_rod','bait')");
 
             // --- seed shop items ---
@@ -313,11 +313,11 @@ ON DUPLICATE KEY UPDATE price=VALUES(price),name=VALUES(name),description=VALUES
 
             // --- sync inventory levels ---
             migrations.push_back(
-                "UPDATE inventory i JOIN shop_items s ON i.item_id=s.item_id "
+                "UPDATE user_inventory i JOIN shop_items s ON i.item_id=s.item_id "
                 "SET i.level = s.level "
                 "WHERE i.item_id LIKE 'rod_%' OR i.item_id LIKE 'bait_%'");
             migrations.push_back(
-                "UPDATE inventory i JOIN shop_items s ON i.item_id = s.item_id "
+                "UPDATE user_inventory i JOIN shop_items s ON i.item_id = s.item_id "
                 "SET i.metadata = s.metadata "
                 "WHERE s.category = 'bait'");
 
@@ -357,7 +357,7 @@ UPDATE shop_items SET metadata = CASE item_id
 
             // --- fix inventory bait levels ---
             migrations.push_back(
-                "UPDATE inventory SET level = CASE item_id "
+                "UPDATE user_inventory SET level = CASE item_id "
                 "WHEN 'bait_common' THEN 1 "
                 "WHEN 'bait_uncommon' THEN 2 "
                 "WHEN 'bait_rare' THEN 3 "
@@ -371,7 +371,7 @@ UPDATE shop_items SET metadata = CASE item_id
 
             // --- adjust inventory levels for rods + baits ---
             migrations.push_back(R"SQL(
-UPDATE inventory SET level = CASE item_id
+UPDATE user_inventory SET level = CASE item_id
     WHEN 'rod_wood' THEN 1
     WHEN 'rod_iron' THEN 2
     WHEN 'rod_steel' THEN 3
@@ -423,27 +423,27 @@ ON DUPLICATE KEY UPDATE price=VALUES(price),name=VALUES(name),description=VALUES
 
             // --- migrate existing inventory pickaxes to include multiore_chance/multiore_max ---
             migrations.push_back(R"SQL(
-UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.10, '$.multiore_max', 1)
+UPDATE user_inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.10, '$.multiore_max', 1)
 WHERE item_id = 'pickaxe_diamond' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
 )SQL");
             migrations.push_back(R"SQL(
-UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.15, '$.multiore_max', 2)
+UPDATE user_inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.15, '$.multiore_max', 2)
 WHERE item_id = 'pickaxe_p1' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
 )SQL");
             migrations.push_back(R"SQL(
-UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.20, '$.multiore_max', 2)
+UPDATE user_inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.20, '$.multiore_max', 2)
 WHERE item_id = 'pickaxe_p2' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
 )SQL");
             migrations.push_back(R"SQL(
-UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.25, '$.multiore_max', 3)
+UPDATE user_inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.25, '$.multiore_max', 3)
 WHERE item_id = 'pickaxe_p3' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
 )SQL");
             migrations.push_back(R"SQL(
-UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.30, '$.multiore_max', 4)
+UPDATE user_inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.30, '$.multiore_max', 4)
 WHERE item_id = 'pickaxe_p4' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
 )SQL");
             migrations.push_back(R"SQL(
-UPDATE inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.35, '$.multiore_max', 5)
+UPDATE user_inventory SET metadata = JSON_SET(metadata, '$.multiore_chance', 0.35, '$.multiore_max', 5)
 WHERE item_id = 'pickaxe_p5' AND (metadata NOT LIKE '%multiore_chance%' OR metadata IS NULL)
 )SQL");
 
@@ -537,6 +537,27 @@ CREATE TABLE IF NOT EXISTS guild_boost_events (
 ) ENGINE=InnoDB
 )SQL");
 
+            // ─── SNIPE: DELETED MESSAGES TABLE ──────────────────────────────
+            migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS deleted_messages (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    message_id BIGINT UNSIGNED NOT NULL,
+    guild_id BIGINT UNSIGNED NOT NULL,
+    channel_id BIGINT UNSIGNED NOT NULL,
+    author_id BIGINT UNSIGNED NOT NULL,
+    author_tag VARCHAR(128) NOT NULL DEFAULT '',
+    author_avatar VARCHAR(512) NOT NULL DEFAULT '',
+    content TEXT,
+    attachment_urls TEXT,
+    embeds_summary TEXT,
+    deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_channel_deleted (channel_id, deleted_at),
+    INDEX idx_guild_deleted (guild_id, deleted_at),
+    INDEX idx_author_deleted (author_id, deleted_at),
+    INDEX idx_message_id (message_id)
+) ENGINE=InnoDB
+)SQL");
+
             // Run all migrations on a single connection for speed
             int ok = execute_batch(migrations);
             auto migration_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -589,7 +610,7 @@ bool Database::get_connection_debug() const {
 // FISHING GEAR OPERATIONS
 // ========================================
 
-std::pair<std::string, std::string> Database::get_active_fishing_gear(uint64_t user_id) {
+std::pair<std::string, std::string> Database::get_active_fishing_gear(uint64_t user_id, uint64_t guild_id) {
     // retrieve the currently equipped rod and bait for the user
     // earlier versions of this function repeatedly crashed for a certain
     // problematic user due to invalid connections or a corrupt database row.
@@ -619,7 +640,7 @@ std::pair<std::string, std::string> Database::get_active_fishing_gear(uint64_t u
     
     try {
         const char* query =
-            "SELECT active_rod_id, active_bait_id FROM active_fishing_gear WHERE user_id = ?";
+            "SELECT active_rod_id, active_bait_id FROM user_fishing_gear WHERE user_id = ? AND guild_id = ?";
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (!stmt) {
             log_error("get_active_fishing_gear init stmt");
@@ -632,10 +653,13 @@ std::pair<std::string, std::string> Database::get_active_fishing_gear(uint64_t u
             pool_->release(conn);
             return gear;
         }
-        MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+        MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
         bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
         bind[0].buffer = (char*)&user_id;
         bind[0].is_unsigned = 1;
+        bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[1].buffer = (char*)&guild_id;
+        bind[1].is_unsigned = 1;
         mysql_stmt_bind_param(stmt, bind);
         if (mysql_stmt_execute(stmt) != 0) {
             log_error("get_active_fishing_gear execute");
@@ -672,13 +696,13 @@ std::pair<std::string, std::string> Database::get_active_fishing_gear(uint64_t u
         if (!gear.first.empty() && !get_shop_item(gear.first)) {
             std::cerr << DBG_DB CLR_WARN "get_active_fishing_gear: invalid rod id '" CLR_RST << gear.first
                       << CLR_WARN "' for user " CLR_RST CLR_USER << user_id << CLR_RST CLR_WARN ", clearing" CLR_RST << std::endl;
-            set_active_rod(user_id, "");
+            set_active_rod(user_id, "", guild_id);
             gear.first.clear();
         }
         if (!gear.second.empty() && !get_shop_item(gear.second)) {
             std::cerr << DBG_DB CLR_WARN "get_active_fishing_gear: invalid bait id '" CLR_RST << gear.second
                       << CLR_WARN "' for user " CLR_RST CLR_USER << user_id << CLR_RST CLR_WARN ", clearing" CLR_RST << std::endl;
-            set_active_bait(user_id, "");
+            set_active_bait(user_id, "", guild_id);
             gear.second.clear();
         }
 
@@ -690,7 +714,7 @@ std::pair<std::string, std::string> Database::get_active_fishing_gear(uint64_t u
 }
 
 
-bool Database::set_active_rod(uint64_t user_id, const std::string& rod_id) {
+bool Database::set_active_rod(uint64_t user_id, const std::string& rod_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("set_active_rod acquire failed");
@@ -699,7 +723,7 @@ bool Database::set_active_rod(uint64_t user_id, const std::string& rod_id) {
     
     // Use UPSERT to avoid race conditions between UPDATE and INSERT
     const char* upsert_q = 
-        "INSERT INTO active_fishing_gear (user_id, active_rod_id) VALUES (?, ?) "
+        "INSERT INTO user_fishing_gear (user_id, guild_id, active_rod_id) VALUES (?, ?, ?) "
         "ON DUPLICATE KEY UPDATE active_rod_id = VALUES(active_rod_id)";
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -717,14 +741,17 @@ bool Database::set_active_rod(uint64_t user_id, const std::string& rod_id) {
         return false;
     }
     
-    MYSQL_BIND bind[2];
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
-    bind[1].buffer_type = MYSQL_TYPE_STRING;
-    bind[1].buffer = (char*)rod_id.c_str();
-    bind[1].buffer_length = rod_id.length();
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)rod_id.c_str();
+    bind[2].buffer_length = rod_id.length();
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = (mysql_stmt_execute(stmt) == 0);
@@ -739,14 +766,14 @@ bool Database::set_active_rod(uint64_t user_id, const std::string& rod_id) {
     return success;
 }
 
-bool Database::set_active_bait(uint64_t user_id, const std::string& bait_id) {
+bool Database::set_active_bait(uint64_t user_id, const std::string& bait_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("set_active_bait acquire failed");
         return false;
     }
     const char* upsert_q =
-        "INSERT INTO active_fishing_gear (user_id, active_bait_id) VALUES (?, ?) "
+        "INSERT INTO user_fishing_gear (user_id, guild_id, active_bait_id) VALUES (?, ?, ?) "
         "ON DUPLICATE KEY UPDATE active_bait_id = VALUES(active_bait_id)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, upsert_q, strlen(upsert_q)) != 0) {
@@ -755,14 +782,17 @@ bool Database::set_active_bait(uint64_t user_id, const std::string& bait_id) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[2];
+    MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
-    bind[1].buffer_type = MYSQL_TYPE_STRING;
-    bind[1].buffer = (char*)bait_id.c_str();
-    bind[1].buffer_length = bait_id.length();
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)bait_id.c_str();
+    bind[2].buffer_length = bait_id.length();
     mysql_stmt_bind_param(stmt, bind);
     bool success = (mysql_stmt_execute(stmt) == 0);
     if (!success) log_error("set_active_bait upsert execute");
@@ -1216,13 +1246,13 @@ int64_t Database::get_lottery_total_tickets() {
 // AUTOFISHER OPERATIONS
 // ============================================================================
 
-bool Database::has_autofisher(uint64_t user_id) {
+bool Database::has_autofisher(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("has_autofisher acquire failed");
         return false;
     }
-    const char* q = "SELECT count FROM autofishers WHERE user_id = ?";
+    const char* q = "SELECT count FROM user_autofishers WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("has_autofisher prepare");
@@ -1230,10 +1260,13 @@ bool Database::has_autofisher(uint64_t user_id) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     if (mysql_stmt_execute(stmt) != 0) {
@@ -1255,13 +1288,13 @@ bool Database::has_autofisher(uint64_t user_id) {
     return has;
 }
 
-bool Database::create_autofisher(uint64_t user_id) {
+bool Database::create_autofisher(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("create_autofisher acquire failed");
         return false;
     }
-    const char* q = "INSERT INTO autofishers (user_id, count, active) VALUES (?, 1, FALSE) "
+    const char* q = "INSERT INTO user_autofishers (user_id, guild_id, count, active) VALUES (?, ?, 1, FALSE) "
                     "ON DUPLICATE KEY UPDATE count = count + 1";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
@@ -1270,10 +1303,13 @@ bool Database::create_autofisher(uint64_t user_id) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     bool success = (mysql_stmt_execute(stmt) == 0);
@@ -1283,15 +1319,15 @@ bool Database::create_autofisher(uint64_t user_id) {
     return success;
 }
 
-bool Database::upgrade_autofisher_efficiency(uint64_t user_id) {
+bool Database::upgrade_autofisher_efficiency(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("upgrade_autofisher_efficiency acquire failed");
         return false;
     }
-    const char* q = "UPDATE autofishers SET efficiency_level = efficiency_level + 1, "
+    const char* q = "UPDATE user_autofishers SET efficiency_level = efficiency_level + 1, "
                     "efficiency_multiplier = 1.00 + (efficiency_level + 1) * 0.10 "
-                    "WHERE user_id = ?";
+                    "WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("upgrade_autofisher_efficiency prepare");
@@ -1299,10 +1335,13 @@ bool Database::upgrade_autofisher_efficiency(uint64_t user_id) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     bool success = (mysql_stmt_execute(stmt) == 0);
@@ -1312,13 +1351,13 @@ bool Database::upgrade_autofisher_efficiency(uint64_t user_id) {
     return success;
 }
 
-int64_t Database::get_autofisher_balance(uint64_t user_id) {
+int64_t Database::get_autofisher_balance(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("get_autofisher_balance acquire failed");
         return 0;
     }
-    const char* q = "SELECT balance FROM autofishers WHERE user_id = ?";
+    const char* q = "SELECT balance FROM user_autofishers WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("get_autofisher_balance prepare");
@@ -1326,10 +1365,13 @@ int64_t Database::get_autofisher_balance(uint64_t user_id) {
         pool_->release(conn);
         return 0;
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     if (mysql_stmt_execute(stmt) != 0) {
@@ -1351,14 +1393,14 @@ int64_t Database::get_autofisher_balance(uint64_t user_id) {
     return balance;
 }
 
-bool Database::deposit_to_autofisher(uint64_t user_id, int64_t amount) {
+bool Database::deposit_to_autofisher(uint64_t user_id, int64_t amount, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("deposit_to_autofisher acquire failed");
         return false;
     }
-    const char* q = "UPDATE autofishers SET balance = balance + ?, total_deposited = total_deposited + ? "
-                    "WHERE user_id = ?";
+    const char* q = "UPDATE user_autofishers SET balance = balance + ?, total_deposited = total_deposited + ? "
+                    "WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("deposit_to_autofisher prepare");
@@ -1366,7 +1408,7 @@ bool Database::deposit_to_autofisher(uint64_t user_id, int64_t amount) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[3]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[4]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&amount;
     bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -1374,6 +1416,9 @@ bool Database::deposit_to_autofisher(uint64_t user_id, int64_t amount) {
     bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[2].buffer = (char*)&user_id;
     bind[2].is_unsigned = 1;
+    bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[3].buffer = (char*)&guild_id;
+    bind[3].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     bool success = (mysql_stmt_execute(stmt) == 0);
@@ -1383,14 +1428,14 @@ bool Database::deposit_to_autofisher(uint64_t user_id, int64_t amount) {
     return success;
 }
 
-bool Database::withdraw_from_autofisher(uint64_t user_id, int64_t amount) {
+bool Database::withdraw_from_autofisher(uint64_t user_id, int64_t amount, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("withdraw_from_autofisher acquire failed");
         return false;
     }
-    const char* q = "UPDATE autofishers SET balance = balance - ? "
-                    "WHERE user_id = ? AND balance >= ?";
+    const char* q = "UPDATE user_autofishers SET balance = balance - ? "
+                    "WHERE user_id = ? AND guild_id = ? AND balance >= ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("withdraw_from_autofisher prepare");
@@ -1398,14 +1443,17 @@ bool Database::withdraw_from_autofisher(uint64_t user_id, int64_t amount) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[3]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[4]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&amount;
     bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[1].buffer = (char*)&user_id;
     bind[1].is_unsigned = 1;
     bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[2].buffer = (char*)&amount;
+    bind[2].buffer = (char*)&guild_id;
+    bind[2].is_unsigned = 1;
+    bind[3].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[3].buffer = (char*)&amount;
     mysql_stmt_bind_param(stmt, bind);
     
     bool success = (mysql_stmt_execute(stmt) == 0 && mysql_stmt_affected_rows(stmt) > 0);
@@ -1415,14 +1463,14 @@ bool Database::withdraw_from_autofisher(uint64_t user_id, int64_t amount) {
     return success;
 }
 
-std::vector<uint64_t> Database::get_all_active_autofishers() {
-    std::vector<uint64_t> result;
+std::vector<std::pair<uint64_t,uint64_t>> Database::get_all_active_autofishers() {
+    std::vector<std::pair<uint64_t,uint64_t>> result;
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("get_all_active_autofishers acquire failed");
         return result;
     }
-    const char* q = "SELECT user_id FROM autofishers WHERE active = TRUE";
+    const char* q = "SELECT user_id, guild_id FROM user_autofishers WHERE active = TRUE";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("get_all_active_autofishers prepare");
@@ -1438,15 +1486,19 @@ std::vector<uint64_t> Database::get_all_active_autofishers() {
         return result;
     }
     
-    MYSQL_BIND res[1]; memset(res, 0, sizeof(res));
+    MYSQL_BIND res[2]; memset(res, 0, sizeof(res));
     uint64_t user_id = 0;
+    uint64_t guild_id = 0;
     res[0].buffer_type = MYSQL_TYPE_LONGLONG;
     res[0].buffer = (char*)&user_id;
     res[0].is_unsigned = 1;
+    res[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    res[1].buffer = (char*)&guild_id;
+    res[1].is_unsigned = 1;
     mysql_stmt_bind_result(stmt, res);
     
     while (mysql_stmt_fetch(stmt) == 0) {
-        result.push_back(user_id);
+        result.push_back({user_id, guild_id});
     }
     
     mysql_stmt_close(stmt);
@@ -1454,13 +1506,13 @@ std::vector<uint64_t> Database::get_all_active_autofishers() {
     return result;
 }
 
-bool Database::activate_autofisher(uint64_t user_id) {
+bool Database::activate_autofisher(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("activate_autofisher acquire failed");
         return false;
     }
-    const char* q = "UPDATE autofishers SET active = TRUE WHERE user_id = ? AND count > 0";
+    const char* q = "UPDATE user_autofishers SET active = TRUE WHERE user_id = ? AND guild_id = ? AND count > 0";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("activate_autofisher prepare");
@@ -1468,10 +1520,13 @@ bool Database::activate_autofisher(uint64_t user_id) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     if (mysql_stmt_execute(stmt) != 0) {
@@ -1486,13 +1541,13 @@ bool Database::activate_autofisher(uint64_t user_id) {
     return success;
 }
 
-bool Database::deactivate_autofisher(uint64_t user_id) {
+bool Database::deactivate_autofisher(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("deactivate_autofisher acquire failed");
         return false;
     }
-    const char* q = "UPDATE autofishers SET active = FALSE WHERE user_id = ?";
+    const char* q = "UPDATE user_autofishers SET active = FALSE WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("deactivate_autofisher prepare");
@@ -1500,10 +1555,13 @@ bool Database::deactivate_autofisher(uint64_t user_id) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     bool success = (mysql_stmt_execute(stmt) == 0);
@@ -1513,7 +1571,7 @@ bool Database::deactivate_autofisher(uint64_t user_id) {
     return success;
 }
 
-int Database::get_autofisher_tier(uint64_t user_id) {
+int Database::get_autofisher_tier(uint64_t user_id, uint64_t guild_id) {
     // Determine tier from inventory (auto_fisher_1, auto_fisher_2 items)
     // Tier 2 > Tier 1, return highest tier available
     if (has_item(user_id, "auto_fisher_2", 1)) return 2;
@@ -1521,13 +1579,13 @@ int Database::get_autofisher_tier(uint64_t user_id) {
     return 0;
 }
 
-bool Database::update_autofisher_last_run(uint64_t user_id) {
+bool Database::update_autofisher_last_run(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("update_autofisher_last_run acquire failed");
         return false;
     }
-    const char* q = "UPDATE autofishers SET last_claim = NOW() WHERE user_id = ?";
+    const char* q = "UPDATE user_autofishers SET last_claim = NOW() WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("update_autofisher_last_run prepare");
@@ -1535,10 +1593,13 @@ bool Database::update_autofisher_last_run(uint64_t user_id) {
         pool_->release(conn);
         return false;
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     bool success = (mysql_stmt_execute(stmt) == 0);
@@ -1548,13 +1609,13 @@ bool Database::update_autofisher_last_run(uint64_t user_id) {
     return success;
 }
 
-std::optional<std::chrono::system_clock::time_point> Database::get_autofisher_last_run(uint64_t user_id) {
+std::optional<std::chrono::system_clock::time_point> Database::get_autofisher_last_run(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) {
         log_error("get_autofisher_last_run acquire failed");
         return {};
     }
-    const char* q = "SELECT UNIX_TIMESTAMP(last_claim) FROM autofishers WHERE user_id = ?";
+    const char* q = "SELECT UNIX_TIMESTAMP(last_claim) FROM user_autofishers WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("get_autofisher_last_run prepare");
@@ -1562,10 +1623,13 @@ std::optional<std::chrono::system_clock::time_point> Database::get_autofisher_la
         pool_->release(conn);
         return {};
     }
-    MYSQL_BIND bind[1]; memset(bind, 0, sizeof(bind));
+    MYSQL_BIND bind[2]; memset(bind, 0, sizeof(bind));
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = (char*)&guild_id;
+    bind[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
     
     if (mysql_stmt_execute(stmt) != 0) {
@@ -1597,13 +1661,13 @@ std::optional<std::chrono::system_clock::time_point> Database::get_autofisher_la
 // Autofisher v2 methods
 // ============================================================
 
-std::optional<AutofisherConfig> Database::get_autofisher_config(uint64_t user_id) {
+std::optional<AutofisherConfig> Database::get_autofisher_config(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("get_autofisher_config acquire"); return {}; }
     const char* q =
         "SELECT active, af_rod_id, af_bait_id, af_bait_qty, af_bait_level, af_bait_meta, "
         "max_bank_draw, auto_sell, as_trigger, as_threshold, bag_limit "
-        "FROM autofishers WHERE user_id = ?";
+        "FROM user_autofishers WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("get_autofisher_config prepare");
@@ -1611,8 +1675,9 @@ std::optional<AutofisherConfig> Database::get_autofisher_config(uint64_t user_id
         pool_->release(conn);
         return {};
     }
-    MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
     bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = &user_id; bp[0].is_unsigned = 1;
+    bp[1].buffer_type = MYSQL_TYPE_LONGLONG; bp[1].buffer = &guild_id; bp[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bp);
     if (mysql_stmt_execute(stmt) != 0) {
         log_error("get_autofisher_config execute");
@@ -1644,8 +1709,9 @@ std::optional<AutofisherConfig> Database::get_autofisher_config(uint64_t user_id
         mysql_stmt_close(stmt); pool_->release(conn); return {};
     }
     AutofisherConfig cfg;
+    cfg.guild_id      = guild_id;
     cfg.active        = (active_v != 0);
-    cfg.tier          = get_autofisher_tier(user_id);
+    cfg.tier          = get_autofisher_tier(user_id, guild_id);
     cfg.af_rod_id     = rod_null  ? "" : std::string(rod_buf,  rod_len);
     cfg.af_bait_id    = bait_null ? "" : std::string(bait_buf, bait_len);
     cfg.af_bait_qty   = bait_qty;
@@ -1660,130 +1726,137 @@ std::optional<AutofisherConfig> Database::get_autofisher_config(uint64_t user_id
     return cfg;
 }
 
-bool Database::autofisher_set_rod(uint64_t user_id, const std::string& rod_id) {
+bool Database::autofisher_set_rod(uint64_t user_id, const std::string& rod_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_set_rod acquire"); return false; }
-    const char* q = "UPDATE autofishers SET af_rod_id = ? WHERE user_id = ?";
+    const char* q = "UPDATE user_autofishers SET af_rod_id = ? WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_set_rod prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
-    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[3]; memset(bp, 0, sizeof(bp));
     unsigned long rid_len = rod_id.size();
     bp[0].buffer_type=MYSQL_TYPE_STRING; bp[0].buffer=(void*)rod_id.c_str(); bp[0].length=&rid_len;
     bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&user_id; bp[1].is_unsigned=1;
+    bp[2].buffer_type=MYSQL_TYPE_LONGLONG; bp[2].buffer=&guild_id; bp[2].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);
     if (!ok) log_error("autofisher_set_rod execute");
     mysql_stmt_close(stmt); pool_->release(conn); return ok;
 }
 
-bool Database::autofisher_set_bait(uint64_t user_id, const std::string& bait_id, int level, const std::string& meta) {
+bool Database::autofisher_set_bait(uint64_t user_id, const std::string& bait_id, int level, const std::string& meta, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_set_bait acquire"); return false; }
-    const char* q = "UPDATE autofishers SET af_bait_id=?, af_bait_level=?, af_bait_meta=? WHERE user_id=?";
+    const char* q = "UPDATE user_autofishers SET af_bait_id=?, af_bait_level=?, af_bait_meta=? WHERE user_id=? AND guild_id=?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_set_bait prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
-    MYSQL_BIND bp[4]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[5]; memset(bp, 0, sizeof(bp));
     unsigned long bid_len=bait_id.size(), meta_len=meta.size();
     bp[0].buffer_type=MYSQL_TYPE_STRING;   bp[0].buffer=(void*)bait_id.c_str(); bp[0].length=&bid_len;
     bp[1].buffer_type=MYSQL_TYPE_LONG;     bp[1].buffer=&level;
     bp[2].buffer_type=MYSQL_TYPE_STRING;   bp[2].buffer=(void*)meta.c_str();    bp[2].length=&meta_len;
     bp[3].buffer_type=MYSQL_TYPE_LONGLONG; bp[3].buffer=&user_id; bp[3].is_unsigned=1;
+    bp[4].buffer_type=MYSQL_TYPE_LONGLONG; bp[4].buffer=&guild_id; bp[4].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);
     if (!ok) log_error("autofisher_set_bait execute");
     mysql_stmt_close(stmt); pool_->release(conn); return ok;
 }
 
-bool Database::autofisher_deposit_bait(uint64_t user_id, int qty) {
+bool Database::autofisher_deposit_bait(uint64_t user_id, int qty, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_deposit_bait acquire"); return false; }
-    const char* q = "UPDATE autofishers SET af_bait_qty = af_bait_qty + ? WHERE user_id = ?";
+    const char* q = "UPDATE user_autofishers SET af_bait_qty = af_bait_qty + ? WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_deposit_bait prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
-    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[3]; memset(bp, 0, sizeof(bp));
     bp[0].buffer_type=MYSQL_TYPE_LONG;     bp[0].buffer=&qty;
     bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&user_id; bp[1].is_unsigned=1;
+    bp[2].buffer_type=MYSQL_TYPE_LONGLONG; bp[2].buffer=&guild_id; bp[2].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);
     if (!ok) log_error("autofisher_deposit_bait execute");
     mysql_stmt_close(stmt); pool_->release(conn); return ok;
 }
 
-bool Database::autofisher_consume_bait(uint64_t user_id, int qty) {
+bool Database::autofisher_consume_bait(uint64_t user_id, int qty, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_consume_bait acquire"); return false; }
-    const char* q = "UPDATE autofishers SET af_bait_qty = GREATEST(0, af_bait_qty - ?) WHERE user_id = ?";
+    const char* q = "UPDATE user_autofishers SET af_bait_qty = GREATEST(0, af_bait_qty - ?) WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_consume_bait prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
-    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[3]; memset(bp, 0, sizeof(bp));
     bp[0].buffer_type=MYSQL_TYPE_LONG;     bp[0].buffer=&qty;
     bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&user_id; bp[1].is_unsigned=1;
+    bp[2].buffer_type=MYSQL_TYPE_LONGLONG; bp[2].buffer=&guild_id; bp[2].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);
     if (!ok) log_error("autofisher_consume_bait execute");
     mysql_stmt_close(stmt); pool_->release(conn); return ok;
 }
 
-bool Database::autofisher_set_max_bank_draw(uint64_t user_id, int64_t amount) {
+bool Database::autofisher_set_max_bank_draw(uint64_t user_id, int64_t amount, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_set_max_bank_draw acquire"); return false; }
-    const char* q = "UPDATE autofishers SET max_bank_draw = ? WHERE user_id = ?";
+    const char* q = "UPDATE user_autofishers SET max_bank_draw = ? WHERE user_id = ? AND guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_set_max_bank_draw prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
-    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[3]; memset(bp, 0, sizeof(bp));
     bp[0].buffer_type=MYSQL_TYPE_LONGLONG; bp[0].buffer=&amount;
     bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&user_id; bp[1].is_unsigned=1;
+    bp[2].buffer_type=MYSQL_TYPE_LONGLONG; bp[2].buffer=&guild_id; bp[2].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);
     if (!ok) log_error("autofisher_set_max_bank_draw execute");
     mysql_stmt_close(stmt); pool_->release(conn); return ok;
 }
 
-bool Database::autofisher_set_autosell(uint64_t user_id, bool enabled, const std::string& trigger, int64_t threshold) {
+bool Database::autofisher_set_autosell(uint64_t user_id, bool enabled, const std::string& trigger, int64_t threshold, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_set_autosell acquire"); return false; }
-    const char* q = "UPDATE autofishers SET auto_sell=?, as_trigger=?, as_threshold=? WHERE user_id=?";
+    const char* q = "UPDATE user_autofishers SET auto_sell=?, as_trigger=?, as_threshold=? WHERE user_id=? AND guild_id=?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_set_autosell prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
-    MYSQL_BIND bp[4]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[5]; memset(bp, 0, sizeof(bp));
     int8_t en = enabled ? 1 : 0;
     unsigned long trig_len = trigger.size();
     bp[0].buffer_type=MYSQL_TYPE_TINY;     bp[0].buffer=&en;
     bp[1].buffer_type=MYSQL_TYPE_STRING;   bp[1].buffer=(void*)trigger.c_str(); bp[1].length=&trig_len;
     bp[2].buffer_type=MYSQL_TYPE_LONGLONG; bp[2].buffer=&threshold;
     bp[3].buffer_type=MYSQL_TYPE_LONGLONG; bp[3].buffer=&user_id; bp[3].is_unsigned=1;
+    bp[4].buffer_type=MYSQL_TYPE_LONGLONG; bp[4].buffer=&guild_id; bp[4].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);
     if (!ok) log_error("autofisher_set_autosell execute");
     mysql_stmt_close(stmt); pool_->release(conn); return ok;
 }
 
-bool Database::autofisher_add_fish(uint64_t user_id, const std::string& fish_name, int64_t value, const std::string& metadata) {
+bool Database::autofisher_add_fish(uint64_t user_id, const std::string& fish_name, int64_t value, const std::string& metadata, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_add_fish acquire"); return false; }
-    const char* q = "INSERT INTO autofisher_fish (user_id, fish_name, value, metadata) VALUES (?,?,?,?)";
+    const char* q = "INSERT INTO autofisher_fish (user_id, guild_id, fish_name, value, metadata) VALUES (?,?,?,?,?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_add_fish prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
-    MYSQL_BIND bp[4]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[5]; memset(bp, 0, sizeof(bp));
     unsigned long name_len=fish_name.size(), meta_len=metadata.size();
     bp[0].buffer_type=MYSQL_TYPE_LONGLONG; bp[0].buffer=&user_id;  bp[0].is_unsigned=1;
-    bp[1].buffer_type=MYSQL_TYPE_STRING;   bp[1].buffer=(void*)fish_name.c_str(); bp[1].length=&name_len;
-    bp[2].buffer_type=MYSQL_TYPE_LONGLONG; bp[2].buffer=&value;
-    bp[3].buffer_type=MYSQL_TYPE_STRING;   bp[3].buffer=(void*)metadata.c_str();  bp[3].length=&meta_len;
+    bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&guild_id; bp[1].is_unsigned=1;
+    bp[2].buffer_type=MYSQL_TYPE_STRING;   bp[2].buffer=(void*)fish_name.c_str(); bp[2].length=&name_len;
+    bp[3].buffer_type=MYSQL_TYPE_LONGLONG; bp[3].buffer=&value;
+    bp[4].buffer_type=MYSQL_TYPE_STRING;   bp[4].buffer=(void*)metadata.c_str();  bp[4].length=&meta_len;
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);
     if (!ok) log_error("autofisher_add_fish execute");
@@ -1793,13 +1866,14 @@ bool Database::autofisher_add_fish(uint64_t user_id, const std::string& fish_nam
 // ---------------------------------------------------------------------------
 // Batch insert multiple fish into autofisher storage in one round-trip.
 // ---------------------------------------------------------------------------
-bool Database::autofisher_add_fish_batch(uint64_t user_id, const std::vector<AutofishFishRow>& rows) {
+bool Database::autofisher_add_fish_batch(uint64_t user_id, const std::vector<AutofishFishRow>& rows, uint64_t guild_id) {
     if (rows.empty()) return true;
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_add_fish_batch acquire"); return false; }
 
-    std::string sql = "INSERT INTO autofisher_fish (user_id, fish_name, value, metadata) VALUES ";
+    std::string sql = "INSERT INTO autofisher_fish (user_id, guild_id, fish_name, value, metadata) VALUES ";
     std::string uid_str = std::to_string(user_id);
+    std::string gid_str = std::to_string(guild_id);
 
     for (size_t i = 0; i < rows.size(); ++i) {
         if (i > 0) sql += ',';
@@ -1809,6 +1883,8 @@ bool Database::autofisher_add_fish_batch(uint64_t user_id, const std::vector<Aut
                                  std::min(rows[i].metadata.size(), (size_t)4096));
         sql += '(';
         sql += uid_str;
+        sql += ',';
+        sql += gid_str;
         sql += ",'";
         sql += esc_name;
         sql += "',";
@@ -1827,17 +1903,18 @@ bool Database::autofisher_add_fish_batch(uint64_t user_id, const std::vector<Aut
     return ok;
 }
 
-std::vector<AutofishFish> Database::autofisher_get_fish(uint64_t user_id) {
+std::vector<AutofishFish> Database::autofisher_get_fish(uint64_t user_id, uint64_t guild_id) {
     std::vector<AutofishFish> out;
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_get_fish acquire"); return out; }
-    const char* q = "SELECT id, fish_name, value, metadata FROM autofisher_fish WHERE user_id=? ORDER BY caught_at";
+    const char* q = "SELECT id, fish_name, value, metadata FROM autofisher_fish WHERE user_id=? AND guild_id=? ORDER BY caught_at";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         log_error("autofisher_get_fish prepare"); if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return out;
     }
-    MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
     bp[0].buffer_type=MYSQL_TYPE_LONGLONG; bp[0].buffer=&user_id; bp[0].is_unsigned=1;
+    bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&guild_id; bp[1].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     if (mysql_stmt_execute(stmt) != 0) {
         log_error("autofisher_get_fish execute"); mysql_stmt_close(stmt); pool_->release(conn); return out;
@@ -1855,6 +1932,8 @@ std::vector<AutofishFish> Database::autofisher_get_fish(uint64_t user_id) {
     while (mysql_stmt_fetch(stmt) == 0) {
         AutofishFish f;
         f.id        = id;
+        f.user_id   = user_id;
+        f.guild_id  = guild_id;
         f.fish_name = std::string(name_buf, name_len);
         f.value     = value;
         f.metadata  = meta_null ? "" : std::string(meta_buf, meta_len);
@@ -1863,16 +1942,17 @@ std::vector<AutofishFish> Database::autofisher_get_fish(uint64_t user_id) {
     mysql_stmt_close(stmt); pool_->release(conn); return out;
 }
 
-int Database::autofisher_fish_count(uint64_t user_id) {
+int Database::autofisher_fish_count(uint64_t user_id, uint64_t guild_id) {
     auto conn = pool_->acquire();
     if (!conn) return 0;
-    const char* q = "SELECT COUNT(*) FROM autofisher_fish WHERE user_id=?";
+    const char* q = "SELECT COUNT(*) FROM autofisher_fish WHERE user_id=? AND guild_id=?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         if (stmt) mysql_stmt_close(stmt); pool_->release(conn); return 0;
     }
-    MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
     bp[0].buffer_type=MYSQL_TYPE_LONGLONG; bp[0].buffer=&user_id; bp[0].is_unsigned=1;
+    bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&guild_id; bp[1].is_unsigned=1;
     mysql_stmt_bind_param(stmt, bp);
     if (mysql_stmt_execute(stmt) != 0) { mysql_stmt_close(stmt); pool_->release(conn); return 0; }
     int64_t count=0;
@@ -1883,18 +1963,19 @@ int Database::autofisher_fish_count(uint64_t user_id) {
     mysql_stmt_close(stmt); pool_->release(conn); return (int)count;
 }
 
-int64_t Database::autofisher_clear_fish(uint64_t user_id) {
+int64_t Database::autofisher_clear_fish(uint64_t user_id, uint64_t guild_id) {
     // Sum values then delete
     auto conn = pool_->acquire();
     if (!conn) { log_error("autofisher_clear_fish acquire"); return 0; }
     // sum
     int64_t total = 0;
     {
-        const char* q = "SELECT COALESCE(SUM(value),0) FROM autofisher_fish WHERE user_id=?";
+        const char* q = "SELECT COALESCE(SUM(value),0) FROM autofisher_fish WHERE user_id=? AND guild_id=?";
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (stmt && mysql_stmt_prepare(stmt, q, strlen(q)) == 0) {
-            MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+            MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
             bp[0].buffer_type=MYSQL_TYPE_LONGLONG; bp[0].buffer=&user_id; bp[0].is_unsigned=1;
+            bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&guild_id; bp[1].is_unsigned=1;
             mysql_stmt_bind_param(stmt, bp);
             if (mysql_stmt_execute(stmt) == 0) {
                 MYSQL_BIND br[1]; memset(br, 0, sizeof(br));
@@ -1907,11 +1988,12 @@ int64_t Database::autofisher_clear_fish(uint64_t user_id) {
     }
     // delete
     {
-        const char* q = "DELETE FROM autofisher_fish WHERE user_id=?";
+        const char* q = "DELETE FROM autofisher_fish WHERE user_id=? AND guild_id=?";
         MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
         if (stmt && mysql_stmt_prepare(stmt, q, strlen(q)) == 0) {
-            MYSQL_BIND bp[1]; memset(bp, 0, sizeof(bp));
+            MYSQL_BIND bp[2]; memset(bp, 0, sizeof(bp));
             bp[0].buffer_type=MYSQL_TYPE_LONGLONG; bp[0].buffer=&user_id; bp[0].is_unsigned=1;
+            bp[1].buffer_type=MYSQL_TYPE_LONGLONG; bp[1].buffer=&guild_id; bp[1].is_unsigned=1;
             mysql_stmt_bind_param(stmt, bp);
             mysql_stmt_execute(stmt);
             mysql_stmt_close(stmt);
@@ -1928,7 +2010,7 @@ std::vector<Database::ActiveGiveawayRow> Database::get_active_giveaways() {
     
     const char* q = "SELECT id, guild_id, channel_id, COALESCE(message_id, 0), created_by, "
                     "prize_amount, max_winners, UNIX_TIMESTAMP(ends_at) "
-                    "FROM giveaways WHERE active = TRUE AND ends_at > NOW()";
+                    "FROM guild_giveaways WHERE active = TRUE AND ends_at > NOW()";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         if (stmt) mysql_stmt_close(stmt);
@@ -2061,7 +2143,7 @@ uint64_t Database::create_giveaway(uint64_t guild_id, uint64_t channel_id, uint6
     auto conn = pool_->acquire();
     if (!conn) return 0;
     
-    const char* q = "INSERT INTO giveaways (guild_id, channel_id, created_by, prize_amount, max_winners, ends_at) "
+    const char* q = "INSERT INTO guild_giveaways (guild_id, channel_id, created_by, prize_amount, max_winners, ends_at) "
                     "VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
@@ -2095,7 +2177,7 @@ bool Database::enter_giveaway(uint64_t giveaway_id, uint64_t user_id) {
     auto conn = pool_->acquire();
     if (!conn) return false;
     
-    const char* q = "INSERT IGNORE INTO giveaway_entries (giveaway_id, user_id) VALUES (?, ?)";
+    const char* q = "INSERT IGNORE INTO guild_giveaway_entries (giveaway_id, user_id) VALUES (?, ?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         if (stmt) mysql_stmt_close(stmt);
@@ -2119,7 +2201,7 @@ std::vector<uint64_t> Database::get_giveaway_entries(uint64_t giveaway_id) {
     auto conn = pool_->acquire();
     if (!conn) return result;
     
-    const char* q = "SELECT user_id FROM giveaway_entries WHERE giveaway_id=?";
+    const char* q = "SELECT user_id FROM guild_giveaway_entries WHERE giveaway_id=?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         if (stmt) mysql_stmt_close(stmt);
@@ -2162,7 +2244,7 @@ bool Database::end_giveaway(uint64_t giveaway_id, const std::vector<uint64_t>& w
     }
     json += "]";
     
-    const char* q = "UPDATE giveaways SET active = FALSE, winner_ids = ? WHERE id = ?";
+    const char* q = "UPDATE guild_giveaways SET active = FALSE, winner_ids = ? WHERE id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (!stmt || mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
         if (stmt) mysql_stmt_close(stmt);

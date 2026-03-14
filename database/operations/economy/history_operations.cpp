@@ -11,7 +11,7 @@ namespace db {
 bool Database::log_history(uint64_t user_id, const std::string& entry_type,
                            const std::string& description, int64_t amount, int64_t balance_after) {
     auto conn = pool_->acquire();
-    const char* query = "INSERT INTO command_history (user_id, entry_type, description, amount, balance_after) VALUES (?,?,?,?,?)";
+    const char* query = "INSERT INTO user_command_history (user_id, entry_type, description, amount, balance_after) VALUES (?,?,?,?,?)";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         last_error_ = mysql_stmt_error(stmt);
@@ -60,7 +60,7 @@ std::vector<HistoryEntry> Database::fetch_history(uint64_t user_id, int limit, i
     auto conn = pool_->acquire();
     
     std::string query = "SELECT id, user_id, entry_type, description, amount, balance_after, "
-                        "UNIX_TIMESTAMP(created_at) FROM command_history WHERE user_id = ? "
+                        "UNIX_TIMESTAMP(created_at) FROM user_command_history WHERE user_id = ? "
                         "ORDER BY created_at DESC LIMIT ? OFFSET ?";
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
@@ -165,7 +165,7 @@ std::vector<HistoryEntry> Database::fetch_history(uint64_t user_id, int limit, i
 
 int Database::get_history_count(uint64_t user_id) {
     auto conn = pool_->acquire();
-    const char* query = "SELECT COUNT(*) FROM command_history WHERE user_id = ?";
+    const char* query = "SELECT COUNT(*) FROM user_command_history WHERE user_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         log_error("get_history_count prepare");
@@ -216,7 +216,7 @@ int Database::get_history_count(uint64_t user_id) {
 
 bool Database::clear_history(uint64_t user_id) {
     auto conn = pool_->acquire();
-    const char* query = "DELETE FROM command_history WHERE user_id = ?";
+    const char* query = "DELETE FROM user_command_history WHERE user_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
         log_error("clear_history prepare");

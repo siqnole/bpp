@@ -723,7 +723,7 @@ static dpp::message complete_fish(Database* db, const FishMinigameState& state, 
             if (state.guild_id != 0) {
                 bronx::db::server_economy_operations::create_guild_economy(db, state.guild_id);
                 for (const auto& fc : pending_fish_catches) {
-                    bronx::db::server_fishing_operations::create_server_fish_catch(
+                    bronx::db::server_fishing_operations::create_fish_catch(
                         db, state.guild_id, uid, fc.rarity, fc.fish_name, fc.weight, fc.value, fc.rod_id, fc.bait_id);
                 }
             }

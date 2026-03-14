@@ -75,7 +75,7 @@ namespace commands {
                 title = "Commands Used"; emoji = "⌨️";
             } else {
                 // Invalid category, show available options
-                ::std::string description = "📊 **Available Categories:**\n\n";
+                ::std::string description = "📊 **leaderboard types:**\n\n";
                 description += "💰 `networth` - total wealth\n";
                 description += "💵 `wallet` - wallet balance\n";
                 description += "🏦 `bank` - bank balance\n";

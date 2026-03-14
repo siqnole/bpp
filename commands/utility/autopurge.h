@@ -21,7 +21,7 @@ static void schedule_autopurge(dpp::cluster& bot, const bronx::db::AutopurgeRow&
 inline void load_autopurges(dpp::cluster& bot) {
     if (!autopurge_db) return;
     // ensure database table exists before querying
-    autopurge_db->execute("CREATE TABLE IF NOT EXISTS autopurges ("
+    autopurge_db->execute("CREATE TABLE IF NOT EXISTS guild_autopurges ("
                            "id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
                            "user_id BIGINT UNSIGNED NOT NULL,"
                            "guild_id BIGINT UNSIGNED NULL,"
@@ -47,8 +47,8 @@ inline void load_autopurges(dpp::cluster& bot) {
             }
         }
     };
-    add_column_safely("ALTER TABLE autopurges ADD COLUMN target_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0");
-    add_column_safely("ALTER TABLE autopurges ADD COLUMN target_role_id BIGINT UNSIGNED NOT NULL DEFAULT 0");
+    add_column_safely("ALTER TABLE guild_autopurges ADD COLUMN target_user_id BIGINT UNSIGNED NOT NULL DEFAULT 0");
+    add_column_safely("ALTER TABLE guild_autopurges ADD COLUMN target_role_id BIGINT UNSIGNED NOT NULL DEFAULT 0");
     // clear any leftover error from migration steps (duplicate-column is expected)
     autopurge_db->execute("SELECT 1");
     auto rows = autopurge_db->get_all_autopurges();

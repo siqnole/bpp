@@ -204,9 +204,9 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         int64_t custom_prefixes = sql_count(db, "SELECT COUNT(DISTINCT guild_id) FROM guild_prefixes");
         int64_t disabled_cmds   = sql_count(db, "SELECT COUNT(*) FROM guild_command_settings WHERE enabled=0");
         int64_t disabled_mods   = sql_count(db, "SELECT COUNT(*) FROM guild_module_settings WHERE enabled=0");
-        int64_t reaction_roles  = sql_count(db, "SELECT COUNT(*) FROM reaction_roles");
-        int64_t autopurges      = sql_count(db, "SELECT COUNT(*) FROM autopurges");
-        int64_t reminders       = sql_count(db, "SELECT COUNT(*) FROM reminders WHERE completed=0");
+        int64_t reaction_roles  = sql_count(db, "SELECT COUNT(*) FROM guild_reaction_roles");
+        int64_t autopurges      = sql_count(db, "SELECT COUNT(*) FROM guild_autopurges");
+        int64_t reminders       = sql_count(db, "SELECT COUNT(*) FROM user_reminders WHERE completed=0");
 
         desc += "**guild config**\n";
         desc += "• custom prefixes: " + std::to_string(custom_prefixes) + "\n";
@@ -331,22 +331,22 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         desc += "**prestige users:** " + std::to_string(prestige_count) + " (max: " + std::to_string(max_prestige) + ")\n";
 
         // Loans
-        int64_t active_loans = sql_count(db, "SELECT COUNT(*) FROM loans WHERE remaining > 0");
-        int64_t loan_balance = sql_count(db, "SELECT COALESCE(SUM(remaining),0) FROM loans WHERE remaining > 0");
+        int64_t active_loans = sql_count(db, "SELECT COUNT(*) FROM user_loans WHERE remaining > 0");
+        int64_t loan_balance = sql_count(db, "SELECT COALESCE(SUM(remaining),0) FROM user_loans WHERE remaining > 0");
         desc += "**active loans:** " + std::to_string(active_loans) + " ($" + commands::format_number(loan_balance) + " outstanding)\n";
 
         // Trades
-        int64_t pending_trades = sql_count(db, "SELECT COUNT(*) FROM trades WHERE status='pending'");
-        int64_t completed_trades = sql_count(db, "SELECT COUNT(*) FROM trades WHERE status='completed'");
+        int64_t pending_trades = sql_count(db, "SELECT COUNT(*) FROM guild_trades WHERE status='pending'");
+        int64_t completed_trades = sql_count(db, "SELECT COUNT(*) FROM guild_trades WHERE status='completed'");
         desc += "**trades:** " + std::to_string(pending_trades) + " pending, " + std::to_string(completed_trades) + " completed\n";
 
     } else if (page == 4) {
         // ── Page 5: Fishing & Inventory ──
         int64_t total_fish     = sql_count(db, "SELECT COUNT(*) FROM fish_catches");
-        int64_t unsold_fish    = sql_count(db, "SELECT COUNT(*) FROM fish_catches WHERE sold=0");
-        int64_t unsold_value   = sql_count(db, "SELECT COALESCE(SUM(value),0) FROM fish_catches WHERE sold=0");
-        int64_t legendary_fish = sql_count(db, "SELECT COUNT(*) FROM fish_catches WHERE rarity='legendary'");
-        int64_t mutated_fish   = sql_count(db, "SELECT COUNT(*) FROM fish_catches WHERE rarity='mutated'");
+        int64_t unsold_fish    = sql_count(db, "SELECT COUNT(*) FROM user_fish_catches WHERE sold=0");
+        int64_t unsold_value   = sql_count(db, "SELECT COALESCE(SUM(value),0) FROM user_fish_catches WHERE sold=0");
+        int64_t legendary_fish = sql_count(db, "SELECT COUNT(*) FROM user_fish_catches WHERE rarity='legendary'");
+        int64_t mutated_fish   = sql_count(db, "SELECT COUNT(*) FROM user_fish_catches WHERE rarity='mutated'");
 
         desc += "**fishing**\n";
         desc += "• total caught: " + commands::format_number(total_fish) + "\n";
@@ -355,7 +355,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         desc += "• mutated: " + commands::format_number(mutated_fish) + "\n\n";
 
         // Rarity breakdown
-        auto rarity_rows = sql_query(db, "SELECT rarity, COUNT(*) as cnt FROM fish_catches GROUP BY rarity ORDER BY cnt DESC LIMIT 10");
+        auto rarity_rows = sql_query(db, "SELECT rarity, COUNT(*) as cnt FROM user_fish_catches GROUP BY rarity ORDER BY cnt DESC LIMIT 10");
         if (!rarity_rows.empty()) {
             desc += "**fish by rarity**\n";
             for (const auto& r : rarity_rows) {
@@ -365,7 +365,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         }
 
         // Autofishing
-        int64_t auto_active  = sql_count(db, "SELECT COUNT(*) FROM autofishers WHERE active=1");
+        int64_t auto_active  = sql_count(db, "SELECT COUNT(*) FROM user_autofishers WHERE active=1");
         int64_t auto_balance = sql_count(db, "SELECT COALESCE(SUM(balance),0) FROM autofishers");
         int64_t auto_stored  = sql_count(db, "SELECT COUNT(*) FROM autofish_storage");
         desc += "**autofishing**\n";
@@ -392,7 +392,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         desc += "• dividends paid: $" + commands::format_number(baz_dividends) + "\n";
 
         // Mining claims
-        int64_t active_claims = sql_count(db, "SELECT COUNT(*) FROM mining_claims WHERE expires_at > NOW()");
+        int64_t active_claims = sql_count(db, "SELECT COUNT(*) FROM user_mining_claims WHERE expires_at > NOW()");
         desc += "\n**mining claims:** " + std::to_string(active_claims) + " active\n";
 
     } else if (page == 5) {
@@ -400,7 +400,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         int64_t xp_users     = sql_count(db, "SELECT COUNT(*) FROM user_xp");
         int64_t xp_total     = sql_count(db, "SELECT COALESCE(SUM(total_xp),0) FROM user_xp");
         int64_t xp_max_level = sql_count(db, "SELECT COALESCE(MAX(level),0) FROM user_xp");
-        int64_t lv_servers   = sql_count(db, "SELECT COUNT(*) FROM server_leveling_config WHERE enabled=1");
+        int64_t lv_servers   = sql_count(db, "SELECT COUNT(*) FROM guild_leveling_config WHERE enabled=1");
         int64_t lv_roles     = sql_count(db, "SELECT COUNT(*) FROM level_roles");
 
         desc += "**leveling**\n";
@@ -424,7 +424,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         desc += "• patch notes: " + std::to_string(patch_count) + "\n\n";
 
         // Giveaways / guild economy
-        int64_t active_giveaways = sql_count(db, "SELECT COUNT(*) FROM giveaways WHERE active=1");
+        int64_t active_giveaways = sql_count(db, "SELECT COUNT(*) FROM guild_giveaways WHERE active=1");
         int64_t guild_bal_total  = sql_count(db, "SELECT COALESCE(SUM(balance),0) FROM guild_balances");
         int64_t guild_donated    = sql_count(db, "SELECT COALESCE(SUM(total_donated),0) FROM guild_balances");
         desc += "**giveaways & guild economy**\n";
@@ -3028,8 +3028,8 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             std::string uid = std::to_string(target_id);
             std::vector<std::string> queries = {
                 // Tables that may lack ON DELETE CASCADE or have unusual FK chains
-                "DELETE FROM autofish_storage WHERE user_id = " + uid,
-                "DELETE FROM autofishers WHERE user_id = " + uid,
+                "DELETE FROM user_autofish_storage WHERE user_id = " + uid,
+                "DELETE FROM user_autofishers WHERE user_id = " + uid,
                 // The main delete — cascades to most child tables
                 "DELETE FROM users WHERE user_id = " + uid,
             };

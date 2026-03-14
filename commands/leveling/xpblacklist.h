@@ -93,7 +93,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                         }
                     }
                     
-                    bool success = xp_blacklist_operations::add_channel_blacklist(db, guild_id, channel_id, event.msg.author.id, reason);
+                    bool success = xp_blacklist_operations::add_blacklist(db, guild_id, "channel", channel_id, event.msg.author.id, reason);
                     
                     if (success) {
                         std::string msg = "<#" + std::to_string(channel_id) + "> is now blacklisted from XP";
@@ -110,7 +110,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     }
                     
                     uint64_t channel_id = event.msg.mention_channels[0].id;
-                    bool success = xp_blacklist_operations::remove_channel_blacklist(db, guild_id, channel_id);
+                    bool success = xp_blacklist_operations::remove_blacklist(db, guild_id, "channel", channel_id);
                     
                     if (success) {
                         bronx::send_message(bot, event, bronx::success("<#" + std::to_string(channel_id) + "> is no longer blacklisted"));
@@ -119,7 +119,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     }
                     
                 } else if (action == "list") {
-                    auto blacklist = xp_blacklist_operations::get_blacklisted_channels(db, guild_id);
+                    auto blacklist = xp_blacklist_operations::get_blacklist(db, guild_id, "channel");
                     
                     if (blacklist.empty()) {
                         bronx::send_message(bot, event, bronx::create_embed("no channels are blacklisted from XP"));
@@ -130,7 +130,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     desc << "**blacklisted channels** (" << blacklist.size() << ")\n\n";
                     
                     for (const auto& entry : blacklist) {
-                        desc << "<#" << entry.channel_id << ">";
+                        desc << "<#" << entry.target_id << ">";
                         if (!entry.reason.empty()) {
                             desc << " — " << entry.reason;
                         }
@@ -158,7 +158,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                         }
                     }
                     
-                    bool success = xp_blacklist_operations::add_role_blacklist(db, guild_id, role_id, event.msg.author.id, reason);
+                    bool success = xp_blacklist_operations::add_blacklist(db, guild_id, "role", role_id, event.msg.author.id, reason);
                     
                     if (success) {
                         std::string msg = "<@&" + std::to_string(role_id) + "> is now blacklisted from XP";
@@ -175,7 +175,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     }
                     
                     uint64_t role_id = event.msg.mention_roles[0];
-                    bool success = xp_blacklist_operations::remove_role_blacklist(db, guild_id, role_id);
+                    bool success = xp_blacklist_operations::remove_blacklist(db, guild_id, "role", role_id);
                     
                     if (success) {
                         bronx::send_message(bot, event, bronx::success("<@&" + std::to_string(role_id) + "> is no longer blacklisted"));
@@ -184,7 +184,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     }
                     
                 } else if (action == "list") {
-                    auto blacklist = xp_blacklist_operations::get_blacklisted_roles(db, guild_id);
+                    auto blacklist = xp_blacklist_operations::get_blacklist(db, guild_id, "role");
                     
                     if (blacklist.empty()) {
                         bronx::send_message(bot, event, bronx::create_embed("no roles are blacklisted from XP"));
@@ -195,7 +195,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     desc << "**blacklisted roles** (" << blacklist.size() << ")\n\n";
                     
                     for (const auto& entry : blacklist) {
-                        desc << "<@&" << entry.role_id << ">";
+                        desc << "<@&" << entry.target_id << ">";
                         if (!entry.reason.empty()) {
                             desc << " — " << entry.reason;
                         }
@@ -223,7 +223,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                         }
                     }
                     
-                    bool success = xp_blacklist_operations::add_user_blacklist(db, guild_id, target_id, event.msg.author.id, reason);
+                    bool success = xp_blacklist_operations::add_blacklist(db, guild_id, "user", target_id, event.msg.author.id, reason);
                     
                     if (success) {
                         std::string msg = "<@" + std::to_string(target_id) + "> is now blacklisted from XP";
@@ -240,7 +240,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     }
                     
                     uint64_t target_id = event.msg.mentions[0].first.id;
-                    bool success = xp_blacklist_operations::remove_user_blacklist(db, guild_id, target_id);
+                    bool success = xp_blacklist_operations::remove_blacklist(db, guild_id, "user", target_id);
                     
                     if (success) {
                         bronx::send_message(bot, event, bronx::success("<@" + std::to_string(target_id) + "> is no longer blacklisted"));
@@ -249,7 +249,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     }
                     
                 } else if (action == "list") {
-                    auto blacklist = xp_blacklist_operations::get_blacklisted_users(db, guild_id);
+                    auto blacklist = xp_blacklist_operations::get_blacklist(db, guild_id, "user");
                     
                     if (blacklist.empty()) {
                         bronx::send_message(bot, event, bronx::create_embed("no users are blacklisted from XP"));
@@ -260,7 +260,7 @@ std::vector<Command*> get_xpblacklist_commands(Database* db) {
                     desc << "**blacklisted users** (" << blacklist.size() << ")\n\n";
                     
                     for (const auto& entry : blacklist) {
-                        desc << "<@" << entry.user_id << ">";
+                        desc << "<@" << entry.target_id << ">";
                         if (!entry.reason.empty()) {
                             desc << " — " << entry.reason;
                         }

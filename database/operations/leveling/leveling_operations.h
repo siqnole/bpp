@@ -11,23 +11,18 @@ namespace db {
 class Database;
 
 namespace leveling_operations {
-    // User XP operations
-    std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id);
-    bool create_user_xp(Database* db, uint64_t user_id);
-    bool add_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up);
-    bool set_xp(Database* db, uint64_t user_id, uint64_t xp_amount);
+    // User XP operations (guild_id=0 → global XP)
+    std::optional<UserXP> get_user_xp(Database* db, uint64_t user_id, uint64_t guild_id = 0);
+    bool create_user_xp(Database* db, uint64_t user_id, uint64_t guild_id = 0);
+    bool add_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up, uint64_t guild_id = 0);
+    bool set_xp(Database* db, uint64_t user_id, uint64_t xp_amount, uint64_t guild_id = 0);
+    bool reset_guild_xp(Database* db, uint64_t guild_id);
+    bool reset_user_guild_xp(Database* db, uint64_t user_id, uint64_t guild_id);
     
-    // Server XP operations  
-    std::optional<ServerXP> get_server_xp(Database* db, uint64_t user_id, uint64_t guild_id);
-    bool create_server_xp(Database* db, uint64_t user_id, uint64_t guild_id);
-    bool add_server_xp(Database* db, uint64_t user_id, uint64_t guild_id, uint64_t xp_amount, uint32_t& new_level, bool& leveled_up);
-    bool reset_server_xp(Database* db, uint64_t guild_id); // reset all users in a server
-    bool reset_user_server_xp(Database* db, uint64_t user_id, uint64_t guild_id); // reset single user
-    
-    // Server leveling configuration
-    std::optional<ServerLevelingConfig> get_server_config(Database* db, uint64_t guild_id);
-    bool create_server_config(Database* db, uint64_t guild_id);
-    bool update_server_config(Database* db, const ServerLevelingConfig& config);
+    // Guild leveling configuration
+    std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild_id);
+    bool create_guild_config(Database* db, uint64_t guild_id);
+    bool update_guild_config(Database* db, const GuildLevelingConfig& config);
     
     // Level roles
     std::vector<LevelRole> get_level_roles(Database* db, uint64_t guild_id);

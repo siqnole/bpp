@@ -95,7 +95,7 @@ std::vector<Command*> get_patch_commands(bronx::db::Database* db) {
                 nav_row.add_component(
                     dpp::component()
                         .set_type(dpp::cot_button)
-                        .set_emoji("◀️")
+                        .set_emoji("◀")
                         .set_style(dpp::cos_primary)
                         .set_disabled(true)
                         .set_id("patch_prev_" + std::to_string(event.command.usr.id) + "_0")
@@ -103,7 +103,7 @@ std::vector<Command*> get_patch_commands(bronx::db::Database* db) {
                 nav_row.add_component(
                     dpp::component()
                         .set_type(dpp::cot_button)
-                        .set_emoji("▶️")
+                        .set_emoji("▶")
                         .set_style(dpp::cos_primary)
                         .set_disabled(total <= 5)
                         .set_id("patch_next_" + std::to_string(event.command.usr.id) + "_0")
