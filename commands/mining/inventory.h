@@ -11,6 +11,7 @@
 #include <mutex>
 
 using namespace bronx::db;
+using namespace commands::mining;
 
 namespace commands {
 namespace mining {
@@ -18,6 +19,8 @@ namespace mining {
 // ============================================================================
 // /minv  – Mining ore inventory viewer
 // ============================================================================
+// Patch: Remove mining:: prefix from ore_types, OreType, and parse_mine_meta_int64 throughout the file
+// Use ore_types, OreType, and parse_mine_meta_int64 directly
 
 static const int ORES_PER_PAGE = 12;
 
@@ -61,7 +64,7 @@ static dpp::message build_minv_message(uint64_t uid, Database* db) {
             size_t nend = item.metadata.find('"', npos);
             if (nend != std::string::npos) name = item.metadata.substr(npos, nend - npos);
         }
-        val = parse_mine_meta_int64(item.metadata, "value", 0);
+        val = mining::parse_mine_meta_int64(item.metadata, "value", 0);
         size_t lpos = item.metadata.find("\"locked\":true");
         locked = (lpos != std::string::npos);
 
@@ -115,7 +118,7 @@ inline Command* get_minv_command(Database* db) {
                             size_t nend = item.metadata.find('"', npos);
                             if (nend != std::string::npos) {
                                 std::string name = item.metadata.substr(npos, nend - npos);
-                                for (auto& ot : ore_types) {
+                                    for (auto& ot : mining::ore_types) {
                                     if (ot.name == name) { is_ore = true; break; }
                                 }
                             }
@@ -149,7 +152,7 @@ inline Command* get_minv_command(Database* db) {
                         size_t nend = item.metadata.find('"', npos);
                         if (nend != std::string::npos) {
                             std::string name = item.metadata.substr(npos, nend - npos);
-                            for (auto& ot : ore_types) {
+                                for (auto& ot : mining::ore_types) {
                                 if (ot.name == name) { is_ore = true; break; }
                             }
                         }
@@ -174,7 +177,6 @@ inline Command* get_minv_command(Database* db) {
 // ============================================================================
 // /sellore  – Sell individual ore by ID or 'all'
 // ============================================================================
-
 inline Command* get_sellore_command(Database* db) {
     static Command* sellore = new Command("sellore", "sell a mined ore by ID or 'all'", "mining", {"sore", "sellorall"}, true,
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
@@ -208,7 +210,7 @@ inline Command* get_sellore_command(Database* db) {
                         }
                     }
                     if (!is_ore) continue;
-                    int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
+                    int64_t val = mining::parse_mine_meta_int64(item.metadata, "value", 0);
                     if (db->remove_item(uid, item.item_id, 1)) {
                         total += val;
                         count++;
@@ -236,12 +238,11 @@ inline Command* get_sellore_command(Database* db) {
                             bronx::send_message(bot, event, bronx::error("that ore is locked! unlock it first"));
                             return;
                         }
-                        int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
+                        int64_t val = mining::parse_mine_meta_int64(item.metadata, "value", 0);
                         if (db->remove_item(uid, ore_id, 1)) {
                             db->update_wallet(uid, val);
                             db->increment_stat(uid, "ores_sold", 1);
                             db->increment_stat(uid, "ore_profit", val);
-
                             std::string name = "ore";
                             size_t npos = item.metadata.find("\"name\":\"");
                             if (npos != std::string::npos) {
@@ -287,7 +288,7 @@ inline Command* get_sellore_command(Database* db) {
                         }
                     }
                     if (!is_ore) continue;
-                    int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
+                    int64_t val = mining::parse_mine_meta_int64(item.metadata, "value", 0);
                     if (db->remove_item(uid, item.item_id, 1)) {
                         total += val;
                         count++;
@@ -313,7 +314,7 @@ inline Command* get_sellore_command(Database* db) {
                             event.reply(dpp::message().add_embed(bronx::error("that ore is locked!")));
                             return;
                         }
-                        int64_t val = parse_mine_meta_int64(item.metadata, "value", 0);
+                        int64_t val = mining::parse_mine_meta_int64(item.metadata, "value", 0);
                         if (db->remove_item(uid, target, 1)) {
                             db->update_wallet(uid, val);
                             db->increment_stat(uid, "ores_sold", 1);

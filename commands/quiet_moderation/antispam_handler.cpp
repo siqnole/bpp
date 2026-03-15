@@ -2,6 +2,9 @@
 #include "mod_log.h"
 #include "../../embed_style.h"
 #include <dpp/dpp.h>
+#include "../../database/operations/moderation/infraction_operations.h"
+#include "../../database/operations/moderation/infraction_config_operations.h"
+#include "../moderation/infraction_engine.h"
 
 namespace commands {
 namespace quiet_moderation {
@@ -102,48 +105,38 @@ void register_antispam(dpp::cluster& bot) {
         }
 
         // Module-level immediate actions (if configured)
-        if (behavior.action == "timeout") {
-            uint32_t dur = behavior.timeout_seconds ? behavior.timeout_seconds : config.timeout_duration;
-            bot.guild_member_timeout(event.msg.guild_id, event.msg.author.id,
-                                     time(0) + dur,
-                [&bot, event, config, violation_count, dur](const dpp::confirmation_callback_t& cb) {
-                    if (!cb.is_error() && config.log_channel != 0) {
-                        dpp::embed timeout_embed = bronx::error("User Timed Out");
-                        timeout_embed.add_field("User", "<@" + ::std::to_string(event.msg.author.id) + ">", true);
-                        timeout_embed.add_field("Reason", "Anti-spam — module action", true);
-                        timeout_embed.add_field("Duration", ::std::to_string(dur) + "s", true);
-                        timeout_embed.add_field("Violations", ::std::to_string(violation_count), true);
-
-                        commands::quiet_moderation::send_embed_via_webhook(bot, config.log_channel, timeout_embed);
-                    }
-                }
-            );
-        } else if (behavior.action == "kick") {
-            bot.guild_member_delete(event.msg.guild_id, event.msg.author.id,
-                [&bot, event, config, violation_count](const dpp::confirmation_callback_t& cb) {
-                    if (!cb.is_error() && config.log_channel != 0) {
-                        dpp::embed kick_embed = bronx::error("User Kicked");
-                        kick_embed.add_field("User", "<@" + ::std::to_string(event.msg.author.id) + ">", true);
-                        kick_embed.add_field("Reason", "Anti-spam — module action", true);
-                        kick_embed.add_field("Violations", ::std::to_string(violation_count), true);
-
-                        commands::quiet_moderation::send_embed_via_webhook(bot, config.log_channel, kick_embed);
-                    }
-                }
-            );
-        } else if (behavior.action == "ban") {
-            bot.guild_ban_add(event.msg.guild_id, event.msg.author.id, 1,
-                [&bot, event, config, violation_count](const dpp::confirmation_callback_t& cb) {
-                    if (!cb.is_error() && config.log_channel != 0) {
-                        dpp::embed ban_embed = bronx::error("User Banned");
-                        ban_embed.add_field("User", "<@" + ::std::to_string(event.msg.author.id) + ">", true);
-                        ban_embed.add_field("Reason", "Anti-spam — module action", true);
-                        ban_embed.add_field("Violations", ::std::to_string(violation_count), true);
-
-                        commands::quiet_moderation::send_embed_via_webhook(bot, config.log_channel, ban_embed);
-                    }
-                }
-            );
+        if (behavior.action == "timeout" || behavior.action == "kick" || behavior.action == "ban") {
+            std::string infraction_type = "auto_antispam";
+            std::string reason = "Anti-spam — module action: " + sres.module + ", " + sres.reason;
+            double points = 0;
+            uint32_t duration = 0;
+            if (behavior.action == "timeout") {
+                points = 2.0;
+                duration = behavior.timeout_seconds ? behavior.timeout_seconds : config.timeout_duration;
+            } else if (behavior.action == "kick") {
+                points = 3.0;
+            } else if (behavior.action == "ban") {
+                points = 5.0;
+            }
+            auto inf = bronx::db::infraction_operations::create_infraction(
+                nullptr, event.msg.guild_id, event.msg.author.id, bot.me.id,
+                infraction_type, reason, points, duration,
+                "{\"automod\":true,\"module\":\"" + sres.module + "\",\"violations\":" + std::to_string(violation_count) + "}" );
+            if (inf.has_value()) {
+                commands::moderation::send_mod_log(bot, nullptr, event.msg.guild_id, inf.value());
+            }
+            // Execute Discord-side action
+            if (behavior.action == "timeout") {
+                bot.guild_member_timeout(event.msg.guild_id, event.msg.author.id,
+                    time(0) + duration,
+                    [](const dpp::confirmation_callback_t&) {});
+            } else if (behavior.action == "kick") {
+                bot.guild_member_delete(event.msg.guild_id, event.msg.author.id,
+                    [](const dpp::confirmation_callback_t&) {});
+            } else if (behavior.action == "ban") {
+                bot.guild_ban_add(event.msg.guild_id, event.msg.author.id, 1,
+                    [](const dpp::confirmation_callback_t&) {});
+            }
         }
 
         // Global escalation (still applies based on cumulative violations)

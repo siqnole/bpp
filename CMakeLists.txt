@@ -13,6 +13,10 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 # -g for debug symbols (flamegraph), -fno-omit-frame-pointer for proper stack traces
+# Add command source files
+file(GLOB_RECURSE COMMAND_SOURCES
+    ${CMAKE_SOURCE_DIR}/commands/**/*.cpp
+)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG -g -fno-omit-frame-pointer")
 
 # Find DPP library
@@ -78,46 +82,21 @@ if(NOT MARIADB_LIBRARIES)
 endif()
 
 # Add database source files
-set(DATABASE_SOURCES
-    database/core/database.cpp
-    database/core/connection_pool.cpp
-    database/operations/user/user_operations.cpp
-    database/operations/economy/loan_operations.cpp
-    database/operations/user/cooldown_operations.cpp
-    database/operations/economy/inventory_operations.cpp
-    database/operations/economy/shop_operations.cpp
-    database/operations/economy/market_operations.cpp
-    database/operations/leveling/leaderboard_operations.cpp
-    database/operations/moderation/reaction_role_operations.cpp
-    database/operations/moderation/autopurge_operations.cpp
-    database/operations/moderation/abuse_operations.cpp
-    database/operations/community/suggestion_operations.cpp
-    database/operations/user/prefix_operations.cpp
-    database/operations/moderation/permission_operations.cpp
-    database/operations/economy/server_economy_operations.cpp
-    database/operations/economy/server_fishing_operations.cpp
-    database/operations/economy/history_operations.cpp
-    database/operations/economy/jackpot_world_events.cpp
-    database/operations/community/bugreport_operations.cpp
-    database/operations/leveling/leveling_operations.cpp
-    database/operations/community/patch_operations.cpp
-    database/operations/leveling/xp_blacklist_operations.cpp
-    database/operations/user/privacy_operations.cpp
-    database/utils/database_utility.cpp
+file(GLOB_RECURSE DATABASE_SOURCES
+    ${CMAKE_SOURCE_DIR}/database/core/*.cpp
+    ${CMAKE_SOURCE_DIR}/database/operations/**/*.cpp
+    ${CMAKE_SOURCE_DIR}/database/utils/*.cpp
 )
 
 # Add performance optimization source files
-set(PERFORMANCE_SOURCES
-    performance/cache_manager.cpp
+file(GLOB PERFORMANCE_SOURCES
+    ${CMAKE_SOURCE_DIR}/performance/*.cpp
 )
 
 # Add executable
-add_executable(${PROJECT_NAME} 
-    main.cpp
-    commands/quiet_moderation/antispam_handler.cpp
-    commands/quiet_moderation/antispam_command.cpp
-    commands/quiet_moderation/text_filter_handler.cpp
-    commands/quiet_moderation/text_filter_command.cpp
+add_executable(${PROJECT_NAME}
+    ${CMAKE_SOURCE_DIR}/main.cpp
+    ${COMMAND_SOURCES}
     ${DATABASE_SOURCES}
     ${PERFORMANCE_SOURCES}
 )
@@ -126,6 +105,8 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/performance
+    ${CMAKE_SOURCE_DIR}/commands/moderation
+    ${CMAKE_SOURCE_DIR}/commands/quiet_moderation
     ${MARIADB_INCLUDE_DIRS}
     ${SQLITE3_INCLUDE_DIRS}
     ${CAIRO_INCLUDE_DIRS}

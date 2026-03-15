@@ -12,6 +12,7 @@
 #include <mutex>
 
 using namespace bronx::db;
+using namespace commands::mining;
 
 namespace commands {
 namespace passive {
@@ -30,6 +31,7 @@ namespace passive {
 //   /claim list         — view your active claims
 //   /claim abandon <id> — abandon a claim
 // ============================================================================
+//
 
 // Claim costs by ore rarity tier
 struct ClaimTier {
@@ -238,22 +240,21 @@ inline Command* get_claim_command(Database* db) {
                     bronx::send_message(bot, event, bronx::error("unknown ore type \"" + ore_name + "\""));
                     return;
                 }
-                
                 // Determine rarity and cost
-                std::string rarity = mining::get_ore_rarity(found_ore->name);
+                std::string rarity = commands::mining::get_ore_rarity(found_ore->name);
                 const auto& tier = get_claim_tier(rarity);
                 int64_t cost = tier.cost;
-                
+
                 int64_t wallet = db->get_wallet(uid);
                 if (wallet < cost) {
                     bronx::send_message(bot, event, bronx::error("you need **$" + economy::format_number(cost) + "** to buy this claim (have $" + economy::format_number(wallet) + ")"));
                     return;
                 }
-                
+
                 db->update_wallet(uid, -cost);
                 int avg_value = (found_ore->min_value + found_ore->max_value) / 2;
                 create_claim(db, uid, found_ore->name, found_ore->emoji, rarity, tier.yield_min, tier.yield_max, avg_value);
-                
+
                 auto embed = bronx::success("⛏️ purchased a **" + found_ore->name + "** mining claim!\n"
                     "💰 Cost: **$" + economy::format_number(cost) + "**\n"
                     "📦 Yields: " + std::to_string(tier.yield_min) + "-" + std::to_string(tier.yield_max) + " ores × $" + economy::format_number(avg_value) + " per 4h\n"
@@ -411,8 +412,8 @@ inline Command* get_claim_command(Database* db) {
                 std::string ore_name = std::get<std::string>(ci_options[0].options[0].value);
                 std::transform(ore_name.begin(), ore_name.end(), ore_name.begin(), ::tolower);
                 
-                const mining::OreType* found_ore = nullptr;
-                for (const auto& o : mining::ore_types) {
+                const commands::mining::OreType* found_ore = nullptr;
+                for (const auto& o : commands::mining::ore_types) {
                     std::string oname = o.name;
                     std::transform(oname.begin(), oname.end(), oname.begin(), ::tolower);
                     if (oname == ore_name || oname.find(ore_name) != std::string::npos) {

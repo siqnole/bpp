@@ -6,11 +6,11 @@
 -- Drop existing database if exists (development only)
 -- DROP DATABASE IF EXISTS bronxbot;
 
-CREATE DATABASE IF NOT EXISTS bronxbot
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE bronxbot;
+GO
 
 USE bronxbot;
+GO
 
 -- ============================================================================
 -- CORE ECONOMY TABLES
@@ -18,8 +18,8 @@ USE bronxbot;
 
 -- Users table - Primary economy data
 -- Optimized for fast balance lookups and leaderboard queries
-CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+CREATE TABLE users (
+    user_id BIGINT NOT NULL PRIMARY KEY,
     wallet BIGINT NOT NULL DEFAULT 0,
     bank BIGINT NOT NULL DEFAULT 0,
     bank_limit BIGINT NOT NULL DEFAULT 10000,
