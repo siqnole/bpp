@@ -1,9 +1,15 @@
 #pragma once
 #include "../command.h"
+#include "../database/core/database.h"
 #include "quiet_moderation/antispam_api.h"
 #include "quiet_moderation/url_guard.h"
 #include "quiet_moderation/text_filter_config.h"
 #include "quiet_moderation/reaction_filter.h"
+#include "quiet_moderation/account_guard.h"
+#include "quiet_moderation/avatar_guard.h"
+#include "quiet_moderation/mutual_guard.h"
+#include "quiet_moderation/nickname_guard.h"
+#include "quiet_moderation/automod_commands.h"
 #include <dpp/dpp.h>
 #include <vector>
 
@@ -34,6 +40,21 @@ inline void register_moderation_handlers(dpp::cluster& bot) {
     
     // Register reaction filter handler
     quiet_moderation::register_reaction_filter(bot);
+}
+
+// Get automod configuration commands
+inline std::vector<Command*> get_automod_commands(bronx::db::Database* db) {
+    return {
+        quiet_moderation::get_automod_command(db),
+    };
+}
+
+// Register all automod guard event handlers
+inline void register_automod_handlers(dpp::cluster& bot, bronx::db::Database* db) {
+    quiet_moderation::register_account_guard(bot, db);
+    quiet_moderation::register_avatar_guard(bot, db);
+    quiet_moderation::register_mutual_guard(bot, db);
+    quiet_moderation::register_nickname_guard(bot, db);
 }
 
 } // namespace commands

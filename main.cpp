@@ -40,6 +40,7 @@
 #include "commands/owner.h"
 #include "commands/gambling.h"
 #include "commands/moderation.h"
+#include "commands/moderation_commands.h"
 #include "commands/fishing/autofish_runner.h"
 #include "commands/mining.h"
 #include "commands/global_boss.h"
@@ -59,6 +60,7 @@
 #endif
 
 using namespace bronx::db;
+using namespace bronx;
 
 // Flag to track when initial guild loading is complete.
 // on_guild_create fires for EVERY existing guild on startup;
@@ -214,7 +216,7 @@ int main(int argc, char* argv[]) {
     std::cout << clr::GREEN << "✔ " << clr::RESET << "High-performance cache system initialized\n";
     
     // Load database configuration (unchanged)
-    DatabaseConfig db_config;
+    bronx::db::DatabaseConfig db_config;
     std::vector<std::string> config_paths = {
         "data/db_config.json",
         "../data/db_config.json",
@@ -327,7 +329,7 @@ int main(int argc, char* argv[]) {
     
     // 4. Hybrid database — unified layer combining all caching tiers
     bronx::hybrid::HybridDatabase hybrid_db(&db, bronx::cache::global_cache.get(), 
-                                             &local_db, &write_batch, &api_client);
+                                           &local_db, &write_batch, &api_client);
     std::cout << clr::BOLD_GREEN << "✔ " << clr::RESET << "Hybrid database layer active " 
               << clr::DIM << "(local SQLite → memory cache → remote DB)" << clr::RESET << "\n";
     
@@ -515,6 +517,14 @@ int main(int argc, char* argv[]) {
     for (auto* cmd : commands::get_moderation_commands()) {
         cmd_handler.register_command(cmd);
     }
+
+    for (auto* cmd : commands::get_manual_moderation_commands(&db)) {
+        cmd_handler.register_command(cmd);
+    }
+
+    for (auto* cmd : commands::get_automod_commands(&db)) {
+        cmd_handler.register_command(cmd);
+    }
     
     for (auto* cmd : commands::get_economy_commands(&db)) {
         cmd_handler.register_command(cmd);
@@ -585,7 +595,7 @@ int main(int argc, char* argv[]) {
     // Bot ready event
     bot.on_ready([&bot, &cmd_handler, &db, &xp_batch_writer, &snipe_cache](const dpp::ready_t& event) {
         if (dpp::run_once<struct register_commands>()) {
-            std::cout << clr::BOLD_GREEN << "✔ logged in as " << bot.me.username << clr::RESET << " (" << clr::DIM << commands::get_build_version() << clr::RESET << ")!\n";
+            std::cout << clr::BOLD_GREEN << "✔ logged in as " << bot.me.username << clr::RESET << " (" << clr::DIM << commands::utility::get_build_version() << clr::RESET << ")!\n";
             std::cout << clr::CYAN << "⚙ " << clr::RESET << "prefix: " << clr::BOLD << cmd_handler.get_prefix() << clr::RESET << "\n";
 
             // PERFORMANCE FIX: Warm up DPP's HTTPS connection pool so the first
@@ -687,6 +697,7 @@ int main(int argc, char* argv[]) {
             }
             
             // Register interaction handlers (unchanged)
+            // Register interaction handlers using actual function names and namespaces
             commands::register_help_interactions(bot, &cmd_handler);
             commands::register_guide_interactions(bot, &db);
             commands::register_shop_interactions(bot, &db);
@@ -698,12 +709,15 @@ int main(int argc, char* argv[]) {
             commands::utility::load_autopurges(bot);
             commands::utility::load_autoroles(bot);
             commands::register_moderation_handlers(bot);
+            commands::register_automod_handlers(bot, &db);
+            commands::start_infraction_expiry_sweep(bot, &db);
+            commands::restore_infraction_timers(bot, &db);
             commands::register_gambling_interactions(bot, &db);
             commands::register_games_handlers(bot, &db);
             commands::register_economy_handlers(bot, &db);
             commands::register_achievements_interactions(bot, &db);
             commands::register_mining_interactions(bot, &db);
-            commands::register_global_boss_interactions(bot, &db);
+            commands::global_boss::register_boss_interactions(bot, &db);
             commands::register_boss_raid_interactions(bot, &db);
             commands::register_passive_interactions(bot, &db);
             commands::register_social_interactions(bot, &db);
@@ -1023,7 +1037,7 @@ int main(int argc, char* argv[]) {
                             .set_description("hi lol\n__im powered by__\n<:sql:1476704455733940345> | <:dpp:1476705109177012405> / <:C_:1476704911235354695><:plus:1476704929979699515><:plus:1476704929979699515> | \n**and i do**\n- fishing <a:fishdance:1476700021842776319>\n- gambling <:xqcgambling:1476700144295743682>\n- antispam <:shh:1476700239233683617>\n- and more\n\n")
                             .add_field("call me with", "`b.`", true)
                             .add_field("get info with", "`b.help`", true)
-                            .set_footer(dpp::embed_footer().set_text(commands::get_build_version()));
+                            .set_footer(dpp::embed_footer().set_text(commands::utility::get_build_version()));
                         
                         dpp::message msg(event.msg.channel_id, intro_embed);
                         

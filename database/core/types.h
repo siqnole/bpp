@@ -325,6 +325,110 @@ struct GuildModerationConfig {
     std::string reaction_filter_config;  // JSON
 };
 
+// ── Infraction System ──────────────────────────────────────────────
+
+// Infraction row (guild_infractions table)
+struct InfractionRow {
+    uint64_t id;
+    uint64_t guild_id;
+    uint32_t case_number;
+    uint64_t user_id;
+    uint64_t moderator_id;
+    std::string type;          // enum string: warn, timeout, mute, jail, kick, ban, auto_*
+    std::string reason;
+    double points;
+    uint32_t duration_seconds; // 0 = permanent
+    std::optional<std::chrono::system_clock::time_point> expires_at;
+    bool active;
+    bool pardoned;
+    uint64_t pardoned_by;
+    std::optional<std::chrono::system_clock::time_point> pardoned_at;
+    std::string pardoned_reason;
+    std::string metadata;      // JSON
+    std::chrono::system_clock::time_point created_at;
+};
+
+struct InfractionCounts {
+    int total;
+    int active;
+    int pardoned;
+};
+
+// Per-guild infraction config (guild_infraction_config table)
+struct InfractionConfig {
+    uint64_t guild_id;
+
+    double point_timeout = 0.25;
+    double point_mute    = 0.50;
+    double point_kick    = 2.00;
+    double point_ban     = 5.00;
+    double point_warn    = 0.10;
+
+    uint32_t default_duration_timeout = 259200;   // 3d
+    uint32_t default_duration_mute    = 604800;   // 7d
+    uint32_t default_duration_kick    = 1209600;  // 14d
+    uint32_t default_duration_ban     = 15552000; // 180d
+    uint32_t default_duration_warn    = 604800;   // 7d
+
+    std::string escalation_rules;  // JSON array
+
+    uint64_t mute_role_id    = 0;
+    uint64_t jail_role_id    = 0;
+    uint64_t jail_channel_id = 0;
+    uint64_t log_channel_id  = 0;
+
+    bool dm_on_action = true;
+};
+
+// Escalation rule (deserialized from escalation_rules JSON)
+struct EscalationRule {
+    double threshold_points;
+    int within_days;
+    std::string action;               // timeout, mute, jail, kick, ban
+    uint32_t action_duration_seconds;  // 0 = permanent
+    std::string reason_template;
+};
+
+// Extended auto-mod config (guild_automod_config table)
+struct AutomodConfig {
+    uint64_t guild_id;
+
+    bool account_age_enabled         = false;
+    uint32_t account_age_days        = 7;
+    std::string account_age_action   = "kick";
+
+    bool default_avatar_enabled      = false;
+    std::string default_avatar_action = "kick";
+
+    bool mutual_servers_enabled      = false;
+    uint32_t mutual_servers_min      = 1;
+    std::string mutual_servers_action = "kick";
+
+    bool nickname_sanitize_enabled   = false;
+    std::string nickname_sanitize_format = "Moderated Nickname {n}";
+    std::string nickname_bad_patterns;  // JSON array of regex strings
+
+    bool infraction_escalation_enabled = true;
+};
+
+// Role-based permission class (guild_role_classes table)
+struct RoleClass {
+    uint32_t id;
+    uint64_t guild_id;
+    std::string name;
+    int priority;
+    bool inherit_lower;
+    std::string restrictions;  // JSON: {allowed_commands, denied_commands, allowed_modules, denied_modules}
+    std::chrono::system_clock::time_point created_at;
+};
+
+// Maps a Discord role to a class (guild_role_class_members table)
+struct RoleClassMember {
+    uint64_t guild_id;
+    uint64_t role_id;
+    uint32_t class_id;
+};
+
 // Progressive Jackpot data
 struct JackpotData {
     int64_t pool;

@@ -382,6 +382,48 @@ public:
     bool upsert_guild_mod_config(const GuildModerationConfig& config);
     
     // ========================================
+    // INFRACTION SYSTEM
+    // ========================================
+    std::optional<InfractionRow> create_infraction(
+        uint64_t guild_id, uint64_t user_id, uint64_t moderator_id,
+        const std::string& type, const std::string& reason,
+        double points, uint32_t duration_seconds, const std::string& metadata_json);
+    std::optional<InfractionRow> get_infraction(uint64_t guild_id, uint32_t case_number);
+    std::vector<InfractionRow> get_user_infractions(uint64_t guild_id, uint64_t user_id,
+        bool active_only = false, int limit = 25, int offset = 0);
+    double get_user_active_points(uint64_t guild_id, uint64_t user_id, int within_days = 0);
+    std::vector<InfractionRow> get_recent_infractions(uint64_t guild_id,
+        int limit = 25, int offset = 0, const std::string& type_filter = "");
+    std::vector<InfractionRow> get_moderator_actions(uint64_t guild_id,
+        uint64_t moderator_id, int limit = 25, int offset = 0);
+    InfractionCounts count_infractions(uint64_t guild_id, uint64_t user_id);
+    int count_guild_infractions(uint64_t guild_id, const std::string& type_filter = "", uint64_t user_id = 0);
+    bool pardon_infraction(uint64_t guild_id, uint32_t case_number, uint64_t pardoned_by, const std::string& reason = "");
+    int bulk_pardon_user(uint64_t guild_id, uint64_t user_id, uint64_t pardoned_by, const std::string& reason = "");
+    int pardon_user_type(uint64_t guild_id, uint64_t user_id, const std::string& type,
+        uint64_t pardoned_by, const std::string& reason = "");
+    int expire_infractions();
+
+    // Infraction config
+    std::optional<InfractionConfig> get_infraction_config(uint64_t guild_id);
+    bool upsert_infraction_config(const InfractionConfig& config);
+
+    // Automod config
+    std::optional<AutomodConfig> get_automod_config(uint64_t guild_id);
+    bool upsert_automod_config(const AutomodConfig& config);
+
+    // Role classes
+    std::optional<RoleClass> create_role_class(uint64_t guild_id, const std::string& name,
+        int priority, bool inherit_lower, const std::string& restrictions_json);
+    bool update_role_class(uint32_t class_id, const std::string& name,
+        int priority, bool inherit_lower, const std::string& restrictions_json);
+    bool delete_role_class(uint32_t class_id);
+    std::vector<RoleClass> get_role_classes(uint64_t guild_id);
+    bool assign_role_to_class(uint64_t guild_id, uint64_t role_id, uint32_t class_id);
+    bool remove_role_from_class(uint64_t guild_id, uint64_t role_id);
+    std::vector<RoleClassMember> get_class_members(uint32_t class_id);
+
+    // ========================================
     // PATCH NOTES
     // ========================================
     bool add_patch_note(const std::string& version, const std::string& notes, uint64_t author_id);

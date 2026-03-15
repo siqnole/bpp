@@ -7,8 +7,8 @@
 namespace bronx {
 
 // Simple JSON-like config parser
-inline db::DatabaseConfig load_database_config(const std::string& filepath = "data/db_config.json") {
-    db::DatabaseConfig config;
+inline bronx::db::DatabaseConfig load_database_config(const std::string& filepath = "data/db_config.json") {
+    bronx::db::DatabaseConfig config;
     
     std::ifstream file(filepath);
     if (!file.is_open()) {

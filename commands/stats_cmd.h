@@ -17,21 +17,10 @@
 #include <map>
 #include <tuple>
 #include <sstream>
+#include <unordered_map>
 
 namespace commands {
 
-// ── stats interaction helpers ───────────────────────────────────
-// 3-row layout:
-//   row 1 (buttons):  24h │ 7d │ 14d │ 30d
-//   row 2 (dropdown): graph type — line, bar, pie, scatter, stacked, heatmap
-//   row 3 (dropdown): category   — overview, members, messages, voice, boosts, commands, top
-//
-// Custom ID formats:
-//   stats_r_{days}_{gtype}_{cat}_{userid}      (range button)
-//   stats_g_{days}_{cat}_{userid}               (graph-type select, value = type)
-//   stats_c_{days}_{gtype}_{userid}             (category select,  value = cat)
-
-// ── graph type list (matches chart_renderer.h renderers) ───────
 static const std::vector<std::pair<std::string, std::string>> STATS_GRAPH_TYPES = {
     {"line",    "📈 line chart"},
     {"bar",     "📊 bar chart"},
@@ -51,7 +40,6 @@ static const std::vector<std::pair<std::string, std::string>> STATS_CATEGORIES =
     {"top",       "🏆 top 10"}
 };
 
-// default graph type per category
 inline std::string default_graph_type(const std::string& cat) {
     if (cat == "commands") return "bar";
     if (cat == "top")      return "pie";
@@ -59,7 +47,6 @@ inline std::string default_graph_type(const std::string& cat) {
     return "line";
 }
 
-// row 1: time-range buttons
 inline dpp::component stats_range_row(const std::string& gtype, const std::string& cat, int active_days, uint64_t uid) {
     dpp::component row;
     row.set_type(dpp::cot_action_row);
@@ -74,7 +61,6 @@ inline dpp::component stats_range_row(const std::string& gtype, const std::strin
     return row;
 }
 
-// row 2: graph-type select menu
 inline dpp::component stats_graph_type_row(const std::string& active_gtype, int days, const std::string& cat, uint64_t uid) {
     dpp::component row;
     row.set_type(dpp::cot_action_row);
@@ -91,7 +77,6 @@ inline dpp::component stats_graph_type_row(const std::string& active_gtype, int 
     return row;
 }
 
-// row 3: category select menu
 inline dpp::component stats_category_row(const std::string& active_cat, int days, const std::string& gtype, uint64_t uid) {
     dpp::component row;
     row.set_type(dpp::cot_action_row);
@@ -108,8 +93,6 @@ inline dpp::component stats_category_row(const std::string& active_cat, int days
     return row;
 }
 
-// row 0 (top-only): topic filter buttons — messages / voice / commands / all
-// Custom ID: stats_tf_{topic}_{days}_{gtype}_{userid}
 inline dpp::component stats_top_filter_row(const std::string& active_topic, int days, const std::string& gtype, uint64_t uid) {
     dpp::component row;
     row.set_type(dpp::cot_action_row);
@@ -125,7 +108,6 @@ inline dpp::component stats_top_filter_row(const std::string& active_topic, int 
     return row;
 }
 
-// attach all rows to a message (extra filter row when category == "top")
 inline void attach_stats_buttons(dpp::message& msg, const std::string& category, int days, uint64_t user_id,
                                  const std::string& gtype = "", const std::string& top_filter = "all") {
     std::string gt = gtype.empty() ? default_graph_type(category) : gtype;
@@ -136,7 +118,6 @@ inline void attach_stats_buttons(dpp::message& msg, const std::string& category,
     msg.add_component(stats_category_row(category, days, gt, user_id));
 }
 
-// ── helper: parse "7d" / "14d" / "30d" / "24h" from args, default 7
 inline int parse_days(const std::vector<std::string>& args, size_t idx = 1) {
     if (idx < args.size()) {
         const auto& a = args[idx];
@@ -158,7 +139,6 @@ inline int parse_days_slash(const dpp::slashcommand_t& event) {
     return 7;
 }
 
-// ── range option reused across subcommands ─────────────────────
 inline dpp::command_option range_option() {
     return dpp::command_option(dpp::co_string, "range", "time range (today, 7d, 14d, 30d)")
         .add_choice(dpp::command_option_choice("today",   std::string("today")))
@@ -167,7 +147,6 @@ inline dpp::command_option range_option() {
         .add_choice(dpp::command_option_choice("30 days", std::string("30d")));
 }
 
-// ── helper: format date string "YYYY-MM-DD" → "M/D" ───────────
 inline std::string fmt_date_label(const std::string& date) {
     auto pos = date.find('-');
     if (pos != std::string::npos) {
@@ -178,30 +157,34 @@ inline std::string fmt_date_label(const std::string& date) {
     return date;
 }
 
-// ── helper: render time-series data in the requested graph type ──
-// Accepts the standard labels + LineSeries data and renders the
-// chosen graph type, falling back to line chart for unsupported combos.
+inline std::string range_label(int days) {
+    if (days == 0) return "today";
+    return "last " + std::to_string(days) + " days";
+}
+
+inline std::string fmt_duration(int64_t minutes) {
+    if (minutes >= 60)
+        return std::to_string(minutes / 60) + "h " + std::to_string(minutes % 60) + "m";
+    return std::to_string(minutes) + "m";
+}
+
 inline std::string render_series_as(const std::string& gtype,
                                     const std::string& title,
                                     const std::vector<std::string>& labels,
                                     const std::vector<bronx::chart::LineSeries>& series) {
     namespace ch = bronx::chart;
     if (labels.empty() || series.empty()) return {};
-
     if (gtype == "bar") {
-        // stacked bar chart (vertical bars, one colour per series)
         std::vector<ch::BarSeries> bar_series;
         for (auto& s : series) {
             ch::BarSeries bs;
-            bs.name = s.name;
-            bs.colour = s.colour;
+            bs.name = s.name; bs.colour = s.colour;
             for (auto v : s.values) bs.values.push_back(static_cast<int64_t>(v));
             bar_series.push_back(bs);
         }
         return ch::render_stacked_bar_chart(title, labels, bar_series);
     }
     if (gtype == "pie") {
-        // aggregate each series into one slice
         std::vector<ch::PieSlice> slices;
         for (auto& s : series) {
             double total = 0;
@@ -214,8 +197,7 @@ inline std::string render_series_as(const std::string& gtype,
         std::vector<ch::ScatterSeries> sc;
         for (auto& s : series) {
             ch::ScatterSeries ss;
-            ss.name = s.name;
-            ss.colour = s.colour;
+            ss.name = s.name; ss.colour = s.colour;
             for (size_t i = 0; i < s.values.size(); ++i)
                 ss.points.push_back({static_cast<double>(i), s.values[i]});
             sc.push_back(ss);
@@ -226,32 +208,27 @@ inline std::string render_series_as(const std::string& gtype,
         std::vector<ch::BarSeries> bar_series;
         for (auto& s : series) {
             ch::BarSeries bs;
-            bs.name = s.name;
-            bs.colour = s.colour;
+            bs.name = s.name; bs.colour = s.colour;
             for (auto v : s.values) bs.values.push_back(static_cast<int64_t>(v));
             bar_series.push_back(bs);
         }
         return ch::render_stacked_bar_chart(title, labels, bar_series);
     }
     if (gtype == "heatmap") {
-        // approximate: first series values as single-row heatmap
         std::vector<std::vector<double>> matrix;
         for (auto& s : series) matrix.push_back(s.values);
         std::vector<std::string> row_labels;
         for (auto& s : series) row_labels.push_back(s.name);
         return ch::render_heatmap(title, row_labels, labels, matrix);
     }
-    // default: line chart
     return ch::render_line_chart(title, labels, series);
 }
 
-// ── helper: render ranked items as requested graph type ──────────
 inline std::string render_ranked_as(const std::string& gtype,
                                     const std::string& title,
                                     const std::vector<bronx::chart::BarItem>& bars) {
     namespace ch = bronx::chart;
     if (bars.empty()) return {};
-
     if (gtype == "pie") {
         std::vector<ch::PieSlice> slices;
         for (size_t i = 0; i < bars.size(); ++i)
@@ -270,12 +247,11 @@ inline std::string render_ranked_as(const std::string& gtype,
             pts.push_back({static_cast<double>(i), static_cast<double>(bars[i].value)});
         return ch::render_scatter_chart(title, {{title, ch::COL_ACCENT, pts}}, "rank", "count");
     }
-    // default: horizontal bar
     return ch::render_horizontal_bar_chart(title, bars);
 }
 
 // ================================================================
-//  stats  — summary overview with image card
+//  stats summary — overview card
 // ================================================================
 inline void handle_stats_summary(dpp::cluster& bot, bronx::db::Database* db,
                                  uint64_t guild_id, uint64_t channel_id,
@@ -301,7 +277,6 @@ inline void handle_stats_summary(dpp::cluster& bot, bronx::db::Database* db,
             {"new members",   ch::fmt_num(new_mem)}
         });
 
-    // Fetch all 4 daily trends for multi-line overview chart
     auto cmd_trend = sq::daily_command_trend(db, guild_id, days);
     auto msg_trend = sq::daily_message_count(db, guild_id, days);
     auto dau_trend = sq::daily_active_users(db, guild_id, days);
@@ -309,8 +284,7 @@ inline void handle_stats_summary(dpp::cluster& bot, bronx::db::Database* db,
 
     std::string trend_img;
     {
-        // Merge all series onto a unified date axis
-        std::map<std::string, std::tuple<double,double,double,double>> merged; // msgs, active, newmem, cmds
+        std::map<std::string, std::tuple<double,double,double,double>> merged;
         for (auto& d : msg_trend) merged[d.date] = {(double)d.value, 0.0, 0.0, 0.0};
         for (auto& d : dau_trend) std::get<1>(merged[d.date]) = (double)d.value;
         for (auto& d : mem_trend) std::get<2>(merged[d.date]) = (double)d.joins;
@@ -345,20 +319,18 @@ inline void handle_stats_summary(dpp::cluster& bot, bronx::db::Database* db,
     dpp::message msg(channel_id, "");
     msg.add_embed(embed);
     if (!img.empty()) msg.add_file("stats.png", img);
-
     if (!trend_img.empty()) {
         auto trend_embed = bronx::create_embed("");
         trend_embed.set_image("attachment://trend.png");
         msg.add_embed(trend_embed);
         msg.add_file("trend.png", trend_img);
     }
-
     if (user_id) attach_stats_buttons(msg, "overview", days, user_id, gtype);
     reply_fn(msg);
 }
 
 // ================================================================
-//  stats members — joins, leaves & active users line chart
+//  stats members — joins, leaves & active users
 // ================================================================
 inline void handle_stats_members(dpp::cluster& bot, bronx::db::Database* db,
                                  uint64_t guild_id, uint64_t channel_id,
@@ -379,10 +351,7 @@ inline void handle_stats_members(dpp::cluster& bot, bronx::db::Database* db,
 
     std::map<std::string, std::tuple<double,double,double>> merged;
     for (auto& m : members) merged[m.date] = {(double)m.joins, (double)m.leaves, 0.0};
-    for (auto& d : dau) {
-        auto& entry = merged[d.date];
-        std::get<2>(entry) = (double)d.value;
-    }
+    for (auto& d : dau) std::get<2>(merged[d.date]) = (double)d.value;
 
     std::vector<std::string> labels;
     std::vector<double> join_vals, leave_vals, active_vals;
@@ -394,9 +363,7 @@ inline void handle_stats_members(dpp::cluster& bot, bronx::db::Database* db,
     }
 
     std::string gt = gtype.empty() ? "line" : gtype;
-    std::string img = render_series_as(gt,
-        "member stats (" + std::to_string(days) + "d)",
-        labels,
+    std::string img = render_series_as(gt, "member stats (" + std::to_string(days) + "d)", labels,
         {
             {"joins",        ch::COL_GREEN,  join_vals},
             {"leaves",       ch::COL_RED,    leave_vals},
@@ -430,7 +397,7 @@ inline void handle_stats_members(dpp::cluster& bot, bronx::db::Database* db,
 }
 
 // ================================================================
-//  stats messages — messages, edits, deletes line chart
+//  stats messages — messages, edits, deletes
 // ================================================================
 inline void handle_stats_messages(dpp::cluster& bot, bronx::db::Database* db,
                                   uint64_t guild_id, uint64_t channel_id,
@@ -456,15 +423,11 @@ inline void handle_stats_messages(dpp::cluster& bot, bronx::db::Database* db,
         msg_vals.push_back((double)m.messages);
         edit_vals.push_back((double)m.edits);
         del_vals.push_back((double)m.deletes);
-        total_msgs += m.messages;
-        total_edits += m.edits;
-        total_dels += m.deletes;
+        total_msgs += m.messages; total_edits += m.edits; total_dels += m.deletes;
     }
 
     std::string gt = gtype.empty() ? "line" : gtype;
-    std::string img = render_series_as(gt,
-        "message stats (" + std::to_string(days) + "d)",
-        labels,
+    std::string img = render_series_as(gt, "message stats (" + std::to_string(days) + "d)", labels,
         {
             {"messages", ch::COL_ACCENT, msg_vals},
             {"edits",    ch::COL_BLUE,   edit_vals},
@@ -486,21 +449,8 @@ inline void handle_stats_messages(dpp::cluster& bot, bronx::db::Database* db,
     reply_fn(msg);
 }
 
-// ── helper: range label ────────────────────────────────────────
-inline std::string range_label(int days) {
-    if (days == 0) return "today";
-    return "last " + std::to_string(days) + " days";
-}
-
-// ── helper: format minutes as "Xh Ym" ─────────────────────────
-inline std::string fmt_duration(int64_t minutes) {
-    if (minutes >= 60)
-        return std::to_string(minutes / 60) + "h " + std::to_string(minutes % 60) + "m";
-    return std::to_string(minutes) + "m";
-}
-
 // ================================================================
-//  stats voice — voice activity with session durations
+//  stats voice — voice activity
 // ================================================================
 inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
                                uint64_t guild_id, uint64_t channel_id,
@@ -518,7 +468,6 @@ inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
         return;
     }
 
-    // Build daily join/leave series
     std::vector<std::string> labels;
     std::vector<double> join_vals, leave_vals;
     int64_t total_joins = 0, total_leaves = 0;
@@ -526,11 +475,9 @@ inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
         labels.push_back(fmt_date_label(v.date));
         join_vals.push_back((double)v.joins);
         leave_vals.push_back((double)v.leaves);
-        total_joins += v.joins;
-        total_leaves += v.leaves;
+        total_joins += v.joins; total_leaves += v.leaves;
     }
 
-    // Build daily voice-minutes series (aligned with join/leave labels)
     auto daily_mins = sq::daily_voice_minutes_series(db, guild_id, days);
     std::unordered_map<std::string, int64_t> mins_by_date;
     for (auto& dm : daily_mins) mins_by_date[dm.date] = dm.minutes;
@@ -541,20 +488,17 @@ inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
     }
 
     std::string gt = gtype.empty() ? "line" : gtype;
-    std::string img = render_series_as(gt,
-        "voice stats (" + std::to_string(days) + "d)",
-        labels,
+    std::string img = render_series_as(gt, "voice stats (" + std::to_string(days) + "d)", labels,
         {
             {"joins",   ch::COL_GREEN, join_vals},
             {"leaves",  ch::COL_RED,   leave_vals},
             {"vc mins", ch::COL_CYAN,  min_vals}
         });
 
-    // Aggregate stats
     auto total_sessions = sq::total_voice_sessions(db, guild_id, days);
     auto unique_users   = sq::unique_voice_users(db, guild_id, days);
     auto voice_mins     = sq::total_voice_minutes(db, guild_id, days);
-    int64_t avg_session  = total_sessions > 0 ? voice_mins / total_sessions : 0;
+    int64_t avg_session = total_sessions > 0 ? voice_mins / total_sessions : 0;
 
     std::string desc = "**voice stats** -- last " + std::to_string(days) + " days\n";
     desc += "total time: **" + fmt_duration(voice_mins) + "**\n";
@@ -563,7 +507,6 @@ inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
     desc += "unique users: **" + ch::fmt_num(unique_users) + "**\n";
     desc += "total joins: **" + ch::fmt_num(total_joins) + "** · leaves: **" + ch::fmt_num(total_leaves) + "**";
 
-    // Top voice users by duration
     auto top_vu = sq::top_voice_users(db, guild_id, days, 5);
     if (!top_vu.empty()) {
         desc += "\n\n**top users by vc time**\n";
@@ -584,7 +527,7 @@ inline void handle_stats_voice(dpp::cluster& bot, bronx::db::Database* db,
 }
 
 // ================================================================
-//  stats boosts — boost & unboost activity line chart
+//  stats boosts
 // ================================================================
 inline void handle_stats_boosts(dpp::cluster& bot, bronx::db::Database* db,
                                 uint64_t guild_id, uint64_t channel_id,
@@ -609,20 +552,17 @@ inline void handle_stats_boosts(dpp::cluster& bot, bronx::db::Database* db,
         labels.push_back(fmt_date_label(b.date));
         boost_vals.push_back((double)b.boosts);
         unboost_vals.push_back((double)b.unboosts);
-        total_boosts_count += b.boosts;
-        total_unboosts += b.unboosts;
+        total_boosts_count += b.boosts; total_unboosts += b.unboosts;
     }
 
     std::string gt = gtype.empty() ? "line" : gtype;
-    std::string img = render_series_as(gt,
-        "boost stats (" + std::to_string(days) + "d)",
-        labels,
+    std::string img = render_series_as(gt, "boost stats (" + std::to_string(days) + "d)", labels,
         {
             {"boosts",   ch::COL_ACCENT, boost_vals},
             {"unboosts", ch::COL_RED,    unboost_vals}
         });
 
-    auto net_boosts     = sq::total_boosts(db, guild_id, days);
+    auto net_boosts            = sq::total_boosts(db, guild_id, days);
     auto unique_boosters_count = sq::unique_boosters(db, guild_id, days);
 
     std::string desc = "**boost stats** -- last " + std::to_string(days) + " days\n";
@@ -642,7 +582,7 @@ inline void handle_stats_boosts(dpp::cluster& bot, bronx::db::Database* db,
 }
 
 // ================================================================
-//  stats commands — top commands horizontal bar chart
+//  stats commands
 // ================================================================
 inline void handle_stats_commands(dpp::cluster& bot, bronx::db::Database* db,
                                   uint64_t guild_id, uint64_t channel_id,
@@ -661,21 +601,18 @@ inline void handle_stats_commands(dpp::cluster& bot, bronx::db::Database* db,
     }
 
     std::vector<ch::BarItem> bars;
-    for (auto& c : cmds) bars.push_back({c.command, c.count});
+    for (auto& c : cmds) bars.push_back(bronx::chart::BarItem{c.command, c.count});
 
     std::string gt = gtype.empty() ? "bar" : gtype;
-    std::string img = render_ranked_as(gt,
-        "top commands (" + std::to_string(days) + "d)", bars);
+    std::string img = render_ranked_as(gt, "top commands (" + std::to_string(days) + "d)", bars);
 
     int64_t total = 0;
     for (auto& c : cmds) total += c.count;
     std::string desc = "**top commands** -- last " + std::to_string(days) + " days\n";
     for (size_t i = 0; i < std::min(cmds.size(), (size_t)10); ++i) {
-        std::string rank = std::to_string(i + 1) + ".";
         double pct = total > 0 ? (cmds[i].count * 100.0 / total) : 0;
-        char pct_buf[16];
-        snprintf(pct_buf, sizeof(pct_buf), "%.1f%%", pct);
-        desc += rank + " `" + cmds[i].command + "` -- " + ch::fmt_num(cmds[i].count) + " (" + pct_buf + ")\n";
+        char pct_buf[16]; snprintf(pct_buf, sizeof(pct_buf), "%.1f%%", pct);
+        desc += std::to_string(i + 1) + ". `" + cmds[i].command + "` -- " + ch::fmt_num(cmds[i].count) + " (" + pct_buf + ")\n";
     }
 
     auto embed = bronx::create_embed(desc);
@@ -689,7 +626,7 @@ inline void handle_stats_commands(dpp::cluster& bot, bronx::db::Database* db,
 }
 
 // ================================================================
-//  stats channel <#channel> — command usage in a specific channel
+//  stats channel
 // ================================================================
 inline void handle_stats_channel(dpp::cluster& bot, bronx::db::Database* db,
                                  uint64_t guild_id, uint64_t channel_id,
@@ -713,14 +650,13 @@ inline void handle_stats_channel(dpp::cluster& bot, bronx::db::Database* db,
     std::map<std::string, int64_t> agg;
     for (auto& c : filtered) agg[c.command] += c.count;
     std::vector<ch::BarItem> bars;
-    for (auto& [cmd, cnt] : agg) bars.push_back({cmd, cnt});
+    for (auto& [cmd, cnt] : agg) bars.push_back(bronx::chart::BarItem{cmd, cnt});
     std::sort(bars.begin(), bars.end(), [](auto& a, auto& b) { return a.value > b.value; });
     if (bars.size() > 15) bars.resize(15);
 
     std::string chan_label = filter_channel ? "<#" + std::to_string(filter_channel) + ">" : "all channels";
     std::string img = ch::render_horizontal_bar_chart(
-        std::string("commands in ") + (filter_channel ? "channel" : "all channels") + " (" + std::to_string(days) + "d)",
-        bars);
+        std::string("commands in ") + (filter_channel ? "channel" : "all channels") + " (" + std::to_string(days) + "d)", bars);
 
     auto embed = bronx::create_embed("**command usage** in " + chan_label + " -- last " + std::to_string(days) + " days");
     if (!img.empty()) embed.set_image("attachment://channel.png");
@@ -732,8 +668,7 @@ inline void handle_stats_channel(dpp::cluster& bot, bronx::db::Database* db,
 }
 
 // ================================================================
-//  stats top — top 10 users by messages, VC hours, commands
-//  top_filter: "all", "messages", "voice", or "commands"
+//  stats top
 // ================================================================
 inline void handle_stats_top(dpp::cluster& bot, bronx::db::Database* db,
                              uint64_t guild_id, uint64_t channel_id,
@@ -747,27 +682,22 @@ inline void handle_stats_top(dpp::cluster& bot, bronx::db::Database* db,
     bool show_vc   = (top_filter == "all" || top_filter == "voice");
     bool show_cmds = (top_filter == "all" || top_filter == "commands");
 
-    // only query what we need
     std::vector<sq::UserActivityEntry> top_msgs, top_vc, top_cmds;
     if (show_msgs) top_msgs = sq::top_users_messages(db, guild_id, days, 10);
     if (show_vc)   top_vc   = sq::top_users_voice(db, guild_id, days, 10);
     if (show_cmds) top_cmds = sq::top_users_commands(db, guild_id, days, 10);
 
-    // filter out zero-value entries
     auto strip_zero = [](std::vector<sq::UserActivityEntry>& v) {
         v.erase(std::remove_if(v.begin(), v.end(), [](auto& e){ return e.total_value <= 0; }), v.end());
     };
-    strip_zero(top_msgs);
-    strip_zero(top_vc);
-    strip_zero(top_cmds);
+    strip_zero(top_msgs); strip_zero(top_vc); strip_zero(top_cmds);
 
     std::string desc = "**top 10** -- " + range_label(days) + "\n";
 
-    // helper: render a section (no emojis, no extra text)
     auto render_section = [&](const std::string& title,
                               const std::vector<sq::UserActivityEntry>& entries,
                               bool is_duration) {
-        if (entries.empty()) return; // hide entirely if empty
+        if (entries.empty()) return;
         desc += "\n**" + title + "**\n";
         for (size_t i = 0; i < entries.size(); ++i) {
             desc += "`" + std::to_string(i + 1) + ".` <@" + std::to_string(entries[i].user_id) + "> -- **"
@@ -780,12 +710,9 @@ inline void handle_stats_top(dpp::cluster& bot, bronx::db::Database* db,
     if (show_vc)   render_section("voice",    top_vc,   true);
     if (show_cmds) render_section("commands", top_cmds, false);
 
-    // if nothing at all, say so
-    if (top_msgs.empty() && top_vc.empty() && top_cmds.empty()) {
+    if (top_msgs.empty() && top_vc.empty() && top_cmds.empty())
         desc += "\nno data for this period";
-    }
 
-    // chart: use the primary visible dataset for the chart image
     std::string chart_img;
     auto build_chart = [&](const std::string& chart_title,
                            const std::vector<sq::UserActivityEntry>& entries) {
@@ -803,12 +730,11 @@ inline void handle_stats_top(dpp::cluster& bot, bronx::db::Database* db,
             chart_img = ch::render_pie_chart(chart_title, slices);
         } else {
             std::vector<ch::BarItem> bars;
-            for (auto& s : slices) bars.push_back({s.label, static_cast<int64_t>(s.value)});
+            for (auto& s : slices) bars.push_back(bronx::chart::BarItem{s.label, static_cast<int64_t>(s.value)});
             chart_img = render_ranked_as(gt, chart_title, bars);
         }
     };
 
-    // pick whichever section is active for chart
     if (!top_msgs.empty() && show_msgs)      build_chart("messages", top_msgs);
     else if (!top_vc.empty() && show_vc)     build_chart("voice", top_vc);
     else if (!top_cmds.empty() && show_cmds) build_chart("commands", top_cmds);
@@ -824,7 +750,7 @@ inline void handle_stats_top(dpp::cluster& bot, bronx::db::Database* db,
 }
 
 // ================================================================
-//  stats user @user — personal stats profile
+//  stats user
 // ================================================================
 inline void handle_stats_user(dpp::cluster& bot, bronx::db::Database* db,
                               uint64_t guild_id, uint64_t channel_id,
@@ -847,7 +773,6 @@ inline void handle_stats_user(dpp::cluster& bot, bronx::db::Database* db,
     if (!totals.most_active_day.empty())
         desc += "🔥 most active day: **" + totals.most_active_day + "**\n";
 
-    // double-line chart: messages + commands per day
     std::string chart_img;
     if (!daily.empty()) {
         std::vector<std::string> labels;
@@ -858,8 +783,7 @@ inline void handle_stats_user(dpp::cluster& bot, bronx::db::Database* db,
             cmd_vals.push_back((double)d.commands_used);
             vc_vals.push_back((double)d.voice_minutes);
         }
-        chart_img = ch::render_line_chart(
-            "daily activity — " + name, labels,
+        chart_img = ch::render_line_chart("daily activity — " + name, labels,
             {
                 {"messages", ch::COL_ACCENT, msg_vals, 1},
                 {"commands", ch::COL_GREEN,  cmd_vals, 0},
@@ -877,7 +801,7 @@ inline void handle_stats_user(dpp::cluster& bot, bronx::db::Database* db,
 }
 
 // ================================================================
-//  stats heatmap — hour × day-of-week activity heatmap
+//  stats heatmap
 // ================================================================
 inline void handle_stats_heatmap(dpp::cluster& bot, bronx::db::Database* db,
                                  uint64_t guild_id, uint64_t channel_id,
@@ -895,7 +819,6 @@ inline void handle_stats_heatmap(dpp::cluster& bot, bronx::db::Database* db,
         return;
     }
 
-    // build 7×24 matrix
     std::vector<std::vector<double>> matrix(7, std::vector<double>(24, 0.0));
     for (auto& e : entries) {
         if (e.day_of_week >= 0 && e.day_of_week < 7 && e.hour >= 0 && e.hour < 24)
@@ -906,9 +829,7 @@ inline void handle_stats_heatmap(dpp::cluster& bot, bronx::db::Database* db,
     std::vector<std::string> col_labels;
     for (int h = 0; h < 24; ++h) col_labels.push_back(std::to_string(h));
 
-    std::string img = ch::render_heatmap(
-        "activity heatmap (" + range_label(days) + ")",
-        row_labels, col_labels, matrix);
+    std::string img = ch::render_heatmap("activity heatmap (" + range_label(days) + ")", row_labels, col_labels, matrix);
 
     auto embed = bronx::create_embed("**activity heatmap** — " + range_label(days) + "\nmessage activity by hour and day of week");
     if (!img.empty()) embed.set_image("attachment://heatmap.png");
@@ -920,75 +841,53 @@ inline void handle_stats_heatmap(dpp::cluster& bot, bronx::db::Database* db,
     reply_fn(msg);
 }
 
-
 // ================================================================
-//  stats button click handler — time range buttons (row 1)
-//  Custom ID: stats_r_{days}_{gtype}_{cat}_{userid}
+//  button handler
 // ================================================================
 inline void handle_stats_buttons(dpp::cluster& bot, const dpp::button_click_t& event, bronx::db::Database* db) {
     std::string cid_str = event.custom_id;
 
-    // ── top-filter buttons: stats_tf_{topic}_{days}_{gtype}_{userid}
     if (cid_str.find("stats_tf_") == 0) {
         std::vector<std::string> parts;
-        std::stringstream ss(cid_str);
-        std::string part;
+        std::stringstream ss(cid_str); std::string part;
         while (std::getline(ss, part, '_')) parts.push_back(part);
-        // parts: [stats, tf, topic, days, gtype, userid]
         if (parts.size() < 6) return;
         std::string topic = parts[2];
-        int days = 7;
-        try { days = std::stoi(parts[3]); } catch (...) { days = 7; }
+        int days = 7; try { days = std::stoi(parts[3]); } catch (...) { days = 7; }
         std::string gtype = parts[4];
-        uint64_t expected_user = 0;
-        try { expected_user = std::stoull(parts[5]); } catch (...) { return; }
+        uint64_t expected_user = 0; try { expected_user = std::stoull(parts[5]); } catch (...) { return; }
         if (days != 0 && days != 7 && days != 14 && days != 30) days = 7;
         if (expected_user != 0 && event.command.get_issuing_user().id != expected_user) {
-            event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("this isn't your stats view")).set_flags(dpp::m_ephemeral));
+            event.reply(dpp::ir_channel_message_with_source, dpp::message().add_embed(bronx::error("this isn't your stats view")).set_flags(dpp::m_ephemeral));
             return;
         }
-        uint64_t guild_id   = event.command.guild_id;
-        uint64_t channel_id = event.command.channel_id;
-        uint64_t user_id    = static_cast<uint64_t>(event.command.get_issuing_user().id);
+        uint64_t guild_id = event.command.guild_id, channel_id = event.command.channel_id;
+        uint64_t user_id  = static_cast<uint64_t>(event.command.get_issuing_user().id);
         auto reply = [&event](const dpp::message& msg) { event.reply(dpp::ir_update_message, msg); };
         handle_stats_top(bot, db, guild_id, channel_id, days, reply, user_id, gtype, topic);
         return;
     }
 
-    // ── range buttons: stats_r_{days}_{gtype}_{cat}_{userid}
     if (cid_str.find("stats_r_") != 0) return;
 
     std::vector<std::string> parts;
-    std::stringstream ss(cid_str);
-    std::string part;
+    std::stringstream ss(cid_str); std::string part;
     while (std::getline(ss, part, '_')) parts.push_back(part);
-
-    // parts: [stats, r, days, gtype, cat, userid]
     if (parts.size() < 6) return;
 
-    int days = 7;
-    try { days = std::stoi(parts[2]); } catch (...) { days = 7; }
-    std::string gtype    = parts[3];
-    std::string category = parts[4];
-    uint64_t expected_user = 0;
-    try { expected_user = std::stoull(parts[5]); } catch (...) { return; }
-
+    int days = 7; try { days = std::stoi(parts[2]); } catch (...) { days = 7; }
+    std::string gtype = parts[3], category = parts[4];
+    uint64_t expected_user = 0; try { expected_user = std::stoull(parts[5]); } catch (...) { return; }
     if (days != 0 && days != 7 && days != 14 && days != 30) days = 7;
 
     if (expected_user != 0 && event.command.get_issuing_user().id != expected_user) {
-        event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("this isn't your stats view")).set_flags(dpp::m_ephemeral));
+        event.reply(dpp::ir_channel_message_with_source, dpp::message().add_embed(bronx::error("this isn't your stats view")).set_flags(dpp::m_ephemeral));
         return;
     }
 
-    uint64_t guild_id   = event.command.guild_id;
-    uint64_t channel_id = event.command.channel_id;
-    uint64_t user_id    = static_cast<uint64_t>(event.command.get_issuing_user().id);
-
-    auto reply = [&event](const dpp::message& msg) {
-        event.reply(dpp::ir_update_message, msg);
-    };
+    uint64_t guild_id = event.command.guild_id, channel_id = event.command.channel_id;
+    uint64_t user_id  = static_cast<uint64_t>(event.command.get_issuing_user().id);
+    auto reply = [&event](const dpp::message& msg) { event.reply(dpp::ir_update_message, msg); };
 
     if (category == "overview")       handle_stats_summary(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
     else if (category == "members")   handle_stats_members(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
@@ -1001,9 +900,7 @@ inline void handle_stats_buttons(dpp::cluster& bot, const dpp::button_click_t& e
 }
 
 // ================================================================
-//  stats select menu handler — graph type (row 2) & category (row 3)
-//  Graph type ID: stats_g_{days}_{cat}_{userid}
-//  Category ID:   stats_c_{days}_{gtype}_{userid}
+//  select handler
 // ================================================================
 inline void handle_stats_select(dpp::cluster& bot, const dpp::select_click_t& event, bronx::db::Database* db) {
     std::string cid_str = event.custom_id;
@@ -1011,46 +908,32 @@ inline void handle_stats_select(dpp::cluster& bot, const dpp::select_click_t& ev
     if (event.values.empty()) return;
 
     std::vector<std::string> parts;
-    std::stringstream ss(cid_str);
-    std::string part;
+    std::stringstream ss(cid_str); std::string part;
     while (std::getline(ss, part, '_')) parts.push_back(part);
-
-    // parts: [stats, g/c, days, gtype_or_cat, userid]
     if (parts.size() < 5) return;
 
-    std::string action = parts[1]; // "g" or "c"
-    int days = 7;
-    try { days = std::stoi(parts[2]); } catch (...) { days = 7; }
+    std::string action = parts[1];
+    int days = 7; try { days = std::stoi(parts[2]); } catch (...) { days = 7; }
     if (days != 0 && days != 7 && days != 14 && days != 30) days = 7;
 
     std::string gtype, category;
     uint64_t expected_user = 0;
-
     if (action == "g") {
-        // stats_g_{days}_{cat}_{userid} → selected value = graph type
-        category = parts[3];
-        try { expected_user = std::stoull(parts[4]); } catch (...) { return; }
+        category = parts[3]; try { expected_user = std::stoull(parts[4]); } catch (...) { return; }
         gtype = event.values[0];
     } else {
-        // stats_c_{days}_{gtype}_{userid} → selected value = category
-        gtype = parts[3];
-        try { expected_user = std::stoull(parts[4]); } catch (...) { return; }
+        gtype = parts[3]; try { expected_user = std::stoull(parts[4]); } catch (...) { return; }
         category = event.values[0];
     }
 
     if (expected_user != 0 && event.command.get_issuing_user().id != expected_user) {
-        event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("this isn't your stats view")).set_flags(dpp::m_ephemeral));
+        event.reply(dpp::ir_channel_message_with_source, dpp::message().add_embed(bronx::error("this isn't your stats view")).set_flags(dpp::m_ephemeral));
         return;
     }
 
-    uint64_t guild_id   = event.command.guild_id;
-    uint64_t channel_id = event.command.channel_id;
-    uint64_t user_id    = static_cast<uint64_t>(event.command.get_issuing_user().id);
-
-    auto reply = [&event](const dpp::message& msg) {
-        event.reply(dpp::ir_update_message, msg);
-    };
+    uint64_t guild_id = event.command.guild_id, channel_id = event.command.channel_id;
+    uint64_t user_id  = static_cast<uint64_t>(event.command.get_issuing_user().id);
+    auto reply = [&event](const dpp::message& msg) { event.reply(dpp::ir_update_message, msg); };
 
     if (category == "overview")       handle_stats_summary(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
     else if (category == "members")   handle_stats_members(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
@@ -1063,7 +946,7 @@ inline void handle_stats_select(dpp::cluster& bot, const dpp::select_click_t& ev
 }
 
 // ================================================================
-//  register_stats_interactions — wire up select menu handler
+//  register interactions
 // ================================================================
 inline void register_stats_interactions(dpp::cluster& bot, bronx::db::Database* db) {
     bot.on_select_click([&bot, db](const dpp::select_click_t& event) {
@@ -1071,9 +954,8 @@ inline void register_stats_interactions(dpp::cluster& bot, bronx::db::Database* 
     });
 }
 
-
 // ================================================================
-//  get_stats_commands — factory function
+//  get_stats_commands — factory
 // ================================================================
 inline std::vector<Command*> get_stats_commands(bronx::db::Database* db) {
     static std::vector<Command*> cmds;
@@ -1081,180 +963,84 @@ inline std::vector<Command*> get_stats_commands(bronx::db::Database* db) {
 
     static Command stats_cmd("stats", "view server statistics with charts", "utility",
         {"serverstats", "statistics"}, true,
-        // text handler
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
-            if (event.msg.guild_id == 0) {
-                bronx::send_message(bot, event, bronx::error("stats are only available in servers"));
-                return;
-            }
-            uint64_t gid = event.msg.guild_id;
-            uint64_t cid = event.msg.channel_id;
-            uint64_t uid = event.msg.author.id;
-
+            if (event.msg.guild_id == 0) { bronx::send_message(bot, event, bronx::error("stats are only available in servers")); return; }
+            uint64_t gid = event.msg.guild_id, cid = event.msg.channel_id, uid = event.msg.author.id;
             std::string sub = args.size() > 0 ? args[0] : "";
             std::transform(sub.begin(), sub.end(), sub.begin(), ::tolower);
+            auto reply = [&bot, &event](const dpp::message& msg) { bronx::send_message(bot, event, msg); };
 
-            auto reply = [&bot, &event](const dpp::message& msg) {
-                bronx::send_message(bot, event, msg);
-            };
-
-            if (sub == "members" || sub == "member" || sub == "users") {
+            if (sub == "members" || sub == "member" || sub == "users")
                 handle_stats_members(bot, db, gid, cid, parse_days(args, 1), reply, uid);
-            } else if (sub == "messages" || sub == "msgs" || sub == "msg") {
+            else if (sub == "messages" || sub == "msgs" || sub == "msg")
                 handle_stats_messages(bot, db, gid, cid, parse_days(args, 1), reply, uid);
-            } else if (sub == "voice" || sub == "vc") {
+            else if (sub == "voice" || sub == "vc")
                 handle_stats_voice(bot, db, gid, cid, parse_days(args, 1), reply, uid);
-            } else if (sub == "boosts" || sub == "boost") {
+            else if (sub == "boosts" || sub == "boost")
                 handle_stats_boosts(bot, db, gid, cid, parse_days(args, 1), reply, uid);
-            } else if (sub == "commands" || sub == "cmds") {
+            else if (sub == "commands" || sub == "cmds")
                 handle_stats_commands(bot, db, gid, cid, parse_days(args, 1), reply, uid);
-            } else if (sub == "top" || sub == "top10" || sub == "leaderboard") {
+            else if (sub == "top" || sub == "top10" || sub == "leaderboard")
                 handle_stats_top(bot, db, gid, cid, parse_days(args, 1), reply, uid);
-            } else if (sub == "user" || sub == "profile") {
+            else if (sub == "user" || sub == "profile") {
                 uint64_t target = uid;
-                if (!event.msg.mentions.empty()) {
-                    target = event.msg.mentions[0].first.id;
-                } else if (args.size() > 1) {
-                    try {
-                        std::string id_str = args[1];
-                        if (id_str.size() > 3 && id_str[0] == '<' && id_str[1] == '@')
-                            id_str = id_str.substr(2, id_str.size() - 3);
-                        target = std::stoull(id_str);
-                    } catch (...) {}
-                }
+                if (!event.msg.mentions.empty()) target = event.msg.mentions[0].first.id;
+                else if (args.size() > 1) { try { std::string s = args[1]; if (s.size()>3&&s[0]=='<'&&s[1]=='@') s=s.substr(2,s.size()-3); target=std::stoull(s); } catch (...) {} }
                 handle_stats_user(bot, db, gid, cid, target, parse_days(args, 2), reply);
             } else if (sub == "channel" || sub == "ch") {
                 uint64_t filter_ch = 0;
-                if (!event.msg.mention_channels.empty()) {
-                    filter_ch = event.msg.mention_channels[0].id;
-                } else if (args.size() > 1) {
-                    try {
-                        std::string id_str = args[1];
-                        if (id_str.size() > 2 && id_str[0] == '<' && id_str[1] == '#')
-                            id_str = id_str.substr(2, id_str.size() - 3);
-                        filter_ch = std::stoull(id_str);
-                    } catch (...) {}
-                }
+                if (!event.msg.mention_channels.empty()) filter_ch = event.msg.mention_channels[0].id;
+                else if (args.size() > 1) { try { std::string s = args[1]; if (s.size()>2&&s[0]=='<'&&s[1]=='#') s=s.substr(2,s.size()-3); filter_ch=std::stoull(s); } catch (...) {} }
                 handle_stats_channel(bot, db, gid, cid, filter_ch, parse_days(args, 2), reply);
             } else {
                 handle_stats_summary(bot, db, gid, cid, parse_days(args, 0), reply, uid);
             }
         },
-        // slash handler
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
-            if (event.command.guild_id == 0) {
-                bronx::safe_slash_reply(bot, event, bronx::error("stats are only available in servers"));
-                return;
-            }
-            uint64_t gid = event.command.guild_id;
-            uint64_t cid = event.command.channel_id;
-            uint64_t uid = event.command.usr.id;
-
-            auto reply = [&bot, &event](const dpp::message& msg) {
-                bronx::safe_slash_reply(bot, event, msg);
-            };
-
+            if (event.command.guild_id == 0) { bronx::safe_slash_reply(bot, event, bronx::error("stats are only available in servers")); return; }
+            uint64_t gid = event.command.guild_id, cid = event.command.channel_id, uid = event.command.usr.id;
+            auto reply = [&bot, &event](const dpp::message& msg) { bronx::safe_slash_reply(bot, event, msg); };
             auto sub_cmd = event.command.get_command_interaction();
-            if (sub_cmd.options.empty()) {
-                handle_stats_summary(bot, db, gid, cid, parse_days_slash(event), reply, uid);
-                return;
-            }
-
+            if (sub_cmd.options.empty()) { handle_stats_summary(bot, db, gid, cid, parse_days_slash(event), reply, uid); return; }
             auto& sub = sub_cmd.options[0];
             auto get_range = [&sub]() -> int {
                 int days = 7;
-                for (auto& o : sub.options) {
-                    if (o.name == "range") {
-                        auto v = std::get<std::string>(o.value);
-                        if (v == "today") days = 0;
-                        else if (v == "14d") days = 14;
-                        else if (v == "30d") days = 30;
-                    }
-                }
+                for (auto& o : sub.options) { if (o.name == "range") { auto v = std::get<std::string>(o.value); if (v=="today") days=0; else if (v=="14d") days=14; else if (v=="30d") days=30; } }
                 return days;
             };
-
-            if (sub.name == "members") {
-                handle_stats_members(bot, db, gid, cid, get_range(), reply, uid);
-            } else if (sub.name == "messages") {
-                handle_stats_messages(bot, db, gid, cid, get_range(), reply, uid);
-            } else if (sub.name == "voice") {
-                handle_stats_voice(bot, db, gid, cid, get_range(), reply, uid);
-            } else if (sub.name == "boosts") {
-                handle_stats_boosts(bot, db, gid, cid, get_range(), reply, uid);
-            } else if (sub.name == "commands") {
-                handle_stats_commands(bot, db, gid, cid, get_range(), reply, uid);
-            } else if (sub.name == "top") {
-                handle_stats_top(bot, db, gid, cid, get_range(), reply, uid);
-            } else if (sub.name == "user") {
+            if (sub.name == "members")        handle_stats_members(bot, db, gid, cid, get_range(), reply, uid);
+            else if (sub.name == "messages")  handle_stats_messages(bot, db, gid, cid, get_range(), reply, uid);
+            else if (sub.name == "voice")     handle_stats_voice(bot, db, gid, cid, get_range(), reply, uid);
+            else if (sub.name == "boosts")    handle_stats_boosts(bot, db, gid, cid, get_range(), reply, uid);
+            else if (sub.name == "commands")  handle_stats_commands(bot, db, gid, cid, get_range(), reply, uid);
+            else if (sub.name == "top")       handle_stats_top(bot, db, gid, cid, get_range(), reply, uid);
+            else if (sub.name == "user") {
                 uint64_t target = uid;
-                for (auto& o : sub.options) {
-                    if (o.name == "target") target = std::get<dpp::snowflake>(o.value);
-                }
+                for (auto& o : sub.options) { if (o.name == "target") target = std::get<dpp::snowflake>(o.value); }
                 handle_stats_user(bot, db, gid, cid, target, get_range(), reply);
             } else if (sub.name == "channel") {
-                int days = 7;
-                dpp::snowflake ch_id = 0;
-                for (auto& o : sub.options) {
-                    if (o.name == "range") {
-                        auto v = std::get<std::string>(o.value);
-                        if (v == "14d") days = 14;
-                        else if (v == "30d") days = 30;
-                    } else if (o.name == "channel") {
-                        ch_id = std::get<dpp::snowflake>(o.value);
-                    }
-                }
+                int days = 7; dpp::snowflake ch_id = 0;
+                for (auto& o : sub.options) { if (o.name=="range") { auto v=std::get<std::string>(o.value); if(v=="14d") days=14; else if(v=="30d") days=30; } else if (o.name=="channel") ch_id=std::get<dpp::snowflake>(o.value); }
                 handle_stats_channel(bot, db, gid, cid, ch_id, days, reply);
             } else {
                 handle_stats_summary(bot, db, gid, cid, 7, reply, uid);
             }
         },
-        // slash command options (subcommands)
         {
-            dpp::command_option(dpp::co_sub_command, "members", "member joins, leaves & active users chart")
-                .add_option(range_option()),
-            dpp::command_option(dpp::co_sub_command, "messages", "messages, edits & deletes chart")
-                .add_option(range_option()),
-            dpp::command_option(dpp::co_sub_command, "voice", "voice channel activity chart")
-                .add_option(range_option()),
-            dpp::command_option(dpp::co_sub_command, "boosts", "server boost activity chart")
-                .add_option(range_option()),
-            dpp::command_option(dpp::co_sub_command, "commands", "top used commands chart")
-                .add_option(range_option()),
+            dpp::command_option(dpp::co_sub_command, "members", "member joins, leaves & active users chart").add_option(range_option()),
+            dpp::command_option(dpp::co_sub_command, "messages", "messages, edits & deletes chart").add_option(range_option()),
+            dpp::command_option(dpp::co_sub_command, "voice", "voice channel activity chart").add_option(range_option()),
+            dpp::command_option(dpp::co_sub_command, "boosts", "server boost activity chart").add_option(range_option()),
+            dpp::command_option(dpp::co_sub_command, "commands", "top used commands chart").add_option(range_option()),
             dpp::command_option(dpp::co_sub_command, "channel", "command usage in a specific channel")
                 .add_option(dpp::command_option(dpp::co_channel, "channel", "channel to view stats for", true))
                 .add_option(range_option()),
-            dpp::command_option(dpp::co_sub_command, "top", "top 10 users by messages, vc hours & commands")
-                .add_option(range_option()),
+            dpp::command_option(dpp::co_sub_command, "top", "top 10 users by messages, vc hours & commands").add_option(range_option()),
             dpp::command_option(dpp::co_sub_command, "user", "personal stats profile for a user")
                 .add_option(dpp::command_option(dpp::co_user, "target", "user to view stats for", false))
                 .add_option(range_option())
         }
     );
-
-    stats_cmd.extended_description = "view server statistics with visual charts — use dropdowns to switch graph type and category";
-    stats_cmd.detailed_usage = "stats [members|messages|voice|boosts|commands|top|user [@user]|channel <#ch>] [24h|7d|14d|30d]";
-    stats_cmd.subcommands = {
-        {"members",           "member joins, leaves & active users chart"},
-        {"messages",          "message volume, edits & deletes chart"},
-        {"voice",             "voice channel activity chart"},
-        {"boosts",            "server boost & unboost activity chart"},
-        {"commands",          "top used commands chart"},
-        {"top",               "top 10 users by messages, VC hours & commands"},
-        {"user [@user]",      "personal stats profile for a user"},
-        {"channel <#channel>","command usage breakdown for a specific channel"}
-    };
-    stats_cmd.examples = {
-        "stats",
-        "stats members 14d",
-        "stats messages 30d",
-        "stats voice 7d",
-        "stats boosts 14d",
-        "stats commands 14d",
-        "stats top 24h",
-        "stats user @someone 14d",
-        "stats channel #general"
-    };
 
     cmds.push_back(&stats_cmd);
     return cmds;
