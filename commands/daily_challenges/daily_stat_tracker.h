@@ -12,7 +12,6 @@
 #include <string>
 #include <chrono>
 #include <ctime>
-
 namespace commands {
 namespace daily_challenges {
 
@@ -38,6 +37,40 @@ inline void track_daily_stat(bronx::db::Database* db, uint64_t user_id,
                       "VALUES (" + std::to_string(user_id) + ", '" + stat_name + "', "
                       + std::to_string(amount) + ", '" + today + "') "
                       "ON DUPLICATE KEY UPDATE stat_value = stat_value + " + std::to_string(amount);
+    economy::db_exec(db, sql);
+}
+
+// Read a daily stat value for today.  Returns 0 if no row exists yet.
+//
+// BRONX_GET_DAILY_STAT_DEFINED: set here so challenges.h can guard its own
+// identical static definition with #ifndef BRONX_GET_DAILY_STAT_DEFINED,
+// preventing a redefinition error when both headers appear in the same TU.
+#define BRONX_GET_DAILY_STAT_DEFINED
+inline int64_t get_daily_stat(bronx::db::Database* db, uint64_t user_id,
+                              const std::string& stat_name) {
+    if (!db) return 0;
+    std::string today = tracker_get_today_est();
+    std::string sql = "SELECT stat_value FROM daily_stats WHERE user_id = "
+                      + std::to_string(user_id) + " AND stat_name = '" + stat_name
+                      + "' AND stat_date = '" + today + "' LIMIT 1";
+    MYSQL_RES* res = economy::db_select(db, sql);
+    if (!res) return 0;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    int64_t val = (row && row[0]) ? std::stoll(row[0]) : 0;
+    mysql_free_result(res);
+    return val;
+}
+
+// Set a daily stat to an exact value (non-additive).
+// Used for timestamps and other values that should not accumulate.
+inline void set_daily_stat(bronx::db::Database* db, uint64_t user_id,
+                           const std::string& stat_name, int64_t value) {
+    if (!db) return;
+    std::string today = tracker_get_today_est();
+    std::string sql = "INSERT INTO daily_stats (user_id, stat_name, stat_value, stat_date) "
+                      "VALUES (" + std::to_string(user_id) + ", '" + stat_name + "', "
+                      + std::to_string(value) + ", '" + today + "') "
+                      "ON DUPLICATE KEY UPDATE stat_value = " + std::to_string(value);
     economy::db_exec(db, sql);
 }
 

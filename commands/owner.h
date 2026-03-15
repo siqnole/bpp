@@ -1,19 +1,32 @@
 #pragma once
+
+// Project headers
 #include "../command.h"
 #include "../command_handler.h"
 #include "../embed_style.h"
 #include "../database/core/database.h"
-#include "economy_core.h"
 #include "../database/operations/community/suggestion_operations.h"
 #include "../database/operations/economy/history_operations.h"
-#include "titles.h"  // dynamic title definitions
 #include "../performance/cache_manager.h"
 #include "../security/secure_config.h"
 #include "../security/input_validation.h"
+#include "../commands/market_state.h"
+#include "economy_core.h"
+#include "titles.h"  // dynamic title definitions
+
+// External headers
 #include <dpp/dpp.h>
 #include <dpp/version.h>
+
+// Standard library headers
 #include <fstream>
 #include <dirent.h>
+#include <chrono>
+#include <map>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
+#include <shared_mutex>
 
 // helper to compute next weekly rotation boundary (UTC)
 static time_t next_rotation_time() {
@@ -1392,35 +1405,79 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
                 bot.message_create(dpp::message(event.msg.channel_id, bronx::error("owner only")));
                 return;
             }
+ 
+            // ── Market regime block ──
+            std::string market_block = db->get_market_state_report();
+            if (market_block.empty()) {
+                market_block = "⚫ **market regime:** not yet classified\n"
+                               "  run `mlclassify` to perform the first classification\n";
+            }
+ 
+            // ── ML settings block (unchanged) ──
             auto list = db->list_ml_settings();
+            std::string settings_block;
             if (list.empty()) {
-                bot.message_create(dpp::message(event.msg.channel_id, bronx::info("no ML settings stored")));
-                return;
+                settings_block = "*(no ML settings stored)*\n";
+            } else {
+                for (auto& p : list) {
+                    settings_block += p.first + " = " + p.second + "\n";
+                }
             }
-            std::string out;
-            for (auto &p : list) {
-                out += p.first + " = " + p.second + "\n";
-            }
-            // include a report of tuning effects over the last day (or specified hours)
+ 
+            // ── Price effect report block ──
             int hours = 24;
             if (!args.empty()) {
-                try { hours = std::stoi(args[0]); }
-                catch(...) { /* ignore */ }
+                try { hours = std::stoi(args[0]); } catch(...) {}
             }
             std::string effect = db->get_ml_effect_report(hours);
-            std::string msgtxt = "ML settings:\n" + out + "\nprice adjustments in last " + std::to_string(hours) + "h:\n" + effect;
+ 
+            std::string msgtxt =
+                "**— market state —**\n" + market_block +
+                "\n**— ml settings —**\n" + settings_block +
+                "\n**— price adjustments (last " + std::to_string(hours) + "h) —**\n" + effect;
+ 
             bot.message_create(dpp::message(event.msg.channel_id, bronx::info(msgtxt)));
         });
     cmds.push_back(&mlstatus);
 
     // list of known ML configuration keys with descriptions; update as features are added
+    static Command mlclassify("mlclassify",
+        "run market state classifier and update regime (owner only)", "owner", {}, false,
+        [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args){
+            if (!is_owner(event.msg.author.id)) {
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::error("owner only")));
+                return;
+            }
+ 
+            // optional min_samples argument (default 50)
+            int min_samples = 50;
+            if (!args.empty()) {
+                try { min_samples = std::stoi(args[0]); } catch(...) {}
+                if (min_samples < 1) min_samples = 1;
+            }
+ 
+            std::string result = db->classify_market_state(min_samples);
+            bot.message_create(dpp::message(event.msg.channel_id, bronx::info(
+                "**market classifier result** (min_samples=" +
+                std::to_string(min_samples) + "):\n" + result +
+                "\nrun `mlstatus` for full regime report."
+            )));
+        });
+    cmds.push_back(&mlclassify);
+
     static const std::vector<std::pair<std::string,std::string>> ml_keys = {
-        {"tune_scale", "price tuning scale factor (float)"},
-        {"catch_win_prob", "(example) chance of winning fishing; not actively used"},
-        {"profit_floor", "minimum profit threshold for ML adjustments (supports k/m suffix)"},
-        {"bait_delta_cap", "maximum per-run bait price change (int; use k/m as needed)"},
-        {"bait_price_min", "minimum allowable bait price (int, clamped; suffix _<level> for per-rarity)"},
-        {"bait_price_max", "maximum allowable bait price (int, clamped; suffix _<level> for per-rarity)"}
+        {"tune_scale",             "price tuning scale factor (float); overwritten by classifier unless tune_scale_override is set"},
+        {"catch_win_prob",         "(example) chance of winning fishing; not actively used"},
+        {"profit_floor",           "minimum profit threshold for ML adjustments (supports k/m suffix)"},
+        {"bait_delta_cap",         "maximum per-run bait price change (int; use k/m as needed)"},
+        {"bait_price_min",         "minimum allowable bait price (int, clamped; suffix _<level> for per-rarity)"},
+        {"bait_price_max",         "maximum allowable bait price (int, clamped; suffix _<level> for per-rarity)"},
+        // ── new market-state keys ──
+        {"market_stable_band",     "fraction of profit_target within which market is STABLE (default 0.15 = ±15%)"},
+        {"market_inflation_band",  "fraction above target at which market enters INFLATION (default 0.60 = 60%)"},
+        {"market_critical_band",   "fraction deviation at which market enters CRITICAL state (default 1.50 = 150%)"},
+        {"tune_scale_override",    "set to any value to prevent classifier from overwriting tune_scale (manual lock)"},
+        {"tune_decay_override",    "set to any value to prevent classifier from overwriting tune_decay (manual lock)"},
     };
 
     auto normalize_ml_value = [](const std::string &raw)->std::string {

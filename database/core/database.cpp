@@ -1,5 +1,6 @@
 #include "database.h"
 #include "connection_pool.h"
+#include "../commands/market_state.h" 
 #include "../operations/user/user_operations.h"
 #include "../operations/user/cooldown_operations.h"
 #include "../operations/economy/inventory_operations.h"
@@ -838,6 +839,15 @@ bool Database::tune_bait_prices_from_logs(int min_samples) {
     if (auto s = get_ml_setting("tune_scale"); s && !s->empty()) {
         try { scale = std::stod(*s); } catch(...) { }
     }
+    // Log which market regime is driving this tune cycle so mlstatus can
+    // show it and so the audit trail in ml_price_changes is meaningful.
+    // The classifier writes "market_regime" to ml_settings before this
+    // function runs; if it hasn't run yet the key will be absent and we
+    // record "UNKNOWN" to make the gap visible in the owner panel.
+    {
+        auto regime_val = get_ml_setting("market_regime");
+        set_ml_setting("last_tune_regime", regime_val ? *regime_val : "UNKNOWN");
+    }
     // optional price bounds (global or per-bait-level)
     auto parse_bound = [&](const std::string &key, int level, int64_t def)->int64_t {
         int64_t result = def;
@@ -1041,6 +1051,32 @@ std::string Database::get_ml_effect_report(int hours) {
     mysql_stmt_close(stmt);
     pool_->release(conn);
     return report;
+}
+
+std::string Database::classify_market_state(int min_samples) {
+    auto result = bronx::market::MarketStateClassifier::classify(this, min_samples);
+ 
+    std::string out;
+    out += std::string(bronx::market::regime_emoji(result.regime))
+        + " **"
+        + bronx::market::regime_name(result.regime)
+        + "**";
+ 
+    if (result.regime_changed) {
+        out += "  *(changed from " + result.previous_regime_name + ")*";
+    }
+    out += "\n";
+    out += result.notes + "\n";
+ 
+    if (result.total_samples == 0) {
+        out += "⚠️ no qualifying samples — run more fishing first\n";
+    }
+ 
+    return out;
+}
+ 
+std::string Database::get_market_state_report() {
+    return bronx::market::MarketStateClassifier::build_report(this);
 }
 
 // ml settings support

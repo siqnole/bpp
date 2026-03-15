@@ -229,6 +229,8 @@ static std::string get_today_est() {
     return std::string(buf);
 }
 
+#ifndef BRONX_GET_DAILY_STAT_DEFINED
+#define BRONX_GET_DAILY_STAT_DEFINED
 static int64_t get_daily_stat(Database* db, uint64_t user_id, const std::string& stat_name) {
     std::string today = get_today_est();
     std::string sql = "SELECT stat_value FROM daily_stats WHERE user_id = " + std::to_string(user_id)
@@ -243,6 +245,7 @@ static int64_t get_daily_stat(Database* db, uint64_t user_id, const std::string&
     }
     return val;
 }
+#endif
 
 static void increment_daily_stat(Database* db, uint64_t user_id, const std::string& stat_name, int64_t amount = 1) {
     std::string today = get_today_est();

@@ -33,6 +33,12 @@ struct BlackTeaGame {
     int round = 0;
 
     bool force_stop = false;                    // admin force-stop flag
+    int64_t start_timestamp = 0;               // unix timestamp when game will start (for relative discord timestamp)
+
+    // Lobby timer reset / pause support
+    ::std::set<uint64_t> ever_joined;           // all users who have ever reacted :check: (prevents re-join resets)
+    ::std::atomic<uint32_t> timer_generation{0}; // bumped on each timer reset; old threads exit when their gen is stale
+    bool lobby_paused = false;                  // true while author has paused the countdown
 };
 
 static ::std::map<uint64_t, BlackTeaGame> active_blacktea_games;
@@ -71,23 +77,51 @@ static ::std::string pick_pattern() {
     return patterns[d(rng)];
 }
 
-static void update_lobby_message(dpp::cluster& bot, const BlackTeaGame& game) {
-    dpp::embed embed = dpp::embed()
+// Build the standard lobby embed.
+static dpp::embed build_lobby_embed(const BlackTeaGame& game) {
+    ::std::string desc;
+    if (game.lobby_paused) {
+        desc = ":pause_button: Timer **paused** by the host. React with " + bronx::EMOJI_CHECK + " to join.";
+    } else {
+        ::std::string ts = "<t:" + ::std::to_string(game.start_timestamp) + ":R>";
+        desc = ":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin " + ts + ".";
+    }
+    return dpp::embed()
         .set_color(0x1E90FF)
         .set_title("⏰ BLACKTEA - Lobby")
-        .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin in 30 seconds.")
+        .set_description(desc)
         .add_field("Players", ::std::to_string(game.players.size()) + " players joined", true)
         .add_field("Minimum", "3 players to start", true)
         .set_footer("Each player starts with 2 lives. Words must be unique.", "");
+}
 
-    for (auto uid : game.players) {
-        embed.add_field("-", "<@" + ::std::to_string(uid) + ">", true);
-    }
+// Edit the lobby message with the current embed + author control buttons.
+// Button custom_ids encode the game_id so the handler can look up the right game.
+static void edit_lobby_message(dpp::cluster& bot, const BlackTeaGame& game) {
+    ::std::string gid = ::std::to_string(game.game_id);
+
+    dpp::component pause_btn = dpp::component()
+        .set_type(dpp::cot_button)
+        .set_style(game.lobby_paused ? dpp::cos_success : dpp::cos_secondary)
+        .set_label(game.lobby_paused ? "\u25b6 Resume" : "\u23f8 Pause")
+        .set_id("bt_lobby_pause:" + gid);
+
+    dpp::component cancel_btn = dpp::component()
+        .set_type(dpp::cot_button)
+        .set_style(dpp::cos_danger)
+        .set_label("\u2716 Cancel")
+        .set_id("bt_lobby_cancel:" + gid);
+
+    dpp::component row = dpp::component()
+        .set_type(dpp::cot_action_row)
+        .add_component(pause_btn)
+        .add_component(cancel_btn);
 
     dpp::message msg;
     msg.id = game.message_id;
     msg.channel_id = game.channel_id;
-    msg.add_embed(embed);
+    msg.add_embed(build_lobby_embed(game));
+    msg.add_component(row);
     bronx::safe_message_edit(bot, msg);
 }
 
@@ -232,11 +266,45 @@ inline void register_blacktea_handlers(dpp::cluster& bot) {
                 // Ignore bots
                 if (event.reacting_user.is_bot()) return;
 
-                // Add player if not present
+                // Add player if not already in the lobby.
+                // ever_joined tracks all users who have reacted at least once so
+                // that someone can't leave + re-react to repeatedly reset the timer.
+                bool first_time_join = (game.ever_joined.find(uid) == game.ever_joined.end());
+                game.ever_joined.insert(uid);
+
                 if (::std::find(game.players.begin(), game.players.end(), uid) == game.players.end()) {
                     game.players.push_back(uid);
-                    // Update lobby message
-                    update_lobby_message(bot, game);
+
+                    // Reset the countdown only when this is a brand-new user and the
+                    // lobby is not currently paused.
+                    if (first_time_join && !game.lobby_paused) {
+                        int64_t new_ts = (int64_t)::std::chrono::duration_cast<::std::chrono::seconds>(
+                            ::std::chrono::system_clock::now().time_since_epoch()).count() + 30;
+                        game.start_timestamp = new_ts;
+
+                        // Bump generation so the old timer thread exits on its next tick.
+                        uint32_t new_gen = ++game.timer_generation;
+                        uint64_t gid_copy = game.game_id;
+                        ::std::thread([gid_copy, new_gen, &bot]() mutable {
+                            // Poll once per second so we notice a generation change quickly.
+                            for (int i = 0; i < 30; ++i) {
+                                ::std::this_thread::sleep_for(::std::chrono::seconds(1));
+                                auto jt = active_blacktea_games.find(gid_copy);
+                                if (jt == active_blacktea_games.end()) return; // game gone
+                                if (jt->second.timer_generation != new_gen) return; // superseded
+                                if (jt->second.lobby_paused) { ++i; continue; } // freeze while paused (don't count this second)
+                            }
+                            // Re-check generation one last time before launching.
+                            auto jt = active_blacktea_games.find(gid_copy);
+                            if (jt == active_blacktea_games.end()) return;
+                            if (jt->second.timer_generation != new_gen) return;
+                            run_blacktea_game_loop(bot, gid_copy);
+                        }).detach();
+                    }
+
+                    // Always update the embed when a new player joins (counter only,
+                    // no per-player list, so edits stay minimal).
+                    edit_lobby_message(bot, game);
                 }
 
                 // Acknowledge join via DM
@@ -245,6 +313,77 @@ inline void register_blacktea_handlers(dpp::cluster& bot) {
                 } catch (...) {}
                 return;
             }
+        }
+    });
+
+    // Author lobby control buttons: "⏸ Pause / ▶ Resume" and "✖ Cancel"
+    bot.on_button_click([&bot](const dpp::button_click_t& event) {
+        const ::std::string& cid = event.custom_id;
+
+        auto parse_game_id = [&](const ::std::string& prefix) -> uint64_t {
+            if (cid.rfind(prefix, 0) != 0) return 0;
+            try { return ::std::stoull(cid.substr(prefix.size())); } catch (...) { return 0; }
+        };
+
+        if (uint64_t game_id = parse_game_id("bt_lobby_pause:")) {
+            auto it = active_blacktea_games.find(game_id);
+            if (it == active_blacktea_games.end() || it->second.active) {
+                event.reply(dpp::ir_deferred_update_message, ""); return;
+            }
+            BlackTeaGame& game = it->second;
+            // Author-only
+            if (event.command.get_issuing_user().id != game.author_id) {
+                event.reply(dpp::ir_channel_message_with_source,
+                    dpp::message().set_content("Only the game host can do that.").set_flags(dpp::m_ephemeral));
+                return;
+            }
+            game.lobby_paused = !game.lobby_paused;
+            if (!game.lobby_paused) {
+                // Resuming: push the deadline 30 s from now and spawn a fresh timer thread.
+                int64_t new_ts = (int64_t)::std::chrono::duration_cast<::std::chrono::seconds>(
+                    ::std::chrono::system_clock::now().time_since_epoch()).count() + 30;
+                game.start_timestamp = new_ts;
+                uint32_t new_gen = ++game.timer_generation;
+                uint64_t gid_copy = game_id;
+                ::std::thread([gid_copy, new_gen, &bot]() mutable {
+                    for (int i = 0; i < 30; ++i) {
+                        ::std::this_thread::sleep_for(::std::chrono::seconds(1));
+                        auto jt = active_blacktea_games.find(gid_copy);
+                        if (jt == active_blacktea_games.end()) return;
+                        if (jt->second.timer_generation != new_gen) return;
+                        if (jt->second.lobby_paused) { ++i; continue; }
+                    }
+                    auto jt = active_blacktea_games.find(gid_copy);
+                    if (jt == active_blacktea_games.end()) return;
+                    if (jt->second.timer_generation != new_gen) return;
+                    run_blacktea_game_loop(bot, gid_copy);
+                }).detach();
+            }
+            edit_lobby_message(bot, game);
+            event.reply(dpp::ir_deferred_update_message, "");
+            return;
+        }
+
+        if (uint64_t game_id = parse_game_id("bt_lobby_cancel:")) {
+            auto it = active_blacktea_games.find(game_id);
+            if (it == active_blacktea_games.end() || it->second.active) {
+                event.reply(dpp::ir_deferred_update_message, ""); return;
+            }
+            BlackTeaGame& game = it->second;
+            if (event.command.get_issuing_user().id != game.author_id) {
+                event.reply(dpp::ir_channel_message_with_source,
+                    dpp::message().set_content("Only the game host can do that.").set_flags(dpp::m_ephemeral));
+                return;
+            }
+            // Invalidate any running timer thread, then send cancellation message.
+            ++game.timer_generation;
+            uint64_t channel_id = game.channel_id;
+            active_blacktea_games.erase(game_id);
+            bot.message_create(dpp::message(channel_id,
+                dpp::embed().set_color(0xFF0000).set_title("BLACKTEA - Cancelled")
+                .set_description("The lobby was cancelled by the host.")));
+            event.reply(dpp::ir_deferred_update_message, "");
+            return;
         }
     });
 
@@ -310,21 +449,54 @@ inline Command* get_blacktea_command() {
 
             uint64_t game_id = (uint64_t)::std::chrono::system_clock::now().time_since_epoch().count() + event.msg.author.id;
             game.game_id = game_id;
+            game.start_timestamp = (int64_t)::std::chrono::duration_cast<::std::chrono::seconds>(
+                ::std::chrono::system_clock::now().time_since_epoch()).count() + 30;
 
             // initial embed
+            ::std::string ts = "<t:" + ::std::to_string(game.start_timestamp) + ":R>";
             dpp::embed embed = dpp::embed()
                 .set_color(0x1E90FF)
                 .set_title("⏰ BLACKTEA - Lobby")
-                .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin in 30 seconds.")
+                .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin " + ts + ".")
                 .add_field("Players", "0 players joined", true)
                 .add_field("Minimum", "3 players to start", true)
                 .set_footer("Each player starts with 2 lives. Words must be unique.", "");
 
+            // Author control buttons (Pause / Cancel) — added to the initial message.
+            ::std::string gid_str = ::std::to_string(game_id);
+            dpp::component pause_btn_init = dpp::component()
+                .set_type(dpp::cot_button)
+                .set_style(dpp::cos_secondary)
+                .set_label("\u23f8 Pause")
+                .set_id("bt_lobby_pause:" + gid_str);
+            dpp::component cancel_btn_init = dpp::component()
+                .set_type(dpp::cot_button)
+                .set_style(dpp::cos_danger)
+                .set_label("\u2716 Cancel")
+                .set_id("bt_lobby_cancel:" + gid_str);
+            dpp::component row_init = dpp::component()
+                .set_type(dpp::cot_action_row)
+                .add_component(pause_btn_init)
+                .add_component(cancel_btn_init);
+
             dpp::message msg;
             msg.add_embed(embed);
+            msg.add_component(row_init);
 
             // store game before creating message so reaction handler can find it
-            active_blacktea_games[game_id] = game;
+            // std::atomic is non-copyable; emplace a default-constructed entry then
+            // move the copyable fields in manually.
+            active_blacktea_games.emplace(::std::piecewise_construct,
+                ::std::forward_as_tuple(game_id), ::std::tuple<>());
+            {
+                auto& g = active_blacktea_games[game_id];
+                g.game_id        = game.game_id;
+                g.author_id      = game.author_id;
+                g.guild_id       = game.guild_id;
+                g.channel_id     = game.channel_id;
+                g.active         = game.active;
+                g.start_timestamp = game.start_timestamp;
+            }
 
             // send lobby message and add reaction
             bot.message_create(msg.set_channel_id(event.msg.channel_id), [game_id, &bot](const dpp::confirmation_callback_t& callback) mutable {
@@ -339,10 +511,20 @@ inline Command* get_blacktea_command() {
                 // add :check: reaction so users can join quickly
                 try { bot.message_add_reaction(sent_msg.id, sent_msg.channel_id, "check:1476703556428890132"); } catch (...) {}
 
-                // start lobby timer on background thread
+                // start lobby timer on background thread (generation-aware so joins can reset it)
                 ::std::thread([game_id, &bot]() mutable {
-                    ::std::this_thread::sleep_for(::std::chrono::seconds(30));
-                    // Start the game loop
+                    uint32_t my_gen = active_blacktea_games.count(game_id)
+                        ? active_blacktea_games[game_id].timer_generation.load() : 0;
+                    for (int i = 0; i < 30; ++i) {
+                        ::std::this_thread::sleep_for(::std::chrono::seconds(1));
+                        auto jt = active_blacktea_games.find(game_id);
+                        if (jt == active_blacktea_games.end()) return;
+                        if (jt->second.timer_generation != my_gen) return; // reset by a join
+                        if (jt->second.lobby_paused) { ++i; continue; }   // freeze while paused
+                    }
+                    auto jt = active_blacktea_games.find(game_id);
+                    if (jt == active_blacktea_games.end()) return;
+                    if (jt->second.timer_generation != my_gen) return;
                     run_blacktea_game_loop(bot, game_id);
                 }).detach();
             });
@@ -357,19 +539,52 @@ inline Command* get_blacktea_command() {
 
             uint64_t game_id = (uint64_t)::std::chrono::system_clock::now().time_since_epoch().count() + event.command.get_issuing_user().id;
             game.game_id = game_id;
+            game.start_timestamp = (int64_t)::std::chrono::duration_cast<::std::chrono::seconds>(
+                ::std::chrono::system_clock::now().time_since_epoch()).count() + 30;
 
+            ::std::string ts = "<t:" + ::std::to_string(game.start_timestamp) + ":R>";
             dpp::embed embed = dpp::embed()
                 .set_color(0x1E90FF)
                 .set_title("⏰ BLACKTEA - Lobby")
-                .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin in 30 seconds.")
+                .set_description(":alarm_clock: Waiting for players, react with " + bronx::EMOJI_CHECK + " to join. The game will begin " + ts + ".")
                 .add_field("Players", "0 players joined", true)
                 .add_field("Minimum", "3 players to start", true)
                 .set_footer("Each player starts with 2 lives. Words must be unique.", "");
 
+            // Author control buttons for slash command lobby.
+            ::std::string gid_str_sl = ::std::to_string(game_id);
+            dpp::component pause_btn_sl = dpp::component()
+                .set_type(dpp::cot_button)
+                .set_style(dpp::cos_secondary)
+                .set_label("\u23f8 Pause")
+                .set_id("bt_lobby_pause:" + gid_str_sl);
+            dpp::component cancel_btn_sl = dpp::component()
+                .set_type(dpp::cot_button)
+                .set_style(dpp::cos_danger)
+                .set_label("\u2716 Cancel")
+                .set_id("bt_lobby_cancel:" + gid_str_sl);
+            dpp::component row_sl = dpp::component()
+                .set_type(dpp::cot_action_row)
+                .add_component(pause_btn_sl)
+                .add_component(cancel_btn_sl);
+
             dpp::message msg;
             msg.add_embed(embed);
+            msg.add_component(row_sl);
 
-            active_blacktea_games[game_id] = game;
+            // std::atomic is non-copyable; emplace a default-constructed entry then
+            // move the copyable fields in manually.
+            active_blacktea_games.emplace(::std::piecewise_construct,
+                ::std::forward_as_tuple(game_id), ::std::tuple<>());
+            {
+                auto& g = active_blacktea_games[game_id];
+                g.game_id        = game.game_id;
+                g.author_id      = game.author_id;
+                g.guild_id       = game.guild_id;
+                g.channel_id     = game.channel_id;
+                g.active         = game.active;
+                g.start_timestamp = game.start_timestamp;
+            }
 
             // Capture the interaction details for later use
             auto interaction_token = event.command.token;
@@ -394,9 +609,20 @@ inline Command* get_blacktea_command() {
                     }
                 });
 
-                // Start lobby timer regardless
+                // Start lobby timer regardless (generation-aware so joins can reset it)
                 ::std::thread([game_id, &bot]() mutable {
-                    ::std::this_thread::sleep_for(::std::chrono::seconds(30));
+                    uint32_t my_gen = active_blacktea_games.count(game_id)
+                        ? active_blacktea_games[game_id].timer_generation.load() : 0;
+                    for (int i = 0; i < 30; ++i) {
+                        ::std::this_thread::sleep_for(::std::chrono::seconds(1));
+                        auto jt = active_blacktea_games.find(game_id);
+                        if (jt == active_blacktea_games.end()) return;
+                        if (jt->second.timer_generation != my_gen) return;
+                        if (jt->second.lobby_paused) { ++i; continue; }
+                    }
+                    auto jt = active_blacktea_games.find(game_id);
+                    if (jt == active_blacktea_games.end()) return;
+                    if (jt->second.timer_generation != my_gen) return;
                     run_blacktea_game_loop(bot, game_id);
                 }).detach();
             });

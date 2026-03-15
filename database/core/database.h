@@ -217,6 +217,15 @@ public:
     // report adjustments made by ML tuning over the past N hours
     std::string get_ml_effect_report(int hours);
 
+    // Market state classifier (Markov regime detection)
+    // Reads fishing_logs, classifies the current economic regime, and writes
+    // the result to ml_settings["market_regime"].  Returns a human-readable
+    // summary suitable for mlstatus.  min_samples mirrors tune_bait_prices.
+    std::string classify_market_state(int min_samples = 50);
+ 
+    // Returns the pre-built report string from MarketStateClassifier::build_report().
+    std::string get_market_state_report();
+
     // Active gear (guild_id=0 → global)
     std::pair<std::string, std::string> get_active_fishing_gear(uint64_t user_id, uint64_t guild_id = 0); // {rod_id, bait_id}
     bool set_active_rod(uint64_t user_id, const std::string& rod_id, uint64_t guild_id = 0);
