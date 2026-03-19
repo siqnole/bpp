@@ -92,7 +92,7 @@ static dpp::embed build_lobby_embed(const BlackTeaGame& game) {
         .set_description(desc)
         .add_field("Players", ::std::to_string(game.players.size()) + " players joined", true)
         .add_field("Minimum", "3 players to start", true)
-        .set_footer("Each player starts with 2 lives. Words must be unique.", "");
+        .set_footer("Each player starts with 2 lives. Words **must** be unique.", "");
 }
 
 // Edit the lobby message with the current embed + author control buttons.

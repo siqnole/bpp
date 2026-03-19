@@ -54,7 +54,7 @@ inline dpp::component stats_range_row(const std::string& gtype, const std::strin
         dpp::component btn;
         btn.set_type(dpp::cot_button);
         btn.set_label(label);
-        btn.set_id("stats_r_" + std::to_string(d) + "_" + gtype + "_" + cat + "_" + std::to_string(uid));
+        btn.set_id("stats_r_" + std::to_string(d) + ":" + gtype + ":" + cat + ":" + std::to_string(uid));
         btn.set_style(d == active_days ? dpp::cos_primary : dpp::cos_secondary);
         row.add_component(btn);
     }
@@ -66,7 +66,7 @@ inline dpp::component stats_graph_type_row(const std::string& active_gtype, int 
     row.set_type(dpp::cot_action_row);
     dpp::component menu;
     menu.set_type(dpp::cot_selectmenu);
-    menu.set_id("stats_g_" + std::to_string(days) + "_" + cat + "_" + std::to_string(uid));
+    menu.set_id("stats_g_" + std::to_string(days) + ":" + cat + ":" + std::to_string(uid));
     menu.set_placeholder("graph type");
     for (auto& [val, label] : STATS_GRAPH_TYPES) {
         auto opt = dpp::select_option(label, val, val == active_gtype ? "selected" : "");
@@ -82,7 +82,7 @@ inline dpp::component stats_category_row(const std::string& active_cat, int days
     row.set_type(dpp::cot_action_row);
     dpp::component menu;
     menu.set_type(dpp::cot_selectmenu);
-    menu.set_id("stats_c_" + std::to_string(days) + "_" + gtype + "_" + std::to_string(uid));
+    menu.set_id("stats_c_" + std::to_string(days) + ":" + gtype + ":" + std::to_string(uid));
     menu.set_placeholder("category");
     for (auto& [val, label] : STATS_CATEGORIES) {
         auto opt = dpp::select_option(label, val, val == active_cat ? "selected" : "");
@@ -101,7 +101,7 @@ inline dpp::component stats_top_filter_row(const std::string& active_topic, int 
         dpp::component btn;
         btn.set_type(dpp::cot_button);
         btn.set_label(label);
-        btn.set_id("stats_tf_" + val + "_" + std::to_string(days) + "_" + gtype + "_" + std::to_string(uid));
+        btn.set_id("stats_tf_" + val + ":" + std::to_string(days) + ":" + gtype + ":" + std::to_string(uid));
         btn.set_style(val == active_topic ? dpp::cos_primary : dpp::cos_secondary);
         row.add_component(btn);
     }
@@ -850,12 +850,12 @@ inline void handle_stats_buttons(dpp::cluster& bot, const dpp::button_click_t& e
     if (cid_str.find("stats_tf_") == 0) {
         std::vector<std::string> parts;
         std::stringstream ss(cid_str); std::string part;
-        while (std::getline(ss, part, '_')) parts.push_back(part);
-        if (parts.size() < 6) return;
-        std::string topic = parts[2];
-        int days = 7; try { days = std::stoi(parts[3]); } catch (...) { days = 7; }
-        std::string gtype = parts[4];
-        uint64_t expected_user = 0; try { expected_user = std::stoull(parts[5]); } catch (...) { return; }
+        while (std::getline(ss, part, ':')) parts.push_back(part);
+        if (parts.size() < 4) return;
+        std::string topic = parts[1];
+        int days = 7; try { days = std::stoi(parts[0].substr(8)); } catch (...) { days = 7; }
+        std::string gtype = parts[2];
+        uint64_t expected_user = 0; try { expected_user = std::stoull(parts[3]); } catch (...) { return; }
         if (days != 0 && days != 7 && days != 14 && days != 30) days = 7;
         if (expected_user != 0 && event.command.get_issuing_user().id != expected_user) {
             event.reply(dpp::ir_channel_message_with_source, dpp::message().add_embed(bronx::error("this isn't your stats view")).set_flags(dpp::m_ephemeral));
@@ -872,12 +872,12 @@ inline void handle_stats_buttons(dpp::cluster& bot, const dpp::button_click_t& e
 
     std::vector<std::string> parts;
     std::stringstream ss(cid_str); std::string part;
-    while (std::getline(ss, part, '_')) parts.push_back(part);
-    if (parts.size() < 6) return;
+    while (std::getline(ss, part, ':')) parts.push_back(part);
+    if (parts.size() < 4) return;
 
-    int days = 7; try { days = std::stoi(parts[2]); } catch (...) { days = 7; }
-    std::string gtype = parts[3], category = parts[4];
-    uint64_t expected_user = 0; try { expected_user = std::stoull(parts[5]); } catch (...) { return; }
+    int days = 7; try { days = std::stoi(parts[0].substr(8)); } catch (...) { days = 7; }
+    std::string gtype = parts[1], category = parts[2];
+    uint64_t expected_user = 0; try { expected_user = std::stoull(parts[3]); } catch (...) { return; }
     if (days != 0 && days != 7 && days != 14 && days != 30) days = 7;
 
     if (expected_user != 0 && event.command.get_issuing_user().id != expected_user) {
@@ -909,20 +909,20 @@ inline void handle_stats_select(dpp::cluster& bot, const dpp::select_click_t& ev
 
     std::vector<std::string> parts;
     std::stringstream ss(cid_str); std::string part;
-    while (std::getline(ss, part, '_')) parts.push_back(part);
-    if (parts.size() < 5) return;
+    while (std::getline(ss, part, ':')) parts.push_back(part);
+    if (parts.size() < 4) return;
 
-    std::string action = parts[1];
-    int days = 7; try { days = std::stoi(parts[2]); } catch (...) { days = 7; }
+    std::string action = cid_str.substr(6, 1);
+    int days = 7; try { days = std::stoi(parts[0].substr(8)); } catch (...) { days = 7; }
     if (days != 0 && days != 7 && days != 14 && days != 30) days = 7;
 
     std::string gtype, category;
     uint64_t expected_user = 0;
     if (action == "g") {
-        category = parts[3]; try { expected_user = std::stoull(parts[4]); } catch (...) { return; }
+        category = parts[1]; try { expected_user = std::stoull(parts[2]); } catch (...) { return; }
         gtype = event.values[0];
     } else {
-        gtype = parts[3]; try { expected_user = std::stoull(parts[4]); } catch (...) { return; }
+        gtype = parts[1]; try { expected_user = std::stoull(parts[2]); } catch (...) { return; }
         category = event.values[0];
     }
 

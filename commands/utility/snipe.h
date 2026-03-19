@@ -228,7 +228,7 @@ inline Command* get_snipe_command(bronx::snipe::SnipeCache* cache) {
         "view recently deleted messages in this channel",
         "utility",
         {"s"},  // alias
-        true,   // is_slash_command
+        false,   // is_slash_command
         // ── text handler ──
         [cache](dpp::cluster& bot, const dpp::message_create_t& event,
                 const std::vector<std::string>& args)

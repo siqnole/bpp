@@ -74,7 +74,7 @@ inline void register_privacy_interactions(dpp::cluster& bot, bronx::db::Database
 }
 
 inline Command* get_privacy_command(bronx::db::Database* db) {
-    static Command privacy("privacy", "manage your data privacy and opt-out preferences", "utility", {"optout", "optin", "datadelete", "gdpr"}, true,
+    static Command privacy("privacy", "manage your data privacy and opt-out preferences", "utility", {"optout", "optin", "datadelete", "gdpr"}, false,
         // ── text handler ────────────────────────────────────────────────────
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
             uint64_t user_id = event.msg.author.id;

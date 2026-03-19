@@ -33,7 +33,7 @@ static bool download_url(const ::std::string& url, ::std::string& out, long time
 }
 
 inline Command* get_steal_command() {
-    static Command steal("steal", "steal custom emojis into this server (manage emojis required)", "utility", {"clone"}, true,
+    static Command steal("steal", "steal custom emojis into this server (manage emojis required)", "utility", {"clone"}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (!event.msg.guild_id) {
                 bronx::send_message(bot, event, bronx::error("use this command inside a server"));

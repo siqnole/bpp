@@ -8,6 +8,7 @@
 #include "../database/operations/community/suggestion_operations.h"
 #include "../database/operations/economy/history_operations.h"
 #include "../performance/cache_manager.h"
+#include "../performance/chart_renderer.h"
 #include "../security/secure_config.h"
 #include "../security/input_validation.h"
 #include "../commands/market_state.h"
@@ -143,6 +144,8 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
     };
 
     std::string desc;
+    namespace ch = bronx::chart;
+    std::string chart_image;  // Store chart image for pages that need it
 
     if (page == 0) {
         // ── Page 1: Bot Overview ──
@@ -248,9 +251,9 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         std::ostringstream oss; oss << std::fixed << std::setprecision(2) << err_rate;
         desc += "• error rate: " + oss.str() + "%\n\n";
 
-        // Top 15 commands
+        // Generate top commands chart
         if (!commands::global_stats.command_usage.empty()) {
-            desc += "**top commands**\n";
+            std::vector<ch::BarItem> bars;
             std::vector<std::pair<std::string, uint64_t>> sorted_cmds(
                 commands::global_stats.command_usage.begin(), commands::global_stats.command_usage.end());
             std::sort(sorted_cmds.begin(), sorted_cmds.end(),
@@ -258,8 +261,10 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
             int count = 0;
             for (const auto& [cmd, uses] : sorted_cmds) {
                 if (count++ >= 15) break;
+                bars.push_back({cmd, (int64_t)uses});
                 desc += std::to_string(count) + ". `" + cmd + "` — " + std::to_string(uses) + "\n";
             }
+            chart_image = ch::render_horizontal_bar_chart("top commands (session)", bars, 600, 0);
             desc += "\n";
         }
 
@@ -310,6 +315,14 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         desc += "• **circulation:** $" + commands::format_number(total_circ) + "\n";
         desc += "• avg net worth: $" + commands::format_number(avg_nw) + "\n";
         desc += "• max net worth: $" + commands::format_number(max_nw) + "\n\n";
+
+        // Generate money supply chart
+        {
+            std::vector<ch::BarItem> money_bars;
+            money_bars.push_back({"wallets", total_wallets});
+            money_bars.push_back({"banks", total_banks});
+            chart_image = ch::render_horizontal_bar_chart("money supply", money_bars, 600, 140);
+        }
 
         // Gambling
         int64_t total_gambled = sql_count(db, "SELECT COALESCE(SUM(total_gambled),0) FROM users");
@@ -371,9 +384,13 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         auto rarity_rows = sql_query(db, "SELECT rarity, COUNT(*) as cnt FROM user_fish_catches GROUP BY rarity ORDER BY cnt DESC LIMIT 10");
         if (!rarity_rows.empty()) {
             desc += "**fish by rarity**\n";
+            std::vector<ch::BarItem> rarity_bars;
             for (const auto& r : rarity_rows) {
-                desc += "• " + r.cols[0] + ": " + commands::format_number((int64_t)std::stoll(r.cols[1])) + "\n";
+                int64_t cnt = (int64_t)std::stoll(r.cols[1]);
+                desc += "• " + r.cols[0] + ": " + commands::format_number(cnt) + "\n";
+                rarity_bars.push_back({r.cols[0], cnt});
             }
+            chart_image = ch::render_horizontal_bar_chart("fish by rarity", rarity_bars, 600, 0);
             desc += "\n";
         }
 
@@ -473,6 +490,17 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         desc += "• peak rss: " + fmt_mem(mem.vm_hwm_kb) + "\n";
         desc += "• virtual: " + fmt_mem(mem.vm_size_kb) + "\n\n";
 
+        // Create memory summary card
+        {
+            std::vector<std::pair<std::string, std::string>> mem_stats = {
+                {"RSS", fmt_mem(mem.vm_rss_kb)},
+                {"Peak", fmt_mem(mem.vm_hwm_kb)},
+                {"Virtual", fmt_mem(mem.vm_size_kb)},
+                {"Threads", std::to_string(mem.threads)}
+            };
+            chart_image = ch::render_summary_card("process memory & stats", mem_stats, 600, 160);
+        }
+
         desc += "**process**\n";
         desc += "• threads: " + std::to_string(mem.threads) + "\n";
         desc += "• open fds: " + std::to_string(count_open_fds()) + "\n";
@@ -509,8 +537,15 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
             "ORDER BY data_length DESC LIMIT 10");
         if (!table_rows.empty()) {
             desc += "**top tables by size**\n";
+            std::vector<ch::BarItem> table_bars;
             for (const auto& r : table_rows) {
                 desc += "• " + r.cols[0] + ": ~" + r.cols[1] + " rows (" + r.cols[2] + " MB)\n";
+                try {
+                    table_bars.push_back({r.cols[0], (int64_t)std::stoll(r.cols[1])});
+                } catch (...) {}
+            }
+            if (!table_bars.empty() && chart_image.empty()) {
+                chart_image = ch::render_horizontal_bar_chart("db table sizes (rows)", table_bars, 600, 0);
             }
         }
     }
@@ -528,6 +563,13 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
 
     dpp::message msg;
     msg.add_embed(embed);
+
+    // Add chart image if generated for this page
+    if (!chart_image.empty()) {
+        std::string chart_filename = "chart_page" + std::to_string(page) + ".png";
+        msg.add_file(chart_filename, chart_image);
+        embed.set_image("attachment://" + chart_filename);
+    }
 
     // Navigation buttons
     dpp::component nav_row;

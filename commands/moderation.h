@@ -16,15 +16,10 @@
 namespace commands {
 
 // Get all quiet moderation commands
+// NOTE: All moderation commands (manual + quiet + automod) are now consolidated in /mod parent
+// This function returns empty since commands are handled in moderation_commands.h
 ::std::vector<Command*> get_moderation_commands() {
-    ::std::vector<Command*> cmds;
-    
-    cmds.push_back(quiet_moderation::get_antispam_command());
-    cmds.push_back(quiet_moderation::get_url_guard_command());
-    cmds.push_back(quiet_moderation::get_text_filter_command());
-    cmds.push_back(quiet_moderation::get_reaction_filter_command());
-    
-    return cmds;
+    return {};
 }
 
 // Register all quiet moderation event handlers
@@ -43,10 +38,10 @@ inline void register_moderation_handlers(dpp::cluster& bot) {
 }
 
 // Get automod configuration commands
+// NOTE: All moderation commands are now consolidated in /mod parent
+// This function returns empty since the parent command handles everything
 inline std::vector<Command*> get_automod_commands(bronx::db::Database* db) {
-    return {
-        quiet_moderation::get_automod_command(db),
-    };
+    return {};
 }
 
 // Register all automod guard event handlers

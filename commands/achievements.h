@@ -138,6 +138,12 @@ static const std::vector<Achievement> GAMES_WON_ACHIEVEMENTS = {
         "games_won_25k", "Game Legend", "Win 25,000 games",
         "games_won", 25000,
         {{"rod_diamond", "Diamond Rod", "rod", 1, 5, R"({"luck":50,"capacity":10})"}, {"bait_epic", "Epic Bait", "bait", 40, 4, R"({"unlocks":["epic fish"],"bonus":12,"multiplier":20})"}}
+    },
+
+    {
+        "games_won_50k", "Game Legend", "Win 50,000 games",
+        "games_won", 50000,
+        {{"rod_prestige5", "Divine Rod", "rod", 1, 11, R"({"luck":150,"capacity":25,"prestige":5})"}, {"bait_prestige5", "Divine Bait", "bait", 40, 11, R"({"unlocks":["eternal fish"],"bonus":300,"multiplier":1000,"prestige":5})"}}
     }
 };
 

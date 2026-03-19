@@ -9,6 +9,7 @@
 #include "fishing/suggest_fish.h"
 #include "fishing/fishdex.h"
 #include "fishing/crews.h"
+#include "fishing/fish_parent.h"
 #include <vector>
 #include <algorithm>
 #include "../log.h"
@@ -21,23 +22,17 @@ namespace commands {
     
     // Only initialize once
     if (cmds.empty()) {
-        cmds.push_back(::commands::fishing::get_fish_command(db));
-        cmds.push_back(::commands::fishing::get_finv_command(db));
-        cmds.push_back(::commands::fishing::get_sellfish_command(db));
-        cmds.push_back(::commands::fishing::get_lockfish_command(db));
-        cmds.push_back(::commands::fishing::get_finfo_command(db));
-        cmds.push_back(::commands::fishing::get_inv_command(db));
-        cmds.push_back(::commands::fishing::get_equip_command(db));
-        cmds.push_back(::commands::fishing::get_suggestfish_command(db));
+        // CONSOLIDATED: Main fishing commands now use /fish parent command with subcommands
+        // This replaces: fish, finv, sellfish, lockfish, finfo, equip, suggestfish, crew, autofisher
+        // Savings: 8-9 slash commands
+        cmds.push_back(::commands::fishing::create_fish_parent_command(db));
         
-        // Add fishdex commands
+        // KEPT SEPARATE: Fishdex commands (specialized fish encyclopedia functionality)
+        // Can be consolidated to /fishdex parent later if needed
         auto fishdex_cmds = ::commands::fishing::get_fishdex_commands(db);
         for (auto* cmd : fishdex_cmds) {
             cmds.push_back(cmd);
         }
-
-        // Add fishing crews command
-        cmds.push_back(::commands::fishing::crews::get_crew_command(db));
     }
     
     return cmds;

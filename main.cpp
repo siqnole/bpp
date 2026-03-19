@@ -1054,13 +1054,13 @@ int main(int argc, char* argv[]) {
                         dpp::component website_btn;
                         website_btn.set_type(dpp::cot_button);
                         website_btn.set_style(dpp::cos_link);
-                        website_btn.set_label("dashboard (soon)");
+                        website_btn.set_label("dashboard");
                         website_btn.set_url("https://bronxbot.xyz");
 
                         dpp::component support_btn;
                         support_btn.set_type(dpp::cot_button);
                         support_btn.set_style(dpp::cos_link);
-                        support_btn.set_label("support");
+                        support_btn.set_label("help");
                         support_btn.set_url("https://discord.gg/bronx");
                         
                         action_row.add_component(invite_btn);

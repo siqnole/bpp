@@ -33,11 +33,11 @@ namespace commands {
     if (cmds.empty()) {
         cmds.push_back(utility::get_ping_command());
         cmds.push_back(utility::get_userinfo_command());
-        cmds.push_back(utility::get_avatar_command());
-        cmds.push_back(utility::get_banner_command());
-        cmds.push_back(utility::get_invite_command());
-        cmds.push_back(utility::get_serveravatar_command());
-        cmds.push_back(utility::get_serverbanner_command());
+        cmds.push_back(utility::get_avatar_command());           // OPTIMIZATION Note: Text-only (slash removed)
+        cmds.push_back(utility::get_banner_command());           // OPTIMIZATION Note: Text-only (slash removed)
+        cmds.push_back(utility::get_invite_command());           // OPTIMIZATION Note: Text-only (slash removed)
+        cmds.push_back(utility::get_serveravatar_command());     // OPTIMIZATION Note: Text-only (slash removed)
+        cmds.push_back(utility::get_serverbanner_command());     // OPTIMIZATION Note: Text-only (slash removed)
         cmds.push_back(utility::get_serverinfo_command());
         cmds.push_back(utility::get_poll_command());
         cmds.push_back(utility::get_cleanup_command());
@@ -54,15 +54,15 @@ namespace commands {
         cmds.push_back(utility::get_autorole_command());
         cmds.push_back(utility::get_role_command());
 #ifdef HAVE_LIBCURL
-        cmds.push_back(utility::get_steal_command());
+        cmds.push_back(utility::get_steal_command());           // OPTIMIZATION Note: Text-only (slash removed)
 #endif
         // Privacy command (requires db)
         if (db) {
-            cmds.push_back(utility::get_privacy_command(db));
+            cmds.push_back(utility::get_privacy_command(db));   // OPTIMIZATION Note: Text-only (slash removed)
         }
         // Snipe command (requires snipe cache)
         if (snipe_cache) {
-            cmds.push_back(utility::get_snipe_command(snipe_cache));
+            cmds.push_back(utility::get_snipe_command(snipe_cache)); // OPTIMIZATION Note: Text-only (slash removed)
         }
         // Giveaway commands (require db)
         if (db) {

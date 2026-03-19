@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/siqnole/Documents/code/bpp/build
+WorkingDirectory=/home/siqnole/Documents/code/bpp
 ExecStart=/usr/bin/bash /home/siqnole/Documents/code/bpp/scripts/run_discord_bot.sh
 
 # Restart configuration
@@ -31,6 +31,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/siqnole/Documents/code/bpp/build /home/siqnole/Documents/code/bpp/data /tmp
+ReadOnlyPaths=/home/siqnole/Documents/code/bpp
 
 # Environment
 Environment=DB_CONN_DEBUG=0

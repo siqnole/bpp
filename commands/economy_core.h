@@ -10,6 +10,7 @@
 #include "economy/pay.h"
 #include "economy/prestige.h"
 #include "economy/rebirth.h"
+#include "economy/money_parent.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <string>
@@ -30,12 +31,9 @@ inline ::std::vector<Command*> get_economy_core_commands(Database* db) {
     static bool initialized = false;
     
     if (!initialized) {
-        cmds.push_back(economy::create_balance_command(db));
-        cmds.push_back(economy::create_bank_command(db));
-        cmds.push_back(economy::create_withdraw_command(db));
-        cmds.push_back(economy::create_pay_command(db));
-        cmds.push_back(economy::create_prestige_command(db));
-        cmds.push_back(economy::create_rebirth_command(db));
+        // Replace 10 individual commands (balance, bank, withdraw, pay, prestige, rebirth, daily, weekly, work, rob)
+        // with single /money parent command
+        cmds.push_back(economy::create_money_parent_command(db));
         initialized = true;
     }
     

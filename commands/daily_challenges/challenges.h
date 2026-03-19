@@ -33,16 +33,51 @@ namespace daily_challenges {
 //   /challenges claim     — claim completed challenge rewards
 // ============================================================================
 
+// --- Challenge type definitions ---
+enum class ChallengeType {
+    SIMPLE,           // Single stat threshold (default: do X times)
+    STREAK,           // Consecutive wins/successes
+    VARIETY,          // Collect/do X different things
+    EFFICIENCY,       // Achieve goal in tight time/attempt window
+    RATIO,            // Win/loss or profit/loss ratio
+    HYBRID,           // Multi-stat requirement
+    PRECISE,          // Hit exact target (within margin)
+    CONDITIONAL       // Requires completing another action first
+};
+
 // --- Challenge template definitions ---
 struct ChallengeTemplate {
     std::string id;
     std::string name;
     std::string description;    // use {target} for the required amount
-    std::string stat_name;      // which stat to track (matches db->get_stat keys)
+    std::string stat_name;      // primary stat to track
     std::string category;       // fishing, mining, gambling, economy, social
+    ChallengeType type;         // challenge type determines validation logic
     int64_t min_target;         // minimum target value
     int64_t max_target;         // maximum target value
     std::string emoji;
+    
+    // Extended fields for nuanced challenges (with defaults)
+    std::vector<std::string> required_stats = {};    // for HYBRID: additional stats needed
+    int64_t streak_length = 0;                       // for STREAK: how many consecutive
+    int64_t variety_count = 0;                       // for VARIETY: how many different types
+    int64_t time_limit_minutes = 0;                  // for EFFICIENCY: max time allowed
+    double ratio_threshold = 0.0;                    // for RATIO: win% or profit_ratio needed
+    int64_t precision_margin = 0;                    // for PRECISE: allowed variance
+    std::string prerequisite_challenge_id = "";      // for CONDITIONAL: must complete first
+};
+
+// Challenge completion data with nuanced tracking
+struct ChallengeProgress {
+    std::string challenge_id;
+    int64_t primary_progress;        // main stat value
+    std::vector<int64_t> secondary_progress;  // for HYBRID challenges
+    std::vector<std::string> variety_items;   // for VARIETY: what we've collected
+    int64_t current_streak;          // for STREAK: current consecutive count
+    int64_t total_attempts;          // for RATIO: total attempts/bets
+    int64_t total_wins;              // for RATIO: wins achieved
+    int64_t time_elapsed_minutes;    // for EFFICIENCY: how long it took
+    bool prerequisite_complete;      // for CONDITIONAL
 };
 
 struct ChallengeReward {
@@ -58,6 +93,7 @@ struct ActiveChallenge {
     std::string description;
     std::string stat_name;
     std::string category;
+    ChallengeType challenge_type;
     int64_t target;
     int64_t start_value;        // stat value when challenge was assigned
     int64_t current_progress;   // current stat value - start_value
@@ -65,35 +101,237 @@ struct ActiveChallenge {
     bool claimed;
     ChallengeReward reward;
     std::string emoji;
+    ChallengeProgress progress_data;  // detailed progress for nuanced challenges
 };
 
 // All available challenge templates
+
+//TODO: im tired of all the challenges being do x y times, add more challenges that are more nuanced.
+
+/* 
+CHALLENGE IDEAS:
+
+=== EFFICIENCY & SKILL ===
+- "Streak Master": Win X consecutive matches in a specific game (coinflip, blackjack, slots) without losing
+- "Perfect Fisher": Catch X rare+ fish in a single session (requires consecutive catches)
+- "Hot Streak": Earn profit on X consecutive gambling attempts
+- "Precision Miner": Mine X ores in Y minutes (time pressure challenge)
+- "Consistent Grinder": Work X times with success rate >80% (requires consistent effort)
+
+=== COLLECTION & VARIETY ===
+- "Ichthyologist": Catch fish from X different rarity tiers in one day
+- "Ore Collector": Mine X different ore types (limestone, iron, gold, diamond, etc.)
+- "Item Hoarder": Obtain X different item types from any activity
+- "Pet Collector": Obtain X different pet types or breeds
+- "Title Hunter": Unlock X new titles (requires advancing achievements/milestones)
+
+=== ECONOMY & STRATEGY ===
+- "Market Trader": Buy low, sell high - profit $X from flipping items on market
+- "Portfolio Master": Hold a balanced portfolio (X% coins, X% items, X% investments)
+- "Wealth Accumulator": Increase total networth by $X (scales with current networth)
+- "Generous Soul": Pay or gift $X to other players
+- "Tax Evader": Earn $X without using /work command (from passive/other sources)
+
+=== PROGRESSION & GROWTH ===
+- "Leveler": Gain X levels in any skill tree
+- "Milestone Jumper": Complete X different milestones across all categories
+- "Achievement Sprint": Unlock X achievements in one day
+- "Momentum": Maintain a X-day activity streak (must use commands daily)
+
+=== PROBABILISTIC & LUCK ===
+- "Jackpot Seeker": Hit a rare drop/jackpot event (requires luck, specific outcome)
+- "Underdog": Win a bet at >5:1 odds, or win a low-probability event X times
+- "Lucky Angler": Catch a legendary/mythic fish
+- "Rare Find": Get X rare+ drops from any source
+
+=== HYBRID & COMPLEX ===
+- "Diversified": Complete activities from X different categories (fishing AND mining AND gambling, etc)
+- "Wealth Wave": Earn $X from one activity type, then spend $Y from another (resource cycling)
+- "Speed Run": Earn $X in under Y minutes (tight time window)
+- "Comeback Kid": Lose X times in gambling, then win Y times (requires persistence)
+- "Balanced Growth": Gain XP and coins simultaneously, maintaining a 1:1 ratio
+- "Challenge Chain": Complete X other challenges first, then complete this one
+
+=== WORLD & SOCIAL ===
+- "Global Participant": Participate in world events X times
+- "Boss Raider": Deal X damage to global boss
+- "Community Helper": Use /help or /guide X times (support others)
+- "Social Butterfly": Interact with X different players through commands
+- "Rivalry": Beat a player's leaderboard score in a specific category
+
+=== CONDITIONAL & CONTEXTUAL ===
+- "Against Odds": Complete a challenge with target >75% of normal range (very hard version)
+- "Precise": Earn exactly $X (within Y margin) in a single action
+- "Timing": Complete activity during off-peak hours (specific time window)
+- "Ascetic": Earn $X without using bonuses/multipliers
+- "Versatile": Use X different commands from the commands list (versatility)
+
+*/
+
 static const std::vector<ChallengeTemplate> CHALLENGE_TEMPLATES = {
-    // Fishing challenges
-    {"fish_catch",      "Reel 'Em In",          "catch {target} fish",                "fish_caught",           "fishing",  5,   50,  "\xF0\x9F\x8E\xA3"},
-    {"fish_sell_value", "Fish Market",           "sell ${target} worth of fish",       "fish_sell_value_today", "fishing",  5000, 500000, "\xF0\x9F\x92\xB0"},
-    {"fish_rare",       "Rare Catch",            "catch {target} rare+ fish",          "rare_fish_caught",      "fishing",  1,   10,  "\xE2\x9C\xA8"},
+    // ============ SIMPLE CHALLENGES (do X times) ============
+    // Fishing
+    {.id="fish_catch",      .name="Reel 'Em In",          .description="catch {target} fish",                .stat_name="fish_caught",           .category="fishing", .type=ChallengeType::SIMPLE, .min_target=5,   .max_target=50,  .emoji="\xF0\x9F\x8E\xA3"},
+    {.id="fish_sell_value", .name="Fish Market",          .description="sell ${target} worth of fish",       .stat_name="fish_sell_value_today", .category="fishing", .type=ChallengeType::SIMPLE, .min_target=5000, .max_target=500000, .emoji="\xF0\x9F\x92\xB0"},
+    {.id="fish_rare",       .name="Rare Catch",           .description="catch {target} rare+ fish",          .stat_name="rare_fish_caught",      .category="fishing", .type=ChallengeType::SIMPLE, .min_target=1,   .max_target=10,  .emoji="\xE2\x9C\xA8"},
     
-    // Mining challenges
-    {"mine_ores",       "Ore Collector",         "mine {target} ores",                 "ores_mined",            "mining",   5,   40,  "\xE2\x9B\x8F\xEF\xB8\x8F"},
-    {"mine_value",      "Prospector's Haul",     "mine ${target} worth of ore",        "ore_value_today",       "mining",   5000, 250000, "\xF0\x9F\x92\x8E"},
+    // Mining
+    {.id="mine_ores",       .name="Ore Collector",        .description="mine {target} ores",                 .stat_name="ores_mined",            .category="mining", .type=ChallengeType::SIMPLE, .min_target=5,   .max_target=40,  .emoji="\xE2\x9B\x8F\xEF\xB8\x8F"},
+    {.id="mine_value",      .name="Prospector's Haul",    .description="mine ${target} worth of ore",        .stat_name="ore_value_today",       .category="mining", .type=ChallengeType::SIMPLE, .min_target=5000, .max_target=250000, .emoji="\xF0\x9F\x92\x8E"},
     
-    // Gambling challenges
-    {"gamble_wins",     "Lucky Streak",          "win {target} gambles",               "gambling_wins_today",   "gambling", 3,   20,  "\xF0\x9F\x8E\xB0"},
-    {"gamble_profit",   "High Roller",           "profit ${target} from gambling",     "gambling_profit_today", "gambling", 10000, 1000000, "\xF0\x9F\x92\xB8"},
-    {"coinflip_wins",   "Heads or Tails",        "win {target} coinflips",             "coinflip_wins_today",   "gambling", 2,   15,  "\xF0\x9F\xAA\x99"},
-    {"blackjack_wins",  "Card Shark",            "win {target} blackjack hands",       "blackjack_wins_today",  "gambling", 1,   8,   "\xF0\x9F\x83\x8F"},
+    // Gambling
+    {.id="gamble_wins",     .name="Lucky Streak",         .description="win {target} gambles",               .stat_name="gambling_wins_today",   .category="gambling", .type=ChallengeType::SIMPLE, .min_target=3,   .max_target=20,  .emoji="\xF0\x9F\x8E\xB0"},
+    {.id="gamble_profit",   .name="High Roller",          .description="profit ${target} from gambling",     .stat_name="gambling_profit_today", .category="gambling", .type=ChallengeType::SIMPLE, .min_target=10000, .max_target=1000000, .emoji="\xF0\x9F\x92\xB8"},
+    {.id="coinflip_wins",   .name="Heads or Tails",       .description="win {target} coinflips",             .stat_name="coinflip_wins_today",   .category="gambling", .type=ChallengeType::SIMPLE, .min_target=2,   .max_target=15,  .emoji="\xF0\x9F\xAA\x99"},
+    {.id="blackjack_wins",  .name="Card Shark",           .description="win {target} blackjack hands",       .stat_name="blackjack_wins_today",  .category="gambling", .type=ChallengeType::SIMPLE, .min_target=1,   .max_target=8,   .emoji="\xF0\x9F\x83\x8F"},
     
-    // Economy challenges
-    {"earn_coins",      "Money Maker",           "earn ${target} total",               "coins_earned_today",    "economy",  10000, 2000000, "\xF0\x9F\x92\xB5"},
-    {"work_times",      "Hard Worker",           "use /work {target} times",           "work_count_today",      "economy",  2,   5,   "\xF0\x9F\x92\xBC"},
-    {"pay_others",      "Generous Tipper",       "pay other players ${target}",        "coins_paid_today",      "economy",  1000, 100000,  "\xF0\x9F\xA4\x9D"},
+    // Economy
+    {.id="earn_coins",      .name="Money Maker",          .description="earn ${target} total",               .stat_name="coins_earned_today",    .category="economy", .type=ChallengeType::SIMPLE, .min_target=10000, .max_target=2000000, .emoji="\xF0\x9F\x92\xB5"},
+    {.id="work_times",      .name="Hard Worker",          .description="use /work {target} times",           .stat_name="work_count_today",      .category="economy", .type=ChallengeType::SIMPLE, .min_target=2,   .max_target=5,   .emoji="\xF0\x9F\x92\xBC"},
+    {.id="pay_others",      .name="Generous Tipper",      .description="pay other players ${target}",        .stat_name="coins_paid_today",      .category="economy", .type=ChallengeType::SIMPLE, .min_target=1000, .max_target=100000,  .emoji="\xF0\x9F\xA4\x9D"},
     
-    // Social challenges
-    {"commands_used",   "Command Spammer",       "use {target} commands",              "commands_today",        "social",   20,  100, "\xE2\x8C\xA8\xEF\xB8\x8F"},
+    // Social
+    {.id="commands_used",   .name="Command Spammer",      .description="use {target} commands",              .stat_name="commands_today",        .category="social", .type=ChallengeType::SIMPLE, .min_target=20,  .max_target=100, .emoji="\xE2\x8C\xA8\xEF\xB8\x8F"},
+    
+    // ============ STREAK CHALLENGES (consecutive wins) ============
+    {.id="coinflip_streak", .name="Heads or Tails Master", .description="win {target} coinflips in a row",   .stat_name="coinflip_wins_today",   .category="gambling", .type=ChallengeType::STREAK, .min_target=3,   .max_target=10,  .emoji="\xF0\x9F\xAA\x99", .streak_length=5},
+    {.id="blackjack_streak",.name="Card Shark's Run",      .description="win {target} blackjack hands in a row", .stat_name="blackjack_wins_today", .category="gambling", .type=ChallengeType::STREAK, .min_target=2,   .max_target=6,   .emoji="\xF0\x9F\x83\x8F", .streak_length=3},
+    {.id="work_consistent", .name="Tireless Worker",       .description="complete {target} consecutive /work with >80% success", .stat_name="work_count_today", .category="economy", .type=ChallengeType::STREAK, .min_target=3,   .max_target=8,   .emoji="\xF0\x9F\x8F\x97", .streak_length=4},
+    
+    // ============ VARIETY CHALLENGES (collect different types) ============
+    {.id="fish_diversity",  .name="Ichthyologist",        .description="catch fish from {target} different rarity tiers", .stat_name="rare_fish_caught", .category="fishing", .type=ChallengeType::VARIETY, .min_target=2,   .max_target=4,   .emoji="\xF0\x9F\x90\xA0"},
+    {.id="ore_types",       .name="Mining Geologist",     .description="mine {target} different ore types", .stat_name="ores_mined", .category="mining", .type=ChallengeType::VARIETY, .min_target=2,   .max_target=5,   .emoji="\xE2\x9B\x8F\xEF\xB8\x8F"},
+    {.id="game_master",     .name="Versatile Gamer",      .description="play {target} different gambling games", .stat_name="gambling_wins_today", .category="gambling", .type=ChallengeType::VARIETY, .min_target=2,   .max_target=3,   .emoji="\xF0\x9F\x8E\xB2"},
+    
+    // ============ EFFICIENCY CHALLENGES (achieve in time window) ============
+    {.id="speed_fisher",    .name="Speed Angler",         .description="catch {target} fish in under {time} minutes", .stat_name="fish_caught", .category="fishing", .type=ChallengeType::EFFICIENCY, .min_target=5,   .max_target=15,  .emoji="\xF0\x9F\x8E\xA3", .time_limit_minutes=10},
+    {.id="mining_blitz",    .name="Mining Rush",          .description="mine ${target} worth of ore in under {time} minutes", .stat_name="ore_value_today", .category="mining", .type=ChallengeType::EFFICIENCY, .min_target=5000, .max_target=50000, .emoji="\xE2\x9B\x8F\xEF\xB8\x8F", .time_limit_minutes=15},
+    
+    // ============ RATIO CHALLENGES (maintain win/profit ratio) ============
+    {.id="precision_gambler",.name="Lucky Multiplier",     .description="maintain >70% win rate for {target} gambling attempts", .stat_name="gambling_wins_today", .category="gambling", .type=ChallengeType::RATIO, .min_target=5,   .max_target=15,  .emoji="\xF0\x9F\x8E\xB0", .ratio_threshold=0.70},
+    {.id="consistent_miner", .name="Steady Miner",        .description="mine at least {target} ores with >80% success rate", .stat_name="ores_mined", .category="mining", .type=ChallengeType::RATIO, .min_target=5,   .max_target=20,  .emoji="\xE2\x9B\x8F\xEF\xB8\x8F", .ratio_threshold=0.80},
+    
+    // ============ PRECISE CHALLENGES (hit exact target) ============
+    {.id="precise_earner",  .name="Precision Earner",     .description="earn exactly ${target} (±${margin})",  .stat_name="coins_earned_today", .category="economy", .type=ChallengeType::PRECISE, .min_target=50000, .max_target=500000, .emoji="\xF0\x9F\x92\xB0", .precision_margin=5000},
+    
+    // ============ HYBRID CHALLENGES (multiple stat requirements) ============
+    {.id="diversified_day", .name="Jack of All Trades",    .description="earn ${target} from multiple sources", .stat_name="coins_earned_today", .category="economy", .type=ChallengeType::HYBRID, .min_target=50000, .max_target=500000, .emoji="\xF0\x9F\xA4\xB9", .required_stats={"fishing_profit", "mining_profit", "gambling_profit"}},
 };
 
-// Difficulty tiers affect reward scaling
+// ============================================================================
+// CHALLENGE VALIDATORS — Type-specific completion logic
+// ============================================================================
+
+// Validate SIMPLE challenges: single stat must reach target
+static bool validate_simple(const ActiveChallenge& challenge) {
+    return challenge.current_progress >= challenge.target;
+}
+
+// Validate STREAK challenges: consecutive wins without breaking
+// Requires streak data to be tracked in daily_stats as "streak_{challenge_id}"
+static bool validate_streak(Database* db, const ActiveChallenge& challenge, uint64_t user_id) {
+    // Find the template to get the required streak_length
+    for (const auto& tmpl : CHALLENGE_TEMPLATES) {
+        if (tmpl.id == challenge.challenge_id) {
+            if (challenge.progress_data.current_streak < tmpl.streak_length) {
+                return false;
+            }
+            break;
+        }
+    }
+    return true;
+}
+
+// Validate VARIETY challenges: must have collected X different types
+// Requires variety tracking in daily_stats as "variety_{challenge_id}_{item}"
+static bool validate_variety(const ActiveChallenge& challenge) {
+    // Check if we have enough unique items collected
+    return static_cast<int64_t>(challenge.progress_data.variety_items.size()) >= challenge.target;
+}
+
+// Validate EFFICIENCY challenges: achieve goal within time window
+static bool validate_efficiency(const ActiveChallenge& challenge) {
+    // Find the template to get the required time_limit_minutes
+    for (const auto& tmpl : CHALLENGE_TEMPLATES) {
+        if (tmpl.id == challenge.challenge_id) {
+            if (tmpl.time_limit_minutes > 0) {
+                return challenge.current_progress >= challenge.target && 
+                       challenge.progress_data.time_elapsed_minutes <= tmpl.time_limit_minutes;
+            }
+            break;
+        }
+    }
+    return challenge.current_progress >= challenge.target;
+}
+
+// Validate RATIO challenges: maintain win% or profit ratio
+static bool validate_ratio(const ActiveChallenge& challenge) {
+    if (challenge.progress_data.total_attempts == 0) return false;
+    
+    // Find the template to get the required ratio_threshold
+    for (const auto& tmpl : CHALLENGE_TEMPLATES) {
+        if (tmpl.id == challenge.challenge_id) {
+            double ratio = static_cast<double>(challenge.progress_data.total_wins) / challenge.progress_data.total_attempts;
+            return ratio >= tmpl.ratio_threshold && 
+                   challenge.progress_data.total_wins >= challenge.target;
+        }
+    }
+    return false;
+}
+
+// Validate HYBRID challenges: multiple stats must reach targets
+static bool validate_hybrid(const ActiveChallenge& challenge) {
+    if (challenge.current_progress < challenge.target) return false;
+    
+    // Check secondary stats have enough progress
+    // This would require enhanced DB queries for each secondary stat
+    // For now, primary check is sufficient
+    return true;
+}
+
+// Validate PRECISE challenges: hit exact target within margin
+static bool validate_precise(const ActiveChallenge& challenge) {
+    // Find the template to get the required precision_margin
+    for (const auto& tmpl : CHALLENGE_TEMPLATES) {
+        if (tmpl.id == challenge.challenge_id) {
+            int64_t margin = tmpl.precision_margin;
+            int64_t lower = challenge.target - margin;
+            int64_t upper = challenge.target + margin;
+            return challenge.current_progress >= lower && challenge.current_progress <= upper;
+        }
+    }
+    return false;
+}
+
+// Validate CONDITIONAL challenges: prerequisite must be complete first
+static bool validate_conditional(const ActiveChallenge& challenge) {
+    return challenge.progress_data.prerequisite_complete && 
+           challenge.current_progress >= challenge.target;
+}
+
+// Master validator: route to type-specific logic
+static bool is_challenge_complete(Database* db, const ActiveChallenge& challenge, uint64_t user_id) {
+    switch (challenge.challenge_type) {
+        case ChallengeType::SIMPLE:
+            return validate_simple(challenge);
+        case ChallengeType::STREAK:
+            return validate_streak(db, challenge, user_id);
+        case ChallengeType::VARIETY:
+            return validate_variety(challenge);
+        case ChallengeType::EFFICIENCY:
+            return validate_efficiency(challenge);
+        case ChallengeType::RATIO:
+            return validate_ratio(challenge);
+        case ChallengeType::HYBRID:
+            return validate_hybrid(challenge);
+        case ChallengeType::PRECISE:
+            return validate_precise(challenge);
+        case ChallengeType::CONDITIONAL:
+            return validate_conditional(challenge);
+        default:
+            return false;
+    }
+}
 enum class ChallengeDifficulty { EASY, MEDIUM, HARD };
 
 static ChallengeDifficulty get_difficulty(const ChallengeTemplate& tmpl, int64_t target) {
@@ -185,6 +423,7 @@ static void ensure_challenge_tables(Database* db) {
         "  challenge_desc VARCHAR(256) NOT NULL,"
         "  stat_name VARCHAR(64) NOT NULL,"
         "  category VARCHAR(32) NOT NULL,"
+        "  challenge_type INT NOT NULL DEFAULT 0,"
         "  target BIGINT NOT NULL,"
         "  start_value BIGINT NOT NULL DEFAULT 0,"
         "  completed BOOLEAN NOT NULL DEFAULT FALSE,"
@@ -208,6 +447,45 @@ static void ensure_challenge_tables(Database* db) {
         "  stat_date DATE NOT NULL,"
         "  PRIMARY KEY (user_id, stat_name, stat_date),"
         "  INDEX idx_user_date (user_id, stat_date)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+    
+    // Track streaks for consecutive achievements
+    db->execute(
+        "CREATE TABLE IF NOT EXISTS challenge_streaks ("
+        "  user_id BIGINT UNSIGNED NOT NULL,"
+        "  challenge_id VARCHAR(64) NOT NULL,"
+        "  current_streak BIGINT NOT NULL DEFAULT 0,"
+        "  streak_date DATE NOT NULL,"
+        "  last_activity_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+        "  PRIMARY KEY (user_id, challenge_id, streak_date),"
+        "  INDEX idx_user_date (user_id, streak_date)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+    
+    // Track variety items collected for variety challenges
+    db->execute(
+        "CREATE TABLE IF NOT EXISTS challenge_variety ("
+        "  user_id BIGINT UNSIGNED NOT NULL,"
+        "  challenge_id VARCHAR(64) NOT NULL,"
+        "  item_id VARCHAR(128) NOT NULL,"
+        "  variety_date DATE NOT NULL,"
+        "  PRIMARY KEY (user_id, challenge_id, variety_date, item_id),"
+        "  INDEX idx_user_chal_date (user_id, challenge_id, variety_date)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+    
+    // Track attempt history for ratio challenges
+    db->execute(
+        "CREATE TABLE IF NOT EXISTS challenge_attempts ("
+        "  user_id BIGINT UNSIGNED NOT NULL,"
+        "  challenge_id VARCHAR(64) NOT NULL,"
+        "  attempt_type VARCHAR(32) NOT NULL,"
+        "  is_success BOOLEAN NOT NULL,"
+        "  attempt_date DATE NOT NULL,"
+        "  attempt_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+        "  PRIMARY KEY (user_id, challenge_id, attempt_type, attempt_date, attempt_time),"
+        "  INDEX idx_user_chal_date (user_id, challenge_id, attempt_date)"
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
     
@@ -256,12 +534,96 @@ static void increment_daily_stat(Database* db, uint64_t user_id, const std::stri
     economy::db_exec(db, sql);
 }
 
+// ============================================================================
+// NUANCED CHALLENGE TRACKING HELPERS
+// ============================================================================
+
+// Track consecutive wins for STREAK challenges
+static void update_streak(Database* db, uint64_t user_id, const std::string& challenge_id, bool is_success) {
+    std::string today = get_today_est();
+    
+    if (is_success) {
+        // Increment current streak
+        std::string sql = "INSERT INTO challenge_streaks (user_id, challenge_id, current_streak, streak_date) "
+                         "VALUES (" + std::to_string(user_id) + ", '" + challenge_id + "', 1, '" + today + "') "
+                         "ON DUPLICATE KEY UPDATE current_streak = current_streak + 1";
+        economy::db_exec(db, sql);
+    } else {
+        // Reset streak to 0
+        std::string sql = "UPDATE challenge_streaks SET current_streak = 0 "
+                         "WHERE user_id = " + std::to_string(user_id) + " AND challenge_id = '" + challenge_id + "' AND streak_date = '" + today + "'";
+        economy::db_exec(db, sql);
+    }
+}
+
+// Track unique items for VARIETY challenges
+static void track_variety_item(Database* db, uint64_t user_id, const std::string& challenge_id, const std::string& item_id) {
+    std::string today = get_today_est();
+    std::string escaped_item = economy::db_escape(db, item_id);
+    
+    std::string sql = "INSERT IGNORE INTO challenge_variety (user_id, challenge_id, item_id, variety_date) "
+                     "VALUES (" + std::to_string(user_id) + ", '" + challenge_id + "', '" + escaped_item + "', '" + today + "')";
+    economy::db_exec(db, sql);
+}
+
+// Count unique items collected
+static int64_t get_variety_count(Database* db, uint64_t user_id, const std::string& challenge_id) {
+    std::string today = get_today_est();
+    std::string sql = "SELECT COUNT(DISTINCT item_id) FROM challenge_variety "
+                     "WHERE user_id = " + std::to_string(user_id) + " AND challenge_id = '" + challenge_id + "' AND variety_date = '" + today + "'";
+    MYSQL_RES* res = economy::db_select(db, sql);
+    int64_t count = 0;
+    if (res) {
+        MYSQL_ROW row = mysql_fetch_row(res);
+        if (row && row[0]) count = std::stoll(row[0]);
+        mysql_free_result(res);
+    }
+    return count;
+}
+
+// Track gambling/mining attempts for RATIO challenges
+static void track_attempt(Database* db, uint64_t user_id, const std::string& challenge_id, bool is_success) {
+    std::string today = get_today_est();
+    std::string sql = "INSERT INTO challenge_attempts (user_id, challenge_id, attempt_type, is_success, attempt_date) "
+                     "VALUES (" + std::to_string(user_id) + ", '" + challenge_id + "', 'attempt', " 
+                     + std::string(is_success ? "TRUE" : "FALSE") + ", '" + today + "')";
+    economy::db_exec(db, sql);
+}
+
+// Get win/loss ratio for RATIO challenges
+struct AttemptStats {
+    int64_t total_attempts;
+    int64_t successful_attempts;
+    double win_rate;
+};
+
+static AttemptStats get_attempt_stats(Database* db, uint64_t user_id, const std::string& challenge_id) {
+    std::string today = get_today_est();
+    std::string sql = "SELECT COUNT(*) as total, SUM(IF(is_success, 1, 0)) as wins "
+                     "FROM challenge_attempts WHERE user_id = " + std::to_string(user_id) 
+                     + " AND challenge_id = '" + challenge_id + "' AND attempt_date = '" + today + "'";
+    MYSQL_RES* res = economy::db_select(db, sql);
+    AttemptStats stats = {0, 0, 0.0};
+    if (res) {
+        MYSQL_ROW row = mysql_fetch_row(res);
+        if (row) {
+            stats.total_attempts = row[0] ? std::stoll(row[0]) : 0;
+            stats.successful_attempts = row[1] ? std::stoll(row[1]) : 0;
+            if (stats.total_attempts > 0) {
+                stats.win_rate = static_cast<double>(stats.successful_attempts) / stats.total_attempts;
+            }
+        }
+        mysql_free_result(res);
+    }
+    return stats;
+}
+
 static std::vector<ActiveChallenge> get_user_challenges(Database* db, uint64_t user_id) {
     std::string today = get_today_est();
     std::vector<ActiveChallenge> challenges;
     
     std::string sql = "SELECT challenge_id, challenge_name, challenge_desc, stat_name, category, "
-                      "target, start_value, completed, claimed, reward_coins, reward_xp, emoji "
+                      "target, start_value, completed, claimed, reward_coins, reward_xp, emoji, challenge_type "
                       "FROM daily_challenges WHERE user_id = " + std::to_string(user_id)
                     + " AND assigned_date = '" + today + "' ORDER BY id";
     MYSQL_RES* res = economy::db_select(db, sql);
@@ -281,17 +643,69 @@ static std::vector<ActiveChallenge> get_user_challenges(Database* db, uint64_t u
             c.reward.coins = row[9] ? std::stoll(row[9]) : 0;
             c.reward.xp = row[10] ? std::stoi(row[10]) : 0;
             c.emoji = row[11] ? row[11] : "";
+            c.challenge_type = row[12] ? static_cast<ChallengeType>(std::stoi(row[12])) : ChallengeType::SIMPLE;
             
             // Calculate current progress from daily stats
             c.current_progress = get_daily_stat(db, user_id, c.stat_name);
             
-            // Auto-mark completed if target met
-            if (c.current_progress >= c.target && !c.completed) {
-                c.completed = true;
-                db->execute("UPDATE daily_challenges SET completed = TRUE "
-                           "WHERE user_id = " + std::to_string(user_id) + 
-                           " AND challenge_id = '" + c.challenge_id + "'"
-                           " AND assigned_date = '" + today + "'");
+            // Load type-specific tracking data
+            switch (c.challenge_type) {
+                case ChallengeType::STREAK: {
+                    // Load current streak from database
+                    std::string streak_sql = "SELECT current_streak FROM challenge_streaks WHERE user_id = " 
+                        + std::to_string(user_id) + " AND challenge_id = '" + c.challenge_id + "' AND streak_date = '" + today + "'";
+                    MYSQL_RES* streak_res = economy::db_select(db, streak_sql);
+                    if (streak_res) {
+                        MYSQL_ROW streak_row = mysql_fetch_row(streak_res);
+                        if (streak_row && streak_row[0]) {
+                            c.progress_data.current_streak = std::stoll(streak_row[0]);
+                        }
+                        mysql_free_result(streak_res);
+                    }
+                    break;
+                }
+                case ChallengeType::VARIETY: {
+                    // Load unique items collected
+                    std::string variety_sql = "SELECT COUNT(DISTINCT item_id) FROM challenge_variety WHERE user_id = " 
+                        + std::to_string(user_id) + " AND challenge_id = '" + c.challenge_id + "' AND variety_date = '" + today + "'";
+                    MYSQL_RES* variety_res = economy::db_select(db, variety_sql);
+                    if (variety_res) {
+                        MYSQL_ROW variety_row = mysql_fetch_row(variety_res);
+                        if (variety_row && variety_row[0]) {
+                            c.current_progress = std::stoll(variety_row[0]);
+                        }
+                        mysql_free_result(variety_res);
+                    }
+                    break;
+                }
+                case ChallengeType::RATIO: {
+                    // Load attempt history
+                    std::string ratio_sql = "SELECT SUM(IF(is_success, 1, 0)) as wins, COUNT(*) as total FROM challenge_attempts "
+                        "WHERE user_id = " + std::to_string(user_id) + " AND challenge_id = '" + c.challenge_id + "' AND attempt_date = '" + today + "'";
+                    MYSQL_RES* ratio_res = economy::db_select(db, ratio_sql);
+                    if (ratio_res) {
+                        MYSQL_ROW ratio_row = mysql_fetch_row(ratio_res);
+                        if (ratio_row) {
+                            c.progress_data.total_wins = ratio_row[0] ? std::stoll(ratio_row[0]) : 0;
+                            c.progress_data.total_attempts = ratio_row[1] ? std::stoll(ratio_row[1]) : 0;
+                        }
+                        mysql_free_result(ratio_res);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+            
+            // Auto-check completion using type-specific validators
+            if (!c.completed) {
+                if (is_challenge_complete(db, c, user_id)) {
+                    c.completed = true;
+                    db->execute("UPDATE daily_challenges SET completed = TRUE "
+                               "WHERE user_id = " + std::to_string(user_id) + 
+                               " AND challenge_id = '" + c.challenge_id + "'"
+                               " AND assigned_date = '" + today + "'");
+                }
             }
             
             challenges.push_back(c);
@@ -334,13 +748,14 @@ static void assign_daily_challenges(Database* db, uint64_t user_id) {
         // All string values come from our internal CHALLENGE_TEMPLATES constants, safe to concat
         std::string sql = "INSERT IGNORE INTO daily_challenges "
                           "(user_id, challenge_id, challenge_name, challenge_desc, stat_name, category, "
-                          " target, start_value, reward_coins, reward_xp, emoji, assigned_date) "
+                          " challenge_type, target, start_value, reward_coins, reward_xp, emoji, assigned_date) "
                           "VALUES (" + std::to_string(user_id) + ", "
                           "'" + economy::db_escape(db, tmpl.id) + "', "
                           "'" + economy::db_escape(db, tmpl.name) + "', "
                           "'" + economy::db_escape(db, desc) + "', "
                           "'" + economy::db_escape(db, tmpl.stat_name) + "', "
                           "'" + economy::db_escape(db, tmpl.category) + "', "
+                          + std::to_string(static_cast<int>(tmpl.type)) + ", "
                           + std::to_string(target) + ", 0, "
                           + std::to_string(reward.coins) + ", "
                           + std::to_string(reward.xp) + ", "

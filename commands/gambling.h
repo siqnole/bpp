@@ -14,6 +14,7 @@
 #include "gambling/crash.h"
 #include "gambling/poker.h"
 #include "gambling/jackpot.h"
+#include "gambling/gamble_parent.h"
 #include <dpp/dpp.h>
 #include <vector>
 
@@ -24,18 +25,15 @@ namespace commands {
 ::std::vector<Command*> get_gambling_commands(Database* db) {
     ::std::vector<Command*> cmds;
     
-    cmds.push_back(gambling::get_slots_command(db));
-    cmds.push_back(gambling::get_coinflip_command(db));
-    cmds.push_back(gambling::get_dice_command(db));
-    cmds.push_back(gambling::get_frogger_command(db));
-    cmds.push_back(gambling::get_roulette_command(db));
-    cmds.push_back(gambling::get_blackjack_command(db));
-    cmds.push_back(gambling::get_lottery_command(db));
-    cmds.push_back(gambling::get_minesweeper_command(db));
+    // CONSOLIDATED: All gambling games now use the /gamble parent command with subcommands
+    // This replaces the 11 individual commands (slots, coinflip, dice, frogger, roulette,
+    // blackjack, lottery, minesweeper, crash, poker, jackpot) with a single command
+    // that provides subcommands for each game.
+    // Savings: 10 slash commands
+    cmds.push_back(gambling::create_gamble_parent_command(db));
+    
+    // KEPT SEPARATE: Stats command remains as individual command (shows aggregate stats)
     cmds.push_back(gambling::get_stats_command(db));
-    cmds.push_back(gambling::get_crash_command(db));
-    cmds.push_back(gambling::get_poker_command(db));
-    cmds.push_back(gambling::get_jackpot_command(db));
     
     return cmds;
 }

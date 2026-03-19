@@ -97,7 +97,7 @@ struct PieSlice   { std::string label; double value; RGBA colour; };
 struct ScatterPoint { double x; double y; };
 struct ScatterSeries { std::string name; RGBA colour; std::vector<ScatterPoint> points; };
 struct BarSeries  { std::string name; RGBA colour; std::vector<int64_t> values; };
-struct HeatmapCell { int row; int col; double value; };
+struct HeatmapCell { int row; int col; double value; }; // TODO: make heatmaps logarithmic and support custom row/col labels
 
 // ========================================================================
 //  render_horizontal_bar_chart
@@ -709,13 +709,15 @@ inline std::string render_stacked_bar_chart(
 // ========================================================================
 //  render_heatmap
 //  colored grid (rows × cols) — for hour-of-day × day-of-week activity
+//  uses logarithmic scaling to prevent large values from drowning out small ones
 // ========================================================================
 inline std::string render_heatmap(
         const std::string& title,
         const std::vector<std::string>& row_labels,   // e.g. days: Sun..Sat
         const std::vector<std::string>& col_labels,    // e.g. hours: 0..23
         const std::vector<std::vector<double>>& matrix, // [row][col] values
-        int width = 700, int height = 0)
+        int width = 700, int height = 0,
+        bool use_log_scale = true)  // use logarithmic scaling for better visibility
 {
     int rows = (int)row_labels.size();
     int cols = (int)col_labels.size();
@@ -752,6 +754,9 @@ inline std::string render_heatmap(
     for (auto& row : matrix)
         for (auto v : row) max_val = std::max(max_val, v);
 
+    // precompute log max if using log scale
+    double log_max = use_log_scale ? std::log(max_val + 1) : max_val;
+
     // column labels (hours)
     set_font(cr, 8, false);
     for (int c = 0; c < cols; ++c) {
@@ -773,20 +778,32 @@ inline std::string render_heatmap(
 
         for (int c = 0; c < cols; ++c) {
             double val = (r < (int)matrix.size() && c < (int)matrix[r].size()) ? matrix[r][c] : 0;
-            double intensity = val / max_val;
+            
+            // compute intensity using log scale for better distribution
+            double intensity;
+            if (use_log_scale) {
+                intensity = log_max > 0 ? std::log(val + 1) / log_max : 0;
+            } else {
+                intensity = max_val > 0 ? val / max_val : 0;
+            }
 
             // colour: lerp from COL_CARD (0) through COL_ACCENT (1)
             double lr = COL_CARD.r + (COL_ACCENT.r - COL_CARD.r) * intensity;
             double lg = COL_CARD.g + (COL_ACCENT.g - COL_CARD.g) * intensity;
             double lb = COL_CARD.b + (COL_ACCENT.b - COL_CARD.b) * intensity;
-            cairo_set_source_rgba(cr, lr, lg, lb, 0.5 + 0.5 * intensity);
+            
+            // with log scale, use better alpha distribution so small values remain visible
+            double alpha = use_log_scale ? (0.3 + 0.7 * intensity) : (0.5 + 0.5 * intensity);
+            cairo_set_source_rgba(cr, lr, lg, lb, alpha);
 
             double cx_pos = pad + row_label_w + c * cell_w;
             round_rect(cr, cx_pos + 1, y + 1, cell_w - 2, cell_h - 2, 3);
             cairo_fill(cr);
 
-            // show count in bright cells
-            if (intensity > 0.4 && val > 0) {
+            // show count in cells with meaningful data
+            // with log scale, show text for intensity > 0.2; without, require > 0.4
+            double show_threshold = use_log_scale ? 0.2 : 0.4;
+            if (intensity > show_threshold && val > 0) {
                 set_font(cr, 7, false);
                 set_colour(cr, COL_TEXT);
                 std::string vs = std::to_string((int)val);

@@ -31,15 +31,13 @@ namespace commands {
     static ::std::vector<Command*> cmds;
     
     // Get commands from each category
-    auto core = get_economy_core_commands(db);
-    auto money = get_money_commands(db);
+    auto core = get_economy_core_commands(db);  // Now includes /money parent with balance, bank, withdraw, pay, prestige, rebirth, daily, weekly, work, rob
     auto gambling = get_gambling_commands(db);
     auto fishing = get_fishing_commands(db);
     auto trading = get_trading_commands(db);
     auto bazaar = get_bazaar_commands(db);
     auto shop = get_shop_commands(db);
     auto market = get_market_commands(db);
-    auto rob = get_rob_commands(db);
     auto autofisher = get_autofisher_commands(db);
     auto titles = get_title_commands(db);
     auto support = support_server::get_support_server_commands(db);
@@ -52,14 +50,13 @@ namespace commands {
     
     // Combine all commands
     cmds.insert(cmds.end(), core.begin(), core.end());
-    cmds.insert(cmds.end(), money.begin(), money.end());
     cmds.insert(cmds.end(), gambling.begin(), gambling.end());
     cmds.insert(cmds.end(), fishing.begin(), fishing.end());
     cmds.insert(cmds.end(), trading.begin(), trading.end());
     cmds.insert(cmds.end(), bazaar.begin(), bazaar.end());
     cmds.insert(cmds.end(), market.begin(), market.end());
     cmds.insert(cmds.end(), shop.begin(), shop.end());
-    cmds.insert(cmds.end(), rob.begin(), rob.end());
+    // rob is now part of /money parent command in core
     cmds.insert(cmds.end(), autofisher.begin(), autofisher.end());
     cmds.insert(cmds.end(), titles.begin(), titles.end());
     cmds.insert(cmds.end(), support.begin(), support.end());

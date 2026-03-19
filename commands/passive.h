@@ -1,9 +1,6 @@
 #pragma once
 #include "../command.h"
-#include "passive/fish_pond.h"
-#include "passive/mining_claims.h"
-#include "passive/commodity_market.h"
-#include "passive/bank_interest.h"
+#include "passive/passive_parent.h"
 #include <vector>
 
 namespace commands {
@@ -13,10 +10,9 @@ std::vector<Command*> get_passive_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     if (cmds.empty()) {
-        cmds.push_back(commands::passive::get_pond_command(db));
-        cmds.push_back(commands::passive::get_claim_command(db));
-        cmds.push_back(commands::passive::get_market_overview_command(db));
-        cmds.push_back(commands::passive::get_interest_command(db));
+        // Replace 4 individual commands (pond, claim, market, interest)
+        // with single /passive parent command
+        cmds.push_back(passive::create_passive_parent_command(db));
     }
     
     return cmds;

@@ -19,33 +19,17 @@
 #include "moderation/muterole.h"
 #include "moderation/jailsetup.h"
 #include "moderation/modlog_channel.h"
-#include "moderation/infraction_engine.h"
+#include "moderation/mod_parent.h"
 #include <dpp/dpp.h>
 #include <vector>
 
 namespace commands {
 
-// Get all manual moderation commands
+// Get all moderation commands (consolidated into /mod parent)
 inline std::vector<Command*> get_manual_moderation_commands(bronx::db::Database* db) {
+    // Replace 18 individual commands with single /mod parent command
     return {
-        moderation::get_timeout_command(db),
-        moderation::get_mute_command(db),
-        moderation::get_jail_command(db),
-        moderation::get_kick_command(db),
-        moderation::get_ban_command(db),
-        moderation::get_warn_command(db),
-        moderation::get_untimeout_command(db),
-        moderation::get_unmute_command(db),
-        moderation::get_unjail_command(db),
-        moderation::get_unban_command(db),
-        moderation::get_case_command(db),
-        moderation::get_history_command(db),
-        moderation::get_modstats_command(db),
-        moderation::get_pardon_command(db),
-        moderation::get_infractions_config_command(db),
-        moderation::get_muterole_command(db),
-        moderation::get_jailsetup_command(db),
-        moderation::get_modlog_channel_command(db),
+        moderation::create_moderation_parent_command(db),
     };
 }
 
