@@ -896,6 +896,7 @@ inline void handle_stats_buttons(dpp::cluster& bot, const dpp::button_click_t& e
     else if (category == "boosts")    handle_stats_boosts(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
     else if (category == "commands")  handle_stats_commands(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
     else if (category == "top")       handle_stats_top(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
+    else if (category == "heatmap")   handle_stats_heatmap(bot, db, guild_id, channel_id, days, reply, user_id);
     else                              handle_stats_summary(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
 }
 
@@ -942,6 +943,7 @@ inline void handle_stats_select(dpp::cluster& bot, const dpp::select_click_t& ev
     else if (category == "boosts")    handle_stats_boosts(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
     else if (category == "commands")  handle_stats_commands(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
     else if (category == "top")       handle_stats_top(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
+    else if (category == "heatmap")   handle_stats_heatmap(bot, db, guild_id, channel_id, days, reply, user_id);
     else                              handle_stats_summary(bot, db, guild_id, channel_id, days, reply, user_id, gtype);
 }
 

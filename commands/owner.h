@@ -7,6 +7,7 @@
 #include "../database/core/database.h"
 #include "../database/operations/community/suggestion_operations.h"
 #include "../database/operations/economy/history_operations.h"
+#include "../database/operations/economy/gambling_verification.h"
 #include "../performance/cache_manager.h"
 #include "../performance/chart_renderer.h"
 #include "../security/secure_config.h"
@@ -14,6 +15,7 @@
 #include "../commands/market_state.h"
 #include "economy_core.h"
 #include "titles.h"  // dynamic title definitions
+#include "owner/gambling_audit.h"
 
 // External headers
 #include <dpp/dpp.h>
@@ -3148,6 +3150,12 @@ inline ::std::vector<Command*> get_owner_commands(::CommandHandler* handler, bro
             }
         });
     cmds.push_back(&purgeuser_cmd);
+
+    // Gambling audit command
+    auto* gambling_audit = commands::owner::get_gambling_audit_owner_command(db);
+    if (gambling_audit) {
+        cmds.push_back(gambling_audit);
+    }
 
     return cmds;
 }

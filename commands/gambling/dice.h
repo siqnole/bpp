@@ -3,12 +3,14 @@
 #include "../../embed_style.h"
 #include "../../database/core/database.h"
 #include "../../database/operations/economy/history_operations.h"
+#include "../../database/operations/economy/gambling_verification.h"
 #include "../economy_core.h"
 #include "gambling_helpers.h"
 #include <dpp/dpp.h>
 #include <random>
 
 using namespace bronx::db;
+using namespace bronx::db::gambling_verification;
 
 namespace commands {
 namespace gambling {
@@ -81,7 +83,22 @@ inline Command* get_dice_command(Database* db) {
                 result_text = "no special combination...";
             }
             
-            db->update_wallet(event.msg.author.id, winnings);
+            // VERIFIED GAMBLING TRANSACTION
+            int64_t balance_before = db->get_wallet(event.msg.author.id);
+            std::string transaction_id = create_gambling_transaction(
+                db, event.msg.author.id, "dice", bet, winnings,
+                balance_before, "", "die1:" + std::to_string(die1) + ",die2:" + std::to_string(die2) + ",total:" + std::to_string(total)
+            );
+            
+            if (!verify_gambling_transaction(db, event.msg.author.id, transaction_id, balance_before, balance_before + winnings)) {
+                bronx::send_message(bot, event, bronx::error("gambling verification failed - please try again"));
+                return;
+            }
+            
+            if (!apply_verified_gambling_winnings(db, event.msg.author.id, transaction_id, winnings, "dice")) {
+                bronx::send_message(bot, event, bronx::error("failed to apply gambling winnings - contact support"));
+                return;
+            }
             
             // Track gambling stats
             if (winnings > 0) {
@@ -187,10 +204,25 @@ inline Command* get_dice_command(Database* db) {
                 result_text = "no special combination...";
             }
             
-            db->update_wallet(event.command.get_issuing_user().id, winnings);
+            // VERIFIED GAMBLING TRANSACTION
+            uint64_t uid = event.command.get_issuing_user().id;
+            int64_t balance_before = db->get_wallet(uid);
+            std::string transaction_id = create_gambling_transaction(
+                db, uid, "dice", bet, winnings,
+                balance_before, "", "die1:" + std::to_string(die1) + ",die2:" + std::to_string(die2) + ",total:" + std::to_string(total)
+            );
+            
+            if (!verify_gambling_transaction(db, uid, transaction_id, balance_before, balance_before + winnings)) {
+                event.reply(dpp::message().add_embed(bronx::error("gambling verification failed - please try again")));
+                return;
+            }
+            
+            if (!apply_verified_gambling_winnings(db, uid, transaction_id, winnings, "dice")) {
+                event.reply(dpp::message().add_embed(bronx::error("failed to apply gambling winnings - contact support")));
+                return;
+            }
             
             // Track gambling stats
-            uint64_t uid = event.command.get_issuing_user().id;
             if (winnings > 0) {
                 db->increment_stat(uid, "gambling_profit", winnings);
                 // Check gambling profit achievements

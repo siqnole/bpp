@@ -3,6 +3,7 @@
 #include "../../embed_style.h"
 #include "../../database/core/database.h"
 #include "../../database/operations/economy/history_operations.h"
+#include "../../database/operations/economy/gambling_verification.h"
 #include "../economy_core.h"
 #include "gambling_helpers.h"
 #include <dpp/dpp.h>
@@ -12,6 +13,7 @@
 #include <chrono>
 
 using namespace bronx::db;
+using namespace bronx::db::gambling_verification;
 
 namespace commands {
 namespace gambling {
@@ -143,7 +145,24 @@ inline Command* get_slots_command(Database* db) {
                     actual_winnings = static_cast<int64_t>(winnings * mult);
                 }
                 
-                update_gambling_wallet(db, event.msg.author.id, guild_id_inner, actual_winnings);
+                // VERIFIED GAMBLING TRANSACTION
+                int64_t balance_before = get_gambling_wallet(db, event.msg.author.id, guild_id_inner);
+                std::string transaction_id = create_gambling_transaction(
+                    db, event.msg.author.id, "slots", bet, actual_winnings,
+                    balance_before, "", "slot1:" + slot1 + ",slot2:" + slot2 + ",slot3:" + slot3
+                );
+                
+                if (!verify_gambling_transaction(db, event.msg.author.id, transaction_id, balance_before, balance_before + actual_winnings)) {
+                    std::cerr << "[SLOTS] Verification failed for transaction " << transaction_id << std::endl;
+                    return;
+                }
+                
+                if (!update_gambling_wallet(db, event.msg.author.id, guild_id_inner, actual_winnings)) {
+                    std::cerr << "[SLOTS] Failed to update wallet for transaction " << transaction_id << std::endl;
+                    return;
+                }
+                
+                apply_verified_gambling_winnings(db, event.msg.author.id, transaction_id, actual_winnings, "slots");
                 
                 // Track gambling stats
                 if (winnings > 0) {
@@ -308,7 +327,24 @@ inline Command* get_slots_command(Database* db) {
                     actual_winnings = static_cast<int64_t>(winnings * mult);
                 }
                 
-                update_gambling_wallet(db, uid, guild_id_inner, actual_winnings);
+                // VERIFIED GAMBLING TRANSACTION
+                int64_t balance_before = get_gambling_wallet(db, uid, guild_id_inner);
+                std::string transaction_id = create_gambling_transaction(
+                    db, uid, "slots", bet, actual_winnings,
+                    balance_before, "", "slot1:" + slot1 + ",slot2:" + slot2 + ",slot3:" + slot3
+                );
+                
+                if (!verify_gambling_transaction(db, uid, transaction_id, balance_before, balance_before + actual_winnings)) {
+                    std::cerr << "[SLOTS SLASH] Verification failed for transaction " << transaction_id << std::endl;
+                    return;
+                }
+                
+                if (!update_gambling_wallet(db, uid, guild_id_inner, actual_winnings)) {
+                    std::cerr << "[SLOTS SLASH] Failed to update wallet for transaction " << transaction_id << std::endl;
+                    return;
+                }
+                
+                apply_verified_gambling_winnings(db, uid, transaction_id, actual_winnings, "slots");
                 
                 if (actual_winnings > 0) {
                     db->increment_stat(uid, "gambling_profit", actual_winnings);

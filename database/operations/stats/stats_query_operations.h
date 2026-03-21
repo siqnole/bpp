@@ -110,7 +110,7 @@ inline int64_t total_messages(Database* db, uint64_t guild_id, int days = 7) {
         sql = "SELECT COUNT(*) FROM guild_message_events "
               "WHERE guild_id='" + std::to_string(guild_id) + "' "
               "AND event_type='message' "
-              "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+              "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
         res = run_query(db->get_pool(), sql, conn);
         if (!res) return 0;
         row = mysql_fetch_row(res);
@@ -128,7 +128,7 @@ inline int64_t active_users(Database* db, uint64_t guild_id, int days = 7) {
         "SELECT COUNT(DISTINCT user_id) FROM guild_message_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND event_type='message' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
     if (!res) return 0;
@@ -173,7 +173,7 @@ inline std::vector<DailyCount> daily_message_count(Database* db, uint64_t guild_
         "FROM guild_message_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND event_type='message' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY) "
         "GROUP BY d ORDER BY d";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -227,7 +227,7 @@ inline std::vector<DailyMembers> daily_member_flow(Database* db, uint64_t guild_
         "SUM(event_type='join') AS joins, SUM(event_type='leave') AS leaves "
         "FROM guild_member_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY) "
         "GROUP BY d ORDER BY d";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -254,7 +254,7 @@ inline std::vector<DailyCount> daily_active_users(Database* db, uint64_t guild_i
         "FROM guild_message_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND event_type='message' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY) "
         "GROUP BY d ORDER BY d";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -305,7 +305,7 @@ inline int64_t new_members(Database* db, uint64_t guild_id, int days = 7) {
         "SELECT COUNT(*) FROM guild_member_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND event_type='join' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
     if (!res) return 0;
@@ -329,7 +329,7 @@ inline std::vector<DailyVoice> daily_voice_activity(Database* db, uint64_t guild
         "SUM(event_type='join') AS joins, SUM(event_type='leave') AS leaves "
         "FROM guild_voice_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY) "
         "GROUP BY d ORDER BY d";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -354,7 +354,7 @@ inline int64_t total_voice_sessions(Database* db, uint64_t guild_id, int days = 
         "SELECT COUNT(*) FROM guild_voice_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND event_type='join' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
     if (!res) return 0;
@@ -372,7 +372,7 @@ inline int64_t unique_voice_users(Database* db, uint64_t guild_id, int days = 7)
         "SELECT COUNT(DISTINCT user_id) FROM guild_voice_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND event_type='join' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
     if (!res) return 0;
@@ -392,7 +392,7 @@ inline std::vector<DailyBoosts> daily_boost_activity(Database* db, uint64_t guil
         "SUM(event_type='boost') AS boosts, SUM(event_type='unboost') AS unboosts "
         "FROM guild_boost_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY) "
         "GROUP BY d ORDER BY d";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -418,7 +418,7 @@ inline int64_t total_boosts(Database* db, uint64_t guild_id, int days = 7) {
         "SUM(CASE WHEN event_type='unboost' THEN 1 ELSE 0 END) AS SIGNED) "
         "FROM guild_boost_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
     if (!res) return 0;
@@ -436,7 +436,7 @@ inline int64_t unique_boosters(Database* db, uint64_t guild_id, int days = 7) {
         "SELECT COUNT(DISTINCT user_id) FROM guild_boost_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' "
         "AND event_type='boost' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
     if (!res) return 0;
@@ -492,15 +492,15 @@ struct ChannelActivityStat {
 
 // ── date condition helper (today=0, all-time=-1) ───────────────
 inline std::string date_condition(const std::string& col, int days) {
-    if (days == 0) return col + " = CURDATE()";
+    if (days == 0) return "DATE(" + col + ") = CURDATE()";
     if (days < 0)  return "1=1"; // all-time
-    return col + " >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
+    return "DATE(" + col + ") >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
 }
 
 inline std::string timestamp_condition(const std::string& col, int days) {
-    if (days == 0) return col + " >= CURDATE()";
+    if (days == 0) return "DATE(" + col + ") = CURDATE()";
     if (days < 0)  return "1=1"; // all-time
-    return col + " >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY)";
+    return "DATE(" + col + ") >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY)";
 }
 
 // ── top users by messages (from user_activity_daily) ───────────
@@ -742,7 +742,7 @@ inline std::vector<ChannelVoiceStat> top_voice_channels(Database* db, uint64_t g
         "SELECT channel_id, COUNT(*) AS sessions, COUNT(DISTINCT user_id) AS users "
         "FROM guild_voice_events "
         "WHERE guild_id='" + gid + "' AND event_type='join' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + d + " DAY) "
         "GROUP BY channel_id ORDER BY sessions DESC LIMIT " + std::to_string(limit);
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -771,7 +771,7 @@ inline std::vector<ChannelVoiceStat> top_voice_channels(Database* db, uint64_t g
             "    AND l.channel_id=j.channel_id AND l.event_type='leave' "
             "    AND l.created_at > j.created_at "
             "  WHERE j.guild_id='" + gid + "' AND j.event_type='join' "
-            "  AND j.created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+            "  AND DATE(j.created_at) >= DATE_SUB(CURDATE(), INTERVAL " + d + " DAY) "
             "  GROUP BY j.id, j.channel_id, j.created_at"
             ") paired WHERE dur > 0 AND dur < 86400 GROUP BY channel_id";
         std::shared_ptr<Connection> conn2;
@@ -803,7 +803,7 @@ inline std::vector<UserVoiceStat> top_voice_users(Database* db, uint64_t guild_i
         "SELECT user_id, COUNT(*) AS sessions, COUNT(DISTINCT channel_id) AS chans "
         "FROM guild_voice_events "
         "WHERE guild_id='" + gid + "' AND event_type='join' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + d + " DAY) "
         "GROUP BY user_id ORDER BY sessions DESC LIMIT " + std::to_string(limit);
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -831,7 +831,7 @@ inline std::vector<UserVoiceStat> top_voice_users(Database* db, uint64_t guild_i
             "    AND l.channel_id=j.channel_id AND l.event_type='leave' "
             "    AND l.created_at > j.created_at "
             "  WHERE j.guild_id='" + gid + "' AND j.event_type='join' "
-            "  AND j.created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+            "  AND DATE(j.created_at) >= DATE_SUB(CURDATE(), INTERVAL " + d + " DAY) "
             "  GROUP BY j.id, j.user_id, j.created_at"
             ") paired WHERE dur > 0 AND dur < 86400 GROUP BY user_id";
         std::shared_ptr<Connection> conn2;
@@ -861,7 +861,7 @@ inline std::vector<HourlyVoice> voice_peak_hours(Database* db, uint64_t guild_id
         "SELECT HOUR(created_at) AS h, COUNT(*) AS cnt "
         "FROM guild_voice_events "
         "WHERE guild_id='" + std::to_string(guild_id) + "' AND event_type='join' "
-        "AND created_at >= DATE_SUB(NOW(), INTERVAL " + std::to_string(days) + " DAY) "
+        "AND DATE(created_at) >= DATE_SUB(CURDATE(), INTERVAL " + std::to_string(days) + " DAY) "
         "GROUP BY h ORDER BY h";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
@@ -891,7 +891,7 @@ inline int64_t total_voice_minutes(Database* db, uint64_t guild_id, int days = 7
         "    AND l.channel_id=j.channel_id AND l.event_type='leave' "
         "    AND l.created_at > j.created_at "
         "  WHERE j.guild_id='" + gid + "' AND j.event_type='join' "
-        "  AND j.created_at >= DATE_SUB(NOW(), INTERVAL " + d + " DAY) "
+        "  AND DATE(j.created_at) >= DATE_SUB(CURDATE(), INTERVAL " + d + " DAY) "
         "  GROUP BY j.id, j.created_at"
         ") paired WHERE dur > 0 AND dur < 86400";
     std::shared_ptr<Connection> conn;
