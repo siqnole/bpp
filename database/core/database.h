@@ -4,6 +4,7 @@
 #include <memory>
 #include <functional>
 #include <map>
+#include <tuple>
 #include <string>
 #include <cstdint>
 #include <unordered_set>
@@ -605,6 +606,27 @@ public:
     int expire_world_events();
     double get_world_event_bonus(const std::string& bonus_type);
     std::vector<WorldEventData> get_world_event_history(int limit = 10);
+
+    // ========================================
+    // LOGGING OPERATIONS
+    // ========================================
+    bool set_log_config(const LogConfig& config);
+    std::optional<LogConfig> get_log_config(uint64_t guild_id, const std::string& log_type);
+    std::vector<LogConfig> get_all_log_configs(uint64_t guild_id);
+    bool delete_log_config(uint64_t guild_id, const std::string& log_type);
+    bool clear_all_log_configs(uint64_t guild_id);
+    bool is_guild_beta_tester(uint64_t guild_id);
+    bool set_guild_beta_tester(uint64_t guild_id, bool is_beta);
+
+    // ========================================
+    // FEATURE FLAGS (runtime kill-switch / beta gating)
+    // ========================================
+    bool set_feature_flag(const std::string& feature, const std::string& mode, const std::string& reason = "");
+    std::vector<std::tuple<std::string, std::string, std::string>> get_all_feature_flags();
+    bool delete_feature_flag(const std::string& feature);
+    bool add_feature_flag_whitelist(const std::string& feature, uint64_t guild_id);
+    bool remove_feature_flag_whitelist(const std::string& feature, uint64_t guild_id);
+    std::vector<std::pair<std::string, uint64_t>> get_all_feature_flag_whitelists();
 
     // Execute raw query (use sparingly)
     bool execute(const std::string& query);

@@ -325,6 +325,17 @@ struct GuildModerationConfig {
     std::string reaction_filter_config;  // JSON
 };
 
+// Guild log configuration (guild_log_configs table)
+struct LogConfig {
+    uint64_t guild_id;
+    std::string log_type;
+    uint64_t channel_id;
+    std::string webhook_url;
+    uint64_t webhook_id;
+    std::string webhook_token;
+    bool enabled;
+};
+
 // ── Infraction System ──────────────────────────────────────────────
 
 // Infraction row (guild_infractions table)

@@ -96,6 +96,7 @@ file(GLOB PERFORMANCE_SOURCES
 # Add executable
 add_executable(${PROJECT_NAME}
     ${CMAKE_SOURCE_DIR}/main.cpp
+    ${CMAKE_SOURCE_DIR}/server_logger.cpp
     ${COMMAND_SOURCES}
     ${DATABASE_SOURCES}
     ${PERFORMANCE_SOURCES}

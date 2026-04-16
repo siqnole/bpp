@@ -39,30 +39,31 @@ static ::std::string sanitize_emoji_for_db(const ::std::string& input) {
     
     for (size_t i = 0; i < input.size(); ++i) {
         unsigned char c = input[i];
-        // Only allow printable ASCII and valid UTF-8 start bytes
+        // Only allow printable ASCII and valid UTF-8 sequences
         if (c >= 32 && c <= 126) {
             result += c; // ASCII printable
         } else if (c >= 0xC2 && c <= 0xF4) {
             // Valid UTF-8 start byte, copy the full sequence
             result += c;
-            // Determine sequence length
-            int len = 1;
-            if (c >= 0xF0) len = 3;      // 4-byte sequence
-            else if (c >= 0xE0) len = 2; // 3-byte sequence
-            else len = 1;                // 2-byte sequence
+            // Determine expected continuation byte count
+            int cont_count;
+            if (c >= 0xF0) cont_count = 3;      // 4-byte sequence
+            else if (c >= 0xE0) cont_count = 2;  // 3-byte sequence
+            else cont_count = 1;                 // 2-byte sequence
             
             // Copy continuation bytes
-            for (int j = 0; j < len && i + 1 < input.size(); ++j) {
+            for (int j = 0; j < cont_count && i + 1 < input.size(); ++j) {
                 ++i;
                 unsigned char cont = input[i];
                 if ((cont & 0xC0) == 0x80) { // Valid continuation byte
                     result += cont;
                 } else {
-                    break; // Invalid sequence, stop copying
+                    --i; // back up, this byte will be re-examined on next iteration
+                    break;
                 }
             }
         }
-        // Skip invalid bytes (control characters, invalid UTF-8)
+        // Skip invalid bytes (control characters, invalid UTF-8 start bytes)
     }
     
     // Limit length to prevent database issues
@@ -73,7 +74,7 @@ static ::std::string sanitize_emoji_for_db(const ::std::string& input) {
     return result;
 }
 
-// Validate emoji string to prevent database crashes.
+// Validate emoji string for database safety.
 // Uses a sequence-aware UTF-8 walk so multi-byte emoji (e.g. 🧮, 🏋️‍♂️) are
 // accepted instead of being falsely rejected by a byte-level range check.
 static bool is_safe_emoji_string(const ::std::string& str) {
@@ -85,22 +86,57 @@ static bool is_safe_emoji_string(const ::std::string& str) {
 
         // Reject C0/C1 control characters (keep printable ASCII and above)
         if (c < 0x20 && c != '\t') return false;
+        // Accept DEL-range and C1 control area (0x7F-0x9F) — some emoji sequences
+        // may contain bytes in this range as continuation bytes of valid UTF-8
 
         int seq_len;
         if      (c < 0x80)                seq_len = 1;   // ASCII
         else if ((c & 0xE0) == 0xC0)      seq_len = 2;   // 2-byte sequence
         else if ((c & 0xF0) == 0xE0)      seq_len = 3;   // 3-byte sequence
         else if ((c & 0xF8) == 0xF0)      seq_len = 4;   // 4-byte sequence (most emoji)
-        else return false;                               // invalid start byte / lone continuation
+        else {
+            // Instead of rejecting, skip this byte (lone continuation byte)
+            ++i;
+            continue;
+        }
 
         // Validate all continuation bytes in this sequence
+        bool valid_seq = true;
         for (int j = 1; j < seq_len; ++j) {
-            if (i + j >= str.size()) return false;         // truncated sequence
-            if ((static_cast<unsigned char>(str[i + j]) & 0xC0) != 0x80) return false;
+            if (i + j >= str.size()) { valid_seq = false; break; }
+            if ((static_cast<unsigned char>(str[i + j]) & 0xC0) != 0x80) { valid_seq = false; break; }
+        }
+        if (!valid_seq) {
+            // Skip the bad start byte rather than rejecting the whole string
+            ++i;
+            continue;
         }
         i += seq_len;
     }
     return true;
+}
+
+// Prepare emoji string for safe DB storage + reaction API usage.
+// Sanitizes the input, validates it, and returns the cleaned string.
+// If the string cannot be made safe, returns empty string.
+static ::std::string prepare_emoji_for_storage(const ::std::string& input) {
+    if (input.empty()) return "";
+    // First sanitize to strip invalid bytes
+    ::std::string sanitized = sanitize_emoji_for_db(input);
+    if (sanitized.empty()) return "";
+    // Check safety of sanitized string
+    if (!is_safe_emoji_string(sanitized)) {
+        // Log for debugging but still return the sanitized version if it's non-empty
+        std::cerr << "[reaction-roles] WARN: emoji string may contain unusual bytes after sanitization, len=" << sanitized.size();
+        // Print hex dump for debugging
+        std::cerr << " hex:";
+        for (unsigned char ch : sanitized) {
+            char buf[4]; snprintf(buf, sizeof(buf), "%02X", ch);
+            std::cerr << " " << buf;
+        }
+        std::cerr << std::endl;
+    }
+    return sanitized;
 }
 
 // normalize string for message_add_reaction (forward declaration; defined below)
@@ -277,7 +313,20 @@ inline void load_persistent_reaction_roles(dpp::cluster& bot) {
                 
                 // Only add reaction if bot hasn't already reacted
                 if (!bot_already_reacted) {
-                    try { bot.message_add_reaction(item.message_id, item.channel_id, item.emoji); } catch (...) {}
+                    try {
+                        if (!item.emoji.empty()) {
+                            bot.message_add_reaction(item.message_id, item.channel_id, item.emoji,
+                                [](const dpp::confirmation_callback_t& cb) {
+                                    if (cb.is_error()) {
+                                        std::cerr << "[reaction-roles] sync: reaction add failed: " << cb.get_error().message << std::endl;
+                                    }
+                                });
+                        }
+                    } catch (const std::exception& ex) {
+                        std::cerr << "[reaction-roles] sync: exception adding reaction: " << ex.what() << std::endl;
+                    } catch (...) {
+                        std::cerr << "[reaction-roles] sync: unknown exception adding reaction" << std::endl;
+                    }
                 }
                 
                 // sync existing user reactions (grants roles to users who already reacted)
@@ -1120,13 +1169,14 @@ inline Command* get_reactionrole_command() {
                     
                     if (rr_db) {
                         try {
-                            if (is_safe_emoji_string(emoji_raw_local)) {
-                                rr_db->add_reaction_role(guild_id, target_message_id, channel_id, emoji_raw_local, emoji_id, role_id);
+                            std::string db_emoji = prepare_emoji_for_storage(emoji_raw_local);
+                            if (!db_emoji.empty()) {
+                                rr_db->add_reaction_role(guild_id, target_message_id, channel_id, db_emoji, emoji_id, role_id);
                             } else {
-                                std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
+                                std::cerr << "[reaction-roles] emoji string empty after sanitization, skipping DB storage" << std::endl;
                             }
                         } catch (const std::exception& ex) {
-                            std::cerr << "DB add error: " << ex.what() << std::endl;
+                            std::cerr << "[reaction-roles] DB add error: " << ex.what() << std::endl;
                         }
                     }
                     
@@ -1134,10 +1184,11 @@ inline Command* get_reactionrole_command() {
                     sync_existing_reactions(bot, target_message_id, channel_id, emoji_raw_local, role_id, guild_id);
 
                     std::string emoji_disp = format_emoji_display(emoji_id, emoji_str);
+                    try {
                     bot.message_add_reaction(target_message_id, channel_id, emoji_raw_local,
                         [&bot, event, emoji_disp, role_id, guild_id, channel_id, target_message_id](const dpp::confirmation_callback_t& cb) {
                             if (cb.is_error()) {
-                                std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
+                                std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
                                 bronx::send_message(bot, event, bronx::error("could not add reaction: " + cb.get_error().message));
                             } else {
                                 std::string desc = emoji_disp + " → <@&" + std::to_string(role_id) + ">\n";
@@ -1145,6 +1196,10 @@ inline Command* get_reactionrole_command() {
                                 bronx::send_message(bot, event, bronx::success("reaction role added\n\n" + desc));
                             }
                         });
+                    } catch (const std::exception& ex) {
+                        std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
+                        bronx::send_message(bot, event, bronx::error("failed to add reaction: " + std::string(ex.what())));
+                    }
                 });
                 return;
             }
@@ -1264,13 +1319,14 @@ inline Command* get_reactionrole_command() {
                                 std::string bracket = "<:" + emoji_str + ":" + std::to_string(emoji_id) + ">";
                                 rr_db->remove_reaction_role(message_id, bracket);
                             }
-                            if (is_safe_emoji_string(norm)) {
-                                rr_db->add_reaction_role(guild_id_cap, message_id, channel_id, norm, emoji_id, role_id);
+                            std::string db_emoji = prepare_emoji_for_storage(norm);
+                            if (!db_emoji.empty()) {
+                                rr_db->add_reaction_role(guild_id_cap, message_id, channel_id, db_emoji, emoji_id, role_id);
                             } else {
-                                std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
+                                std::cerr << "[reaction-roles] emoji string empty after sanitization, skipping DB storage" << std::endl;
                             }
                         } catch (const std::exception& ex) {
-                            std::cerr << "DB error: " << ex.what() << std::endl;
+                            std::cerr << "[reaction-roles] DB error: " << ex.what() << std::endl;
                         }
                     }
                     // Sync existing reactions — grant the role to anyone who already reacted
@@ -1281,15 +1337,20 @@ inline Command* get_reactionrole_command() {
                     bronx::send_message(bot, event, bronx::success("reaction role added\n\n" + desc));
                 };
                 if (!silent) {
+                    try {
                     bot.message_add_reaction(message_id, channel_id, norm,
                         [&bot, event, store](const dpp::confirmation_callback_t& cb) {
                             if (cb.is_error()) {
-                                std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
+                                std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
                                 bronx::send_message(bot, event, bronx::error("could not add reaction: " + cb.get_error().message));
                             } else {
                                 store(true);
                             }
                         });
+                    } catch (const std::exception& ex) {
+                        std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
+                        bronx::send_message(bot, event, bronx::error("failed to add reaction: " + std::string(ex.what())));
+                    }
                 } else {
                     store(false);
                 }
@@ -1397,15 +1458,16 @@ inline Command* get_reactionrole_command() {
                     
                     if (rr_db) {
                         try {
-                            if (is_safe_emoji_string(emoji_raw_local)) {
+                            std::string db_emoji = prepare_emoji_for_storage(emoji_raw_local);
+                            if (!db_emoji.empty()) {
                                 dpp::channel* ch = dpp::find_channel(channel_id);
                                 uint64_t gid = ch ? static_cast<uint64_t>(ch->guild_id) : 0;
-                                rr_db->add_reaction_role(gid, target_message_id, channel_id, emoji_raw_local, emoji_id, role_id);
+                                rr_db->add_reaction_role(gid, target_message_id, channel_id, db_emoji, emoji_id, role_id);
                             } else {
-                                std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
+                                std::cerr << "[reaction-roles] emoji string empty after sanitization, skipping DB storage" << std::endl;
                             }
                         } catch (const std::exception& ex) {
-                            std::cerr << "DB add error: " << ex.what() << std::endl;
+                            std::cerr << "[reaction-roles] DB add error: " << ex.what() << std::endl;
                         }
                     }
                     
@@ -1417,15 +1479,20 @@ inline Command* get_reactionrole_command() {
                     }
 
                     if (!silent_flag) {
+                        try {
                         bot.message_add_reaction(target_message_id, channel_id, emoji_raw_local,
                             [event](const dpp::confirmation_callback_t& cb) {
                                 if (cb.is_error()) {
-                                    std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
+                                    std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
                                     event.reply(dpp::message().add_embed(bronx::error("could not add reaction: " + cb.get_error().message)));
                                 } else {
                                     event.reply(dpp::message().add_embed(bronx::success("reaction role added to recent message")));
                                 }
                             });
+                        } catch (const std::exception& ex) {
+                            std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
+                            event.reply(dpp::message().add_embed(bronx::error("failed to add reaction: " + std::string(ex.what()))));
+                        }
                     } else {
                         event.reply(dpp::message().add_embed(bronx::success("reaction role added to recent message")));
                     }
@@ -1486,13 +1553,14 @@ inline Command* get_reactionrole_command() {
                                     std::string bracket = "<:" + emoji_str + ":" + std::to_string(emoji_id) + ">";
                                     rr_db->remove_reaction_role(message_id, bracket);
                                 }
-                                if (is_safe_emoji_string(norm)) {
-                                    rr_db->add_reaction_role(slash_guild_id, message_id, channel_id, norm, emoji_id, role_id);
+                                std::string db_emoji = prepare_emoji_for_storage(norm);
+                                if (!db_emoji.empty()) {
+                                    rr_db->add_reaction_role(slash_guild_id, message_id, channel_id, db_emoji, emoji_id, role_id);
                                 } else {
-                                    std::cerr << "Emoji string failed safety check, skipping DB storage" << std::endl;
+                                    std::cerr << "[reaction-roles] emoji string empty after sanitization, skipping DB storage" << std::endl;
                                 }
                             } catch (const std::exception& ex) {
-                                std::cerr << "DB error: " << ex.what() << std::endl;
+                                std::cerr << "[reaction-roles] DB error: " << ex.what() << std::endl;
                             }
                         }
                         // Sync existing reactions — grant the role to anyone who already reacted
@@ -1502,15 +1570,20 @@ inline Command* get_reactionrole_command() {
                         event.reply(dpp::message().add_embed(bronx::success("reaction role added\n\n" + vd)));
                     };
                     if (!silent) {
+                        try {
                         bot.message_add_reaction(message_id, channel_id, norm,
                             [event, store](const dpp::confirmation_callback_t& cb) {
                                 if (cb.is_error()) {
-                                    std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
+                                    std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
                                     event.reply(dpp::message().add_embed(bronx::error("could not add reaction: " + cb.get_error().message)));
                                 } else {
                                     store(true);
                                 }
                             });
+                        } catch (const std::exception& ex) {
+                            std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
+                            event.reply(dpp::message().add_embed(bronx::error("failed to add reaction: " + std::string(ex.what()))));
+                        }
                     } else {
                         store(false);
                     }
@@ -1653,11 +1726,12 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
 
             if (rr_db) {
                 try {
-                    if (is_safe_emoji_string(em.emoji_raw)) {
-                        rr_db->add_reaction_role(s.guild_id, s.message_id, s.channel_id, em.emoji_raw, em.emoji_id, em.assigned_role);
+                    std::string db_emoji = prepare_emoji_for_storage(em.emoji_raw);
+                    if (!db_emoji.empty()) {
+                        rr_db->add_reaction_role(s.guild_id, s.message_id, s.channel_id, db_emoji, em.emoji_id, em.assigned_role);
                     }
                 } catch (const std::exception& ex) {
-                    std::cerr << "DB add error (rr check confirm): " << ex.what() << std::endl;
+                    std::cerr << "[reaction-roles] DB add error (rr check confirm): " << ex.what() << std::endl;
                 }
             }
 
@@ -1804,11 +1878,12 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
 
         if (rr_db) {
             try {
-                if (is_safe_emoji_string(pending.emoji_raw)) {
-                    rr_db->add_reaction_role(pending.guild_id, message_id, channel_id, pending.emoji_raw, pending.emoji_id, pending.role_id);
+                std::string db_emoji = prepare_emoji_for_storage(pending.emoji_raw);
+                if (!db_emoji.empty()) {
+                    rr_db->add_reaction_role(pending.guild_id, message_id, channel_id, db_emoji, pending.emoji_id, pending.role_id);
                 }
             } catch (const std::exception& ex) {
-                std::cerr << "DB add error (next message): " << ex.what() << std::endl;
+                std::cerr << "[reaction-roles] DB add error (next message): " << ex.what() << std::endl;
             }
         }
 
@@ -1817,15 +1892,20 @@ inline void register_reactionrole_interactions(dpp::cluster& bot) {
 
         // Add bot reaction
         if (!pending.silent) {
+            try {
             bot.message_add_reaction(message_id, channel_id, pending.emoji_raw,
                 [&bot, event](const dpp::confirmation_callback_t& cb) {
                     if (cb.is_error()) {
-                        std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
+                        std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
                         bronx::send_message(bot, event, bronx::error("could not add reaction: " + cb.get_error().message));
                     } else {
                         bronx::send_message(bot, event, bronx::success("reaction role added to your message"));
                     }
                 });
+            } catch (const std::exception& ex) {
+                std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
+                bronx::send_message(bot, event, bronx::error("failed to add reaction: " + std::string(ex.what())));
+            }
         } else {
             bronx::send_message(bot, event, bronx::success("reaction role added to your message"));
         }

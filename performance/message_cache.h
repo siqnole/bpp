@@ -107,6 +107,16 @@ public:
         return msg;
     }
 
+    // Get a message by ID without removing it
+    std::optional<CachedMessage> get_message(uint64_t message_id) {
+        return cache_.get(message_id);
+    }
+    
+    // Update cache with a modified message
+    void update_message(uint64_t message_id, const CachedMessage& msg) {
+        cache_.set(message_id, msg);
+    }
+
     size_t size() const { return cache_.size(); }
 
 private:

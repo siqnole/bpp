@@ -660,6 +660,30 @@ database/operations/moderation/autopurge_operations.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/autopurge_operations.cpp.s
 .PHONY : database/operations/moderation/autopurge_operations.cpp.s
 
+database/operations/moderation/feature_flag_operations.o: database/operations/moderation/feature_flag_operations.cpp.o
+.PHONY : database/operations/moderation/feature_flag_operations.o
+
+# target to build an object file
+database/operations/moderation/feature_flag_operations.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/feature_flag_operations.cpp.o
+.PHONY : database/operations/moderation/feature_flag_operations.cpp.o
+
+database/operations/moderation/feature_flag_operations.i: database/operations/moderation/feature_flag_operations.cpp.i
+.PHONY : database/operations/moderation/feature_flag_operations.i
+
+# target to preprocess a source file
+database/operations/moderation/feature_flag_operations.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/feature_flag_operations.cpp.i
+.PHONY : database/operations/moderation/feature_flag_operations.cpp.i
+
+database/operations/moderation/feature_flag_operations.s: database/operations/moderation/feature_flag_operations.cpp.s
+.PHONY : database/operations/moderation/feature_flag_operations.s
+
+# target to generate assembly for a file
+database/operations/moderation/feature_flag_operations.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/feature_flag_operations.cpp.s
+.PHONY : database/operations/moderation/feature_flag_operations.cpp.s
+
 database/operations/moderation/infraction_config_operations.o: database/operations/moderation/infraction_config_operations.cpp.o
 .PHONY : database/operations/moderation/infraction_config_operations.o
 
@@ -707,6 +731,30 @@ database/operations/moderation/infraction_operations.s: database/operations/mode
 database/operations/moderation/infraction_operations.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/infraction_operations.cpp.s
 .PHONY : database/operations/moderation/infraction_operations.cpp.s
+
+database/operations/moderation/logging_operations.o: database/operations/moderation/logging_operations.cpp.o
+.PHONY : database/operations/moderation/logging_operations.o
+
+# target to build an object file
+database/operations/moderation/logging_operations.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/logging_operations.cpp.o
+.PHONY : database/operations/moderation/logging_operations.cpp.o
+
+database/operations/moderation/logging_operations.i: database/operations/moderation/logging_operations.cpp.i
+.PHONY : database/operations/moderation/logging_operations.i
+
+# target to preprocess a source file
+database/operations/moderation/logging_operations.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/logging_operations.cpp.i
+.PHONY : database/operations/moderation/logging_operations.cpp.i
+
+database/operations/moderation/logging_operations.s: database/operations/moderation/logging_operations.cpp.s
+.PHONY : database/operations/moderation/logging_operations.s
+
+# target to generate assembly for a file
+database/operations/moderation/logging_operations.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/database/operations/moderation/logging_operations.cpp.s
+.PHONY : database/operations/moderation/logging_operations.cpp.s
 
 database/operations/moderation/permission_operations.o: database/operations/moderation/permission_operations.cpp.o
 .PHONY : database/operations/moderation/permission_operations.o
@@ -948,6 +996,30 @@ performance/cache_manager.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/performance/cache_manager.cpp.s
 .PHONY : performance/cache_manager.cpp.s
 
+server_logger.o: server_logger.cpp.o
+.PHONY : server_logger.o
+
+# target to build an object file
+server_logger.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/server_logger.cpp.o
+.PHONY : server_logger.cpp.o
+
+server_logger.i: server_logger.cpp.i
+.PHONY : server_logger.i
+
+# target to preprocess a source file
+server_logger.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/server_logger.cpp.i
+.PHONY : server_logger.cpp.i
+
+server_logger.s: server_logger.cpp.s
+.PHONY : server_logger.s
+
+# target to generate assembly for a file
+server_logger.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/discord-bot.dir/build.make CMakeFiles/discord-bot.dir/server_logger.cpp.s
+.PHONY : server_logger.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -1023,12 +1095,18 @@ help:
 	@echo "... database/operations/moderation/autopurge_operations.o"
 	@echo "... database/operations/moderation/autopurge_operations.i"
 	@echo "... database/operations/moderation/autopurge_operations.s"
+	@echo "... database/operations/moderation/feature_flag_operations.o"
+	@echo "... database/operations/moderation/feature_flag_operations.i"
+	@echo "... database/operations/moderation/feature_flag_operations.s"
 	@echo "... database/operations/moderation/infraction_config_operations.o"
 	@echo "... database/operations/moderation/infraction_config_operations.i"
 	@echo "... database/operations/moderation/infraction_config_operations.s"
 	@echo "... database/operations/moderation/infraction_operations.o"
 	@echo "... database/operations/moderation/infraction_operations.i"
 	@echo "... database/operations/moderation/infraction_operations.s"
+	@echo "... database/operations/moderation/logging_operations.o"
+	@echo "... database/operations/moderation/logging_operations.i"
+	@echo "... database/operations/moderation/logging_operations.s"
 	@echo "... database/operations/moderation/permission_operations.o"
 	@echo "... database/operations/moderation/permission_operations.i"
 	@echo "... database/operations/moderation/permission_operations.s"
@@ -1059,6 +1137,9 @@ help:
 	@echo "... performance/cache_manager.o"
 	@echo "... performance/cache_manager.i"
 	@echo "... performance/cache_manager.s"
+	@echo "... server_logger.o"
+	@echo "... server_logger.i"
+	@echo "... server_logger.s"
 .PHONY : help
 
 

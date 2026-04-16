@@ -529,6 +529,9 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     economy_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     economy_mode ENUM('global','server') NOT NULL DEFAULT 'global',
 
+    -- Beta Access Flag
+    beta_tester BOOLEAN NOT NULL DEFAULT FALSE,
+
     -- Server economy customization
     starting_wallet BIGINT NOT NULL DEFAULT 1000,
     starting_bank_limit BIGINT NOT NULL DEFAULT 10000,
@@ -707,6 +710,50 @@ CREATE TABLE IF NOT EXISTS guild_moderation_config (
 
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ============================================================================
+-- 2.4.1 LOGGING CONFIG (NEW — Server-specific webhook log categories)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS guild_log_configs (
+    guild_id BIGINT UNSIGNED NOT NULL,
+    log_type VARCHAR(50) NOT NULL, -- 'moderation', 'messages', 'members', 'economy', 'server'
+    channel_id BIGINT UNSIGNED NOT NULL,
+    webhook_url VARCHAR(512) NOT NULL,
+    webhook_id BIGINT UNSIGNED NOT NULL,
+    webhook_token VARCHAR(255) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    PRIMARY KEY (guild_id, log_type),
+    INDEX idx_guild (guild_id),
+    INDEX idx_enabled (enabled)
+) ENGINE=InnoDB;
+
+-- ============================================================================
+-- 2.4.2 FEATURE FLAGS (runtime kill-switch / beta gating system)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS feature_flags (
+    feature_name VARCHAR(100) NOT NULL PRIMARY KEY,
+    mode VARCHAR(20) NOT NULL DEFAULT 'enabled',  -- 'enabled', 'disabled', 'whitelist'
+    reason VARCHAR(512) NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS feature_flag_whitelist (
+    feature_name VARCHAR(100) NOT NULL,
+    guild_id BIGINT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (feature_name, guild_id),
+    INDEX idx_feature (feature_name),
+    INDEX idx_guild (guild_id),
+
+    FOREIGN KEY (feature_name) REFERENCES feature_flags(feature_name) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- ============================================================================

@@ -38,9 +38,12 @@
 #include "commands/leveling/xpblacklist.h"
 #include "commands/patch.h"
 #include "commands/owner.h"
+#include "commands/owner/log_beta.h"
+#include "commands/owner/feature_command.h"
 #include "commands/gambling.h"
 #include "commands/moderation.h"
 #include "commands/moderation_commands.h"
+#include "commands/moderation/logconfig.h"
 #include "commands/fishing/autofish_runner.h"
 #include "commands/mining.h"
 #include "commands/global_boss.h"
@@ -55,6 +58,8 @@
 #include "database/operations/stats/stats_operations.h"
 #include "config_loader.h"
 #include "commands/gambling/russian_roulette.h"
+#include "server_logger.h"
+#include "feature_gate.h"
 #ifdef HAVE_LIBCURL
 #include <curl/curl.h>
 #endif
@@ -361,6 +366,13 @@ int main(int argc, char* argv[]) {
                      false,
                      dpp::cache_policy::cpol_default);
     
+    // Initialize Webhook Logger
+    bronx::logger::ServerLogger::get().init(&bot, &db);
+
+    // Initialize Feature Gate — runtime kill-switch / beta gating system
+    bronx::FeatureGate::get().init(&db);
+
+    
     bot.on_log([&async_stat_writer](const dpp::log_t& event) {
         // Skip TRACE — raw websocket frames are too noisy for normal operation
         if (event.severity == dpp::ll_trace) return;
@@ -583,6 +595,9 @@ int main(int argc, char* argv[]) {
     cmd_handler.register_command(commands::create_guide_command(&db));
     cmd_handler.register_command(commands::gambling::get_russian_roulette_command(&db));
     cmd_handler.register_command(commands::setup::create_setup_command(&db));
+    cmd_handler.register_command(commands::moderation::get_log_command(&db));
+    cmd_handler.register_command(commands::owner::get_log_beta_command(&db));
+    cmd_handler.register_command(commands::get_feature_command(&db));
 
     // Stats commands (visual chart-based server statistics)
     for (auto* cmd : commands::get_stats_commands(&db)) {
@@ -1078,7 +1093,7 @@ int main(int argc, char* argv[]) {
         cmd_handler.handle_message(bot, event);
     });
 
-    bot.on_message_update([&bot, &cmd_handler, &async_stat_writer, verbose_events](const dpp::message_update_t& event) {
+    bot.on_message_update([&bot, &cmd_handler, &async_stat_writer, &message_cache, verbose_events](const dpp::message_update_t& event) {
         // Stats: track message edit (skip bots)
         if (!event.msg.author.is_bot() && event.msg.guild_id != 0) {
             if (verbose_events) {
@@ -1089,6 +1104,22 @@ int main(int argc, char* argv[]) {
             }
             async_stat_writer.enqueue_message_event(
                 event.msg.guild_id, event.msg.author.id, event.msg.channel_id, "edit");
+                
+            // Check cache to log edit
+            auto cached = message_cache.get_message(static_cast<uint64_t>(event.msg.id));
+            if (cached && cached->content != event.msg.content) {
+                dpp::embed log_embed = bronx::create_embed("Before:\n" + cached->content + "\n\nAfter:\n" + event.msg.content)
+                    .set_title("Message Edited")
+                    .set_color(0xFFA500)
+                    .add_field("Author", event.msg.author.format_username() + " (<@" + std::to_string(event.msg.author.id) + ">)", true)
+                    .add_field("Channel", "<#" + std::to_string(event.msg.channel_id) + ">", true);
+                bronx::logger::ServerLogger::get().log_embed(event.msg.guild_id, bronx::logger::LOG_TYPE_MESSAGES, log_embed);
+                
+                // Update cache
+                auto updated = *cached;
+                updated.content = event.msg.content;
+                message_cache.update_message(static_cast<uint64_t>(event.msg.id), updated);
+            }
         }
         // Only re-run command handler on edits, NOT the XP handler
         // (XP should only be awarded on new messages, not edits)
@@ -1132,6 +1163,11 @@ int main(int argc, char* argv[]) {
             }
             async_stat_writer.enqueue_member_event(
                 event.adding_guild.id, event.added.user_id, "join");
+                
+            dpp::embed log_embed = bronx::create_embed("User <@" + std::to_string(event.added.user_id) + "> joined the server.")
+                .set_title("Member Joined")
+                .set_color(0x00FF00);
+            bronx::logger::ServerLogger::get().log_embed(event.adding_guild.id, bronx::logger::LOG_TYPE_MEMBERS, log_embed);
         }
     });
 
@@ -1145,6 +1181,11 @@ int main(int argc, char* argv[]) {
             }
             async_stat_writer.enqueue_member_event(
                 event.removing_guild.id, event.removed.id, "leave");
+                
+            dpp::embed log_embed = bronx::create_embed("User " + event.removed.format_username() + " (<@" + std::to_string(event.removed.id) + ">) left the server.")
+                .set_title("Member Left")
+                .set_color(0xFF0000);
+            bronx::logger::ServerLogger::get().log_embed(event.removing_guild.id, bronx::logger::LOG_TYPE_MEMBERS, log_embed);
         }
     });
 
@@ -1174,6 +1215,21 @@ int main(int argc, char* argv[]) {
                 dm.embeds_summary = cached->embeds_json;
                 dm.deleted_at = std::chrono::system_clock::now();
                 snipe_cache.add_deleted(std::move(dm));
+                
+                dpp::embed log_embed = bronx::create_embed(cached->content)
+                    .set_title("Message Deleted")
+                    .set_color(0xFF0000)
+                    .add_field("Author", cached->author_tag + " (<@" + std::to_string(cached->author_id) + ">)", true)
+                    .add_field("Channel", "<#" + std::to_string(cached->channel_id) + ">", true);
+                if (!cached->attachment_urls.empty()) {
+                    std::string att_str;
+                    for (const auto& url : cached->attachment_urls) {
+                        att_str += url + "\n";
+                    }
+                    if (att_str.size() > 1024) att_str = att_str.substr(0, 1021) + "...";
+                    log_embed.add_field("Attachments", att_str);
+                }
+                bronx::logger::ServerLogger::get().log_embed(event.guild_id, bronx::logger::LOG_TYPE_MESSAGES, log_embed);
             }
         }
     });
