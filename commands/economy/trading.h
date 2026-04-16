@@ -144,7 +144,7 @@ inline uint64_t parse_mention(const std::string& s) {
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC COMMAND BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
-::std::vector<Command*> get_trading_commands(Database* db) {
+inline ::std::vector<Command*> get_trading_commands(Database* db) {
     static ::std::vector<Command*> cmds;
     if (!cmds.empty()) return cmds;
 

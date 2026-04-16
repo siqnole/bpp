@@ -10,7 +10,7 @@ using namespace bronx::db;
 namespace commands {
 
 // Aggregate all daily challenge + streak commands
-std::vector<Command*> get_daily_challenge_commands(Database* db) {
+inline std::vector<Command*> get_daily_challenge_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     if (cmds.empty()) {

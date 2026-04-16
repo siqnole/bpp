@@ -16,7 +16,7 @@ using namespace bronx::db::history_operations;
 
 namespace commands {
 
-::std::vector<Command*> get_money_commands(Database* db) {
+inline ::std::vector<Command*> get_money_commands(Database* db) {
     static ::std::vector<Command*> cmds;
     
     // Daily command

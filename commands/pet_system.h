@@ -9,7 +9,7 @@ using namespace bronx::db;
 namespace commands {
 
 // Aggregate all pet system commands
-std::vector<Command*> get_pet_commands(Database* db) {
+inline std::vector<Command*> get_pet_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     if (cmds.empty()) {

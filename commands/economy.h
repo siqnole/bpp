@@ -27,7 +27,7 @@ using namespace bronx::db;
 namespace commands {
 
 // Aggregate all economy-related commands
-::std::vector<Command*> get_economy_commands(Database* db) {
+inline ::std::vector<Command*> get_economy_commands(Database* db) {
     static ::std::vector<Command*> cmds;
     
     if (cmds.empty()) {

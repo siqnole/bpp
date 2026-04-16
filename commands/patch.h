@@ -27,7 +27,7 @@ static std::string format_patch_timestamp(std::chrono::system_clock::time_point 
     return oss.str();
 }
 
-std::vector<Command*> get_patch_commands(bronx::db::Database* db) {
+inline std::vector<Command*> get_patch_commands(bronx::db::Database* db) {
     static std::vector<Command*> commands;
     
     // /patch - view latest patch (everyone)

@@ -483,7 +483,7 @@ static void handle_autofisher_msg(Database* db,
 // Command registration
 // ──────────────────────────────────────────────────────────────────────────────
 
-::std::vector<Command*> get_autofisher_commands(Database* db) {
+inline ::std::vector<Command*> get_autofisher_commands(Database* db) {
     static ::std::vector<Command*> cmds;
 
     static Command* autofisher = new Command("autofisher", "manage your autofisher", "automation",

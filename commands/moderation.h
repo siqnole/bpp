@@ -18,7 +18,7 @@ namespace commands {
 // Get all quiet moderation commands
 // NOTE: All moderation commands (manual + quiet + automod) are now consolidated in /mod parent
 // This function returns empty since commands are handled in moderation_commands.h
-::std::vector<Command*> get_moderation_commands() {
+inline ::std::vector<Command*> get_moderation_commands() {
     return {};
 }
 

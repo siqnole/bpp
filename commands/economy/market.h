@@ -85,7 +85,7 @@ static std::optional<MarketItem> find_market_item(Database* db, uint64_t guild_i
     return {};
 }
 
-std::vector<Command*> get_market_commands(Database* db) {
+inline std::vector<Command*> get_market_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     // market browse/purchase command

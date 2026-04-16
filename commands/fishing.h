@@ -17,7 +17,7 @@
 namespace commands {
 
 // Main entry point for all fishing commands
-::std::vector<Command*> get_fishing_commands(Database* db) {
+inline ::std::vector<Command*> get_fishing_commands(Database* db) {
     static ::std::vector<Command*> cmds;
     
     // Only initialize once

@@ -11,7 +11,7 @@ using namespace bronx::db;
 
 namespace commands {
 
-std::vector<Command*> get_xpblacklist_commands(Database* db) {
+inline std::vector<Command*> get_xpblacklist_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     // xpblacklist command - manage XP blacklists

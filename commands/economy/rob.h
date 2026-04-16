@@ -123,7 +123,7 @@ static dpp::message build_passive_confirm_msg(bool disabling) {
     return msg;
 }
 
-::std::vector<Command*> get_rob_commands(Database* db) {
+inline ::std::vector<Command*> get_rob_commands(Database* db) {
     static ::std::vector<Command*> cmds;
     
     // Rob command

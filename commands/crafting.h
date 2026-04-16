@@ -10,7 +10,7 @@ using namespace bronx::db;
 
 namespace commands {
 
-std::vector<Command*> get_crafting_commands(Database* db) {
+inline std::vector<Command*> get_crafting_commands(Database* db) {
     static std::vector<Command*> cmds;
     if (cmds.empty()) {
         cmds.push_back(commands::crafting::create_craft_command(db));

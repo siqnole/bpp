@@ -59,24 +59,24 @@ static ::std::map<uint64_t, ::std::pair<::std::vector<PlayerResult>, int>> roule
 static ::std::map<uint64_t, std::chrono::steady_clock::time_point> roulette_last_edit_time;
 static ::std::map<uint64_t, bool> roulette_edit_pending;
 
-::std::string get_number_color_emoji(int num) {
+inline ::std::string get_number_color_emoji(int num) {
     if (num == 0 || num == 37) return "🟢"; // Green (0 and 00)
     if (red_numbers.count(num)) return "🔴";
     return "⚫";
 }
 
-::std::string get_number_display(int num) {
+inline ::std::string get_number_display(int num) {
     if (num == 37) return "00";
     return ::std::to_string(num);
 }
 
-::std::string get_number_color_name(int num) {
+inline ::std::string get_number_color_name(int num) {
     if (num == 0 || num == 37) return "green";
     if (red_numbers.count(num)) return "red";
     return "black";
 }
 
-::std::string get_roulette_display(int result, int offset = 0) {
+inline ::std::string get_roulette_display(int result, int offset = 0) {
     ::std::string display = "";
     
     // Show wheel animation context (5 numbers before and after)
@@ -102,7 +102,7 @@ static ::std::map<uint64_t, bool> roulette_edit_pending;
     return display;
 }
 
-::std::string get_paginated_results(const ::std::vector<PlayerResult>& results, int page, int result_num, const ::std::string& wheel_display) {
+inline ::std::string get_paginated_results(const ::std::vector<PlayerResult>& results, int page, int result_num, const ::std::string& wheel_display) {
     ::std::string description = "";
     
     if (page == 0) {
@@ -155,7 +155,7 @@ static ::std::map<uint64_t, bool> roulette_edit_pending;
     return description;
 }
 
-void update_roulette_bet_message(dpp::cluster& bot, Database* db, uint64_t game_id) {
+inline void update_roulette_bet_message(dpp::cluster& bot, Database* db, uint64_t game_id) {
     auto it = active_roulette_games.find(game_id);
     if (it == active_roulette_games.end()) return;
     
@@ -525,7 +525,7 @@ inline void roulette_spin_worker(dpp::cluster& bot, Database* db, uint64_t game_
     roulette_edit_pending.erase(game_id);
 }
 
-void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {
+inline void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {
     std::cout << DBG_ROUL "handle_roulette_spin game=" << game_id << " user=" << event.command.get_issuing_user().id << "\n";
     auto it = active_roulette_games.find(game_id);
     if (it == active_roulette_games.end() || !it->second.active) {
@@ -573,7 +573,7 @@ void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::button_cli
     }).detach();
 }
 
-void handle_roulette_cancel(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {
+inline void handle_roulette_cancel(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {
     std::cout << DBG_ROUL "handle_roulette_cancel game=" << game_id << " user=" << event.command.get_issuing_user().id << "\n";
     auto it = active_roulette_games.find(game_id);
     if (it == active_roulette_games.end()) {

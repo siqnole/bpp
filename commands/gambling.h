@@ -22,7 +22,7 @@ using namespace bronx::db;
 
 namespace commands {
 
-::std::vector<Command*> get_gambling_commands(Database* db) {
+inline ::std::vector<Command*> get_gambling_commands(Database* db) {
     ::std::vector<Command*> cmds;
     
     // CONSOLIDATED: All gambling games now use the /gamble parent command with subcommands

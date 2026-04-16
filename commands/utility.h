@@ -26,7 +26,7 @@
 namespace commands {
 
 // Main entry point for all utility commands
-::std::vector<Command*> get_utility_commands(CommandHandler* handler, bronx::db::Database* db = nullptr, bronx::snipe::SnipeCache* snipe_cache = nullptr) {
+inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bronx::db::Database* db = nullptr, bronx::snipe::SnipeCache* snipe_cache = nullptr) {
     static ::std::vector<Command*> cmds;
     
     // Only initialize once

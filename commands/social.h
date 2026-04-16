@@ -6,7 +6,7 @@
 namespace commands {
 
 // Aggregate all social/cooperative commands
-std::vector<Command*> get_social_commands(Database* db) {
+inline std::vector<Command*> get_social_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     if (cmds.empty()) {

@@ -10,7 +10,7 @@ using namespace bronx::db;
 
 namespace commands {
 
-std::vector<Command*> get_mastery_commands(Database* db) {
+inline std::vector<Command*> get_mastery_commands(Database* db) {
     static std::vector<Command*> cmds;
     if (cmds.empty()) {
         cmds.push_back(commands::mastery::create_mastery_command(db));

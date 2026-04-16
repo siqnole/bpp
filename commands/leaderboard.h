@@ -8,11 +8,11 @@
 
 namespace commands {
 
-::std::vector<Command*> get_leaderboard_commands(bronx::db::Database* db) {
+inline ::std::vector<Command*> get_leaderboard_commands(bronx::db::Database* db) {
     return leaderboard::create_leaderboard_commands(db);
 }
 
-void register_leaderboard_interactions(dpp::cluster& bot, bronx::db::Database* db) {
+inline void register_leaderboard_interactions(dpp::cluster& bot, bronx::db::Database* db) {
     leaderboard::register_interactions(bot, db);
 }
 

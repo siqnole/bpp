@@ -123,7 +123,7 @@ inline void handle_endgame_button(dpp::cluster& bot, const dpp::button_click_t& 
     }
 }
 
-::std::vector<Command*> get_endgame_commands(Database* db) {
+inline ::std::vector<Command*> get_endgame_commands(Database* db) {
     static ::std::vector<Command*> cmds;
 
     static Command* endgame = new Command("endgame", "end active games in this channel", "moderation",

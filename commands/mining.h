@@ -8,7 +8,7 @@
 namespace commands {
 
 // Main entry point for all mining commands
-std::vector<Command*> get_mining_commands(Database* db) {
+inline std::vector<Command*> get_mining_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     if (cmds.empty()) {

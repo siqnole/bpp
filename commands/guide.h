@@ -79,7 +79,7 @@ inline GuideProgress get_guide_progress(bronx::db::Database* db, uint64_t user_i
 // uses a select menu → page navigation pattern similar to help.
 // ────────────────────────────────────────────────────────────────────────────
 
-Command* create_guide_command(bronx::db::Database* db) {
+inline Command* create_guide_command(bronx::db::Database* db) {
     static Command* guide_cmd = new Command("guide", "in-depth master guide to using the bot", "utility", {"g", "masterguide", "tutorial"}, true,
 
         // ── text command handler ────────────────────────────────────────
@@ -492,7 +492,7 @@ Command* create_guide_command(bronx::db::Database* db) {
 // register interaction handlers (select menu + buttons)
 // ────────────────────────────────────────────────────────────────────────────
 
-void register_guide_interactions(dpp::cluster& bot, bronx::db::Database* db) {
+inline void register_guide_interactions(dpp::cluster& bot, bronx::db::Database* db) {
 
     // ── select menu: pick a section ─────────────────────────────────────
     bot.on_select_click([&bot, db](const dpp::select_click_t& event) {

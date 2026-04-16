@@ -9,7 +9,7 @@ using namespace bronx::db;
 namespace commands {
 
 // Aggregate all skill tree commands
-std::vector<Command*> get_skill_tree_commands(Database* db) {
+inline std::vector<Command*> get_skill_tree_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     if (cmds.empty()) {

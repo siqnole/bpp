@@ -641,7 +641,7 @@ inline void handle_search(dpp::cluster& bot, const dpp::message_create_t& event,
 // ─────────────────────────────────────────────────────────────────────────────
 // PUBLIC COMMAND BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
-::std::vector<Command*> get_bazaar_commands(Database* db) {
+inline ::std::vector<Command*> get_bazaar_commands(Database* db) {
     static ::std::vector<Command*> cmds;
     if (!cmds.empty()) return cmds;
 

@@ -9,7 +9,7 @@
 namespace commands {
 
 // Helper function to generate usage string from command options
-::std::string generate_usage_string(const Command* cmd, const ::std::string& prefix) {
+inline ::std::string generate_usage_string(const Command* cmd, const ::std::string& prefix) {
     // If the command has a hand-written detailed_usage, prefer it
     if (!cmd->detailed_usage.empty()) {
         return cmd->detailed_usage;
@@ -30,7 +30,7 @@ namespace commands {
 
 // Build a rich detail description for an individual command.
 // Used by text help, slash help, and the paginated embed.
-::std::string build_command_detail(const Command* cmd, const ::std::string& category,
+inline ::std::string build_command_detail(const Command* cmd, const ::std::string& category,
                                     const ::std::string& prefix) {
     ::std::string d = "**" + cmd->name + "**\n";
 
@@ -87,7 +87,7 @@ namespace commands {
     return d;
 }
 
-Command* create_help_command(CommandHandler* handler) {
+inline Command* create_help_command(CommandHandler* handler) {
     static Command* help_cmd = new Command("help", "display all available commands", "utility", {"h", "cmds"}, true,
         // Text command handler
         [handler](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
@@ -398,7 +398,7 @@ Command* create_help_command(CommandHandler* handler) {
 }
 
 // Register the select menu handler
-void register_help_interactions(dpp::cluster& bot, CommandHandler* handler) {
+inline void register_help_interactions(dpp::cluster& bot, CommandHandler* handler) {
     bot.on_select_click([handler, &bot](const dpp::select_click_t& event) {
         // Check if this is a help category selection
         if (event.custom_id.find("help_category_") != 0) return;

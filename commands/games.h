@@ -13,7 +13,7 @@ using namespace bronx::db;
 
 namespace commands {
 
-::std::vector<Command*> get_games_commands(Database* db) {
+inline ::std::vector<Command*> get_games_commands(Database* db) {
     ::std::vector<Command*> cmds;
     cmds.push_back(games::get_blacktea_command());
     cmds.push_back(games::get_whitetea_command());

@@ -10,30 +10,30 @@ namespace commands {
 // Tenor API key would go here if you want actual gifs
 // For now, using placeholder URLs
 
-::std::vector<::std::string> hug_gifs = {
+inline ::std::vector<::std::string> hug_gifs = {
     "https://media.tenor.com/LSxiXC_miqEAAAAC/hug.gif",
     "https://media.tenor.com/FuqYFMIENbwAAAAC/anime-hug.gif",
     "https://media.tenor.com/BQmLHP0b1YMAAAAC/hug.gif"
 };
 
-::std::vector<::std::string> kiss_gifs = {
+inline ::std::vector<::std::string> kiss_gifs = {
     "https://media.tenor.com/cBEe1EucFSgAAAAC/kiss-anime.gif",
     "https://media.tenor.com/pW9DERG5g3kAAAAC/anime-kiss.gif"
 };
 
-::std::vector<::std::string> pat_gifs = {
+inline ::std::vector<::std::string> pat_gifs = {
     "https://media.tenor.com/RXJe0FjKJgkAAAAC/head-pat-anime.gif",
     "https://media.tenor.com/Q8hQDvf7830AAAAC/anime-pat.gif"
 };
 
-::std::string random_gif(const ::std::vector<::std::string>& gifs) {
+inline ::std::string random_gif(const ::std::vector<::std::string>& gifs) {
     static ::std::random_device rd;
     static ::std::mt19937 gen(rd());
     ::std::uniform_int_distribution<> dis(0, gifs.size() - 1);
     return gifs[dis(gen)];
 }
 
-::std::vector<Command*> get_fun_commands() {
+inline ::std::vector<Command*> get_fun_commands() {
     static ::std::vector<Command*> cmds;
 
     // Hug command (text only)
