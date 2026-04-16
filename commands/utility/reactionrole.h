@@ -73,17 +73,32 @@ static ::std::string sanitize_emoji_for_db(const ::std::string& input) {
     return result;
 }
 
-// Validate emoji string to prevent database crashes
+// Validate emoji string to prevent database crashes.
+// Uses a sequence-aware UTF-8 walk so multi-byte emoji (e.g. 🧮, 🏋️‍♂️) are
+// accepted instead of being falsely rejected by a byte-level range check.
 static bool is_safe_emoji_string(const ::std::string& str) {
-    // Check for basic safety: no null bytes, reasonable length
     if (str.empty() || str.size() > 255) return false;
     if (str.find('\0') != ::std::string::npos) return false;
-    
-    // Check for valid UTF-8 sequences and printable characters
-    for (size_t i = 0; i < str.size(); ++i) {
-        unsigned char c = str[i];
-        if (c < 32 && c != '\t' && c != '\n' && c != '\r') return false; // Control chars
-        if (c >= 127 && c < 192) return false; // Invalid UTF-8 continuation
+
+    for (size_t i = 0; i < str.size(); ) {
+        unsigned char c = static_cast<unsigned char>(str[i]);
+
+        // Reject C0/C1 control characters (keep printable ASCII and above)
+        if (c < 0x20 && c != '\t') return false;
+
+        int seq_len;
+        if      (c < 0x80)                seq_len = 1;   // ASCII
+        else if ((c & 0xE0) == 0xC0)      seq_len = 2;   // 2-byte sequence
+        else if ((c & 0xF0) == 0xE0)      seq_len = 3;   // 3-byte sequence
+        else if ((c & 0xF8) == 0xF0)      seq_len = 4;   // 4-byte sequence (most emoji)
+        else return false;                               // invalid start byte / lone continuation
+
+        // Validate all continuation bytes in this sequence
+        for (int j = 1; j < seq_len; ++j) {
+            if (i + j >= str.size()) return false;         // truncated sequence
+            if ((static_cast<unsigned char>(str[i + j]) & 0xC0) != 0x80) return false;
+        }
+        i += seq_len;
     }
     return true;
 }
@@ -1227,7 +1242,7 @@ inline Command* get_reactionrole_command() {
 
             // fetch message to ensure it exists
             uint64_t guild_id_cap = static_cast<uint64_t>(event.msg.guild_id);
-            bot.message_get(message_id, channel_id, [&bot, &event, channel_id, message_id, emoji_raw, emoji_id, emoji_str, role_id, silent, guild_id_cap](const dpp::confirmation_callback_t& cb) {
+            bot.message_get(message_id, channel_id, [&bot, event, channel_id, message_id, emoji_raw, emoji_id, emoji_str, role_id, silent, guild_id_cap](const dpp::confirmation_callback_t& cb) {
                 if (cb.is_error()) {
                     bronx::send_message(bot, event, bronx::error("failed to fetch message (unknown channel/message)"));
                     return;
@@ -1235,7 +1250,7 @@ inline Command* get_reactionrole_command() {
 
                 // add reaction to message (best-effort) using normalized string
                 std::string norm = normalize_emoji_for_reaction(emoji_raw);
-                auto store = [&](bool reacted) {
+                auto store = [&bot, event, norm, message_id, channel_id, emoji_id, emoji_str, role_id, guild_id_cap](bool /*reacted*/) {
                     RREntry e;
                     e.role_id = role_id;
                     e.emoji_id = emoji_id;
@@ -1267,7 +1282,7 @@ inline Command* get_reactionrole_command() {
                 };
                 if (!silent) {
                     bot.message_add_reaction(message_id, channel_id, norm,
-                        [&bot,&event,store](const dpp::confirmation_callback_t& cb) {
+                        [&bot, event, store](const dpp::confirmation_callback_t& cb) {
                             if (cb.is_error()) {
                                 std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
                                 bronx::send_message(bot, event, bronx::error("could not add reaction: " + cb.get_error().message));
@@ -1299,7 +1314,7 @@ inline Command* get_reactionrole_command() {
 
         // permission: fetch member
         uint64_t user_id = event.command.get_issuing_user().id;
-        bot.guild_get_member(event.command.guild_id, user_id, [&](const dpp::confirmation_callback_t& memb_cb) {
+        bot.guild_get_member(event.command.guild_id, user_id, [&bot, event](const dpp::confirmation_callback_t& memb_cb) {
             if (memb_cb.is_error()) {
                 event.reply(dpp::message().add_embed(bronx::error("failed to verify permissions")));
                 return;
@@ -1449,7 +1464,7 @@ inline Command* get_reactionrole_command() {
 
             // verify message
             uint64_t slash_guild_id = static_cast<uint64_t>(event.command.guild_id);
-            bot.message_get(message_id, channel_id, [&bot, &event, channel_id, message_id, emoji_raw, emoji_id, emoji_str, role_id, silent, slash_guild_id](const dpp::confirmation_callback_t& cb) {
+            bot.message_get(message_id, channel_id, [&bot, event, channel_id, message_id, emoji_raw, emoji_id, emoji_str, role_id, silent, slash_guild_id](const dpp::confirmation_callback_t& cb) {
                 if (cb.is_error()) {
                     event.reply(dpp::message().add_embed(bronx::error("failed to fetch message (unknown channel/message)")));
                     return;
@@ -1457,7 +1472,7 @@ inline Command* get_reactionrole_command() {
 
                 {
                     std::string norm = normalize_emoji_for_reaction(emoji_raw);
-                    auto store = [&](bool reacted) {
+                    auto store = [&bot, event, norm, message_id, channel_id, emoji_id, emoji_str, role_id, slash_guild_id](bool /*reacted*/) {
                         RREntry e;
                         e.role_id = role_id;
                         e.emoji_id = emoji_id;
@@ -1488,7 +1503,7 @@ inline Command* get_reactionrole_command() {
                     };
                     if (!silent) {
                         bot.message_add_reaction(message_id, channel_id, norm,
-                            [&bot,&event,store](const dpp::confirmation_callback_t& cb) {
+                            [event, store](const dpp::confirmation_callback_t& cb) {
                                 if (cb.is_error()) {
                                     std::cerr << "reaction add failed: " << cb.get_error().message << std::endl;
                                     event.reply(dpp::message().add_embed(bronx::error("could not add reaction: " + cb.get_error().message)));
