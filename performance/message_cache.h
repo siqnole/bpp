@@ -30,6 +30,8 @@ struct CachedMessage {
     std::string author_tag;       // "username#0" or display name
     std::string author_avatar;    // avatar URL
     std::string content;
+    std::vector<std::string> content_revisions;   // Stores all edits, including initial edit
+    uint64_t webhook_log_msg_id = 0;              // Stores the ID of the webhook message for this log
     std::vector<std::string> attachment_urls;
     std::string embeds_json;      // serialized embed data (simplified)
     std::chrono::system_clock::time_point created_at;

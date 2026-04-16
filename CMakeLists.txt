@@ -1,23 +1,41 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.16)
 project(discord-bot)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Maximum build verbosity — show full compiler/linker commands
-set(CMAKE_VERBOSE_MAKEFILE ON)
+# ============================================================================
+# BUILD PERFORMANCE: ccache — caches compiled objects between builds.
+# Install with:  sudo apt install ccache
+# This makes rebuilds of unchanged files near-instant.
+# ============================================================================
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "ccache found — enabling compiler caching (${CCACHE_PROGRAM})")
+else()
+    message(STATUS "ccache NOT found — install with: sudo apt install ccache")
+endif()
+
+# Disable verbose output — printing every compile command wastes I/O time
+set(CMAKE_VERBOSE_MAKEFILE OFF)
 
 # Release-quality optimizations (significant speedup over default -O0)
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+# Use CACHE FORCE so the value actually persists — the old check was silently
+# failing because CMakeCache.txt already had an empty string stored.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    message(STATUS "Build type defaulted to Release")
 endif()
+
 # -g for debug symbols (flamegraph), -fno-omit-frame-pointer for proper stack traces
-# Add command source files
-file(GLOB_RECURSE COMMAND_SOURCES
-    ${CMAKE_SOURCE_DIR}/commands/**/*.cpp
-)
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG -g -fno-omit-frame-pointer")
+
+# Add command source files (matches commands/*.cpp AND commands/**/*.cpp)
+file(GLOB_RECURSE COMMAND_SOURCES
+    ${CMAKE_SOURCE_DIR}/commands/*.cpp
+)
 
 # Find DPP library
 find_package(DPP REQUIRED)
@@ -93,13 +111,44 @@ file(GLOB PERFORMANCE_SOURCES
     ${CMAKE_SOURCE_DIR}/performance/*.cpp
 )
 
+# Add events source files
+file(GLOB EVENTS_SOURCES
+    ${CMAKE_SOURCE_DIR}/events/*.cpp
+)
+
 # Add executable
 add_executable(${PROJECT_NAME}
     ${CMAKE_SOURCE_DIR}/main.cpp
+    ${EVENTS_SOURCES}
     ${CMAKE_SOURCE_DIR}/server_logger.cpp
     ${COMMAND_SOURCES}
     ${DATABASE_SOURCES}
     ${PERFORMANCE_SOURCES}
+)
+
+# ============================================================================
+# BUILD PERFORMANCE: Precompiled Headers (PCH)
+# The DPP mega-header and common STL headers are parsed once and reused across
+# all 38+ translation units.  This alone can cut compile time by 30-50%.
+# Requires CMake >= 3.16.
+# ============================================================================
+target_precompile_headers(${PROJECT_NAME} PRIVATE
+    <dpp/dpp.h>
+    <string>
+    <vector>
+    <map>
+    <unordered_map>
+    <chrono>
+    <mutex>
+    <iostream>
+    <algorithm>
+    <functional>
+    <memory>
+    <optional>
+    <sstream>
+    <atomic>
+    <thread>
+    <cstdint>
 )
 
 # Include directories
@@ -134,4 +183,3 @@ endif()
 message(STATUS "DPP found: ${DPP_LIBRARIES}")
 message(STATUS "MariaDB include: ${MARIADB_INCLUDE_DIRS}")
 message(STATUS "MariaDB library: ${MARIADB_LIBRARIES}")
-

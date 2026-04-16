@@ -329,7 +329,7 @@ void update_roulette_bet_message(dpp::cluster& bot, Database* db, uint64_t game_
 // PERFORMANCE FIX: Animation + result processing extracted to run in a detached thread,
 // avoiding blocking DPP's thread pool for 3.4s with sleep_for calls.
 // Also adds early-exit when interaction token expires (10062) to avoid wasting REST calls.
-void roulette_spin_worker(dpp::cluster& bot, Database* db, uint64_t game_id, int result,
+inline void roulette_spin_worker(dpp::cluster& bot, Database* db, uint64_t game_id, int result,
                            std::string spin_token, uint64_t message_id, uint64_t channel_id,
                            ::std::map<uint64_t, PlayerBets> player_bets) {
     auto token_valid = std::make_shared<std::atomic<bool>>(true);

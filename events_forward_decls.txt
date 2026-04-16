@@ -1,0 +1,48 @@
+namespace commands {
+    void register_help_interactions(dpp::cluster& bot, Database* db);
+    void register_play_interactions(dpp::cluster& bot, Database* db);
+    void register_feature_command_interactions(dpp::cluster& bot, Database* db);
+    void register_moderation_interactions(dpp::cluster& bot, Database* db);
+    void register_automod_handlers(dpp::cluster& bot, Database* db);
+    void start_infraction_expiry_sweep(dpp::cluster& bot, Database* db);
+    void restore_infraction_timers(dpp::cluster& bot, Database* db);
+    void register_gambling_interactions(dpp::cluster& bot, Database* db);
+    void register_games_handlers(dpp::cluster& bot, Database* db);
+    void register_economy_handlers(dpp::cluster& bot, Database* db);
+    void register_achievements_interactions(dpp::cluster& bot, Database* db);
+    void register_mining_interactions(dpp::cluster& bot, Database* db);
+    void register_boss_raid_interactions(dpp::cluster& bot, Database* db);
+    void register_passive_interactions(dpp::cluster& bot, Database* db);
+    void register_social_interactions(dpp::cluster& bot, Database* db);
+    void register_stats_interactions(dpp::cluster& bot, Database* db);
+    void handle_patch_buttons(dpp::cluster& bot, const dpp::button_click_t& event, Database* db);
+    void handle_stats_buttons(dpp::cluster& bot, const dpp::button_click_t& event, Database* db);
+    void handle_passive_button(dpp::cluster& bot, const dpp::button_click_t& event, Database* db);
+    void handle_endgame_button(dpp::cluster& bot, const dpp::button_click_t& event, Database* db);
+    void register_autorole_handler(dpp::cluster& bot);
+
+    namespace global_boss {
+        void register_boss_interactions(dpp::cluster& bot, Database* db);
+    }
+    namespace leveling {
+        void cleanup_xp_cooldown_cache(int seconds);
+        void handle_message_xp(dpp::cluster& bot, const dpp::message_create_t& event, Database* db);
+    }
+    namespace fishing {
+        void set_autofish_bot(dpp::cluster* bot);
+        int64_t run_autofish_for_user(Database* db, uint64_t user_id);
+    }
+    namespace world_events {
+        void try_spawn_random_event(Database* db);
+    }
+    namespace passive {
+        void fluctuate_market_prices(Database* db);
+    }
+    namespace leaderboard {
+        void run_daily_title_awards(Database* db);
+    }
+    namespace setup {
+        void handle_setup_button(dpp::cluster& bot, const dpp::button_click_t& event, Database* db);
+        void send_welcome_message(dpp::cluster& bot, uint64_t guild_id, uint64_t channel_id, uint64_t owner_id);
+    }
+}

@@ -13,7 +13,7 @@ namespace commands {
 namespace fishing {
 
 // Forward declarations for individual fishing handlers
-inline Command* get_fish_command(Database* db);
+Command* get_fish_command(Database* db);
 inline Command* get_finv_command(Database* db);
 inline Command* get_sellfish_command(Database* db);
 inline Command* get_lockfish_command(Database* db);

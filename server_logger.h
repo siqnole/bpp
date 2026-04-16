@@ -25,6 +25,12 @@ public:
     // Send a message via webhook for a specific log type
     void log_to_guild(uint64_t guild_id, const std::string& log_type, const dpp::message& msg);
     
+    // Send a message via webhook and invoke callback with the resulting sent message
+    void log_to_guild(uint64_t guild_id, const std::string& log_type, const dpp::message& msg, std::function<void(const dpp::message&)> callback);
+    
+    // Edit an existing webhook message using the stored webhook token
+    void edit_webhook_message(uint64_t guild_id, const std::string& log_type, uint64_t webhook_msg_id, const dpp::message& msg);
+    
     // Send an embed directly
     void log_embed(uint64_t guild_id, const std::string& log_type, const dpp::embed& embed);
 

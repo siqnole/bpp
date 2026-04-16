@@ -6,7 +6,7 @@
 namespace commands {
 
 // Aggregate all passive income commands
-std::vector<Command*> get_passive_commands(Database* db) {
+inline std::vector<Command*> get_passive_commands(Database* db) {
     static std::vector<Command*> cmds;
     
     if (cmds.empty()) {

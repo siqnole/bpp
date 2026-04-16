@@ -19,7 +19,7 @@ inline Command* get_coinflip_command(Database* db);
 inline Command* get_dice_command(Database* db);
 inline Command* get_frogger_command(Database* db);
 inline Command* get_roulette_command(Database* db);
-inline Command* get_blackjack_command(Database* db);
+Command* get_blackjack_command(Database* db);
 inline Command* get_lottery_command(Database* db);
 inline Command* get_minesweeper_command(Database* db);
 inline Command* get_crash_command(Database* db);

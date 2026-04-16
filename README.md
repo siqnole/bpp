@@ -293,4 +293,19 @@ If the cluster fails to respond, ensure:
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+**Copyright © 2026, BRONXBOT**
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction—*including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software*—and to permit persons to whom the Software is furnished to do so, subject to the following **strict conditions**:
+
+The above copyright notice and this permission notice shall be **included in all copies or substantial portions** of the Software.
+
+### Ethical Use & Anti-Complicity Clause
+Furthermore, the Software **must be used ethically**. It **must not** be used for **surveillance** or for **malicious data collection**. Under no circumstances may the Software be used to comply with, supply, or assist **`ICE`**, **`Israel`**, the **`US Government`**, or **`any foreign government body/agencies`**.
+
+### Transparency
+Additionally, any modifications, alterations, or tampering with the Software differentiating it from its original form **_must be explicitly documented and appended to this document_** as an act of public accountability and transparency, particularly if the Software is being utilized commercially or hosted as a public bot.
+
+---
+
+> **DISCLAIMER:**  
+> *THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.*

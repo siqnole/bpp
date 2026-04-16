@@ -27,6 +27,23 @@ namespace commands {
         // Savings: 8-9 slash commands
         cmds.push_back(::commands::fishing::create_fish_parent_command(db));
         
+        // --- Re-inject text-only aliases for fishing commands (fish, finv, sellfish, lockfish, finfo, equip, suggestfish, crew) ---
+        auto actions = ::commands::fishing::get_fishing_actions(db);
+        for (const auto& action : actions) {
+            Command* text_cmd = action.getter(db);
+            if (text_cmd) {
+                text_cmd->is_slash_command = false;
+                
+                // Add old aliases specifically for fish (cast) to support "fish", "fsh"
+                if (action.name == "cast") {
+                    text_cmd->aliases.push_back("fish");
+                    text_cmd->aliases.push_back("fsh");
+                }
+                
+                cmds.push_back(text_cmd);
+            }
+        }
+        
         // KEPT SEPARATE: Fishdex commands (specialized fish encyclopedia functionality)
         // Can be consolidated to /fishdex parent later if needed
         auto fishdex_cmds = ::commands::fishing::get_fishdex_commands(db);
