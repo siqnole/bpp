@@ -617,6 +617,8 @@ public:
     bool clear_all_log_configs(uint64_t guild_id);
     bool is_guild_beta_tester(uint64_t guild_id);
     bool set_guild_beta_tester(uint64_t guild_id, bool is_beta);
+    bool is_public_stats_enabled(uint64_t guild_id);
+    bool set_public_stats_enabled(uint64_t guild_id, bool enabled);
 
     // ========================================
     // FEATURE FLAGS (runtime kill-switch / beta gating)

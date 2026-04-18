@@ -801,6 +801,7 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     blocked_commands JSON NULL, -- Array of command names
     logging_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     logging_channel BIGINT UNSIGNED NULL,
+    public_stats BOOLEAN NOT NULL DEFAULT FALSE,
     
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

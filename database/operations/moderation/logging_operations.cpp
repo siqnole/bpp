@@ -380,6 +380,82 @@ bool Database::set_guild_beta_tester(uint64_t guild_id, bool is_beta) {
     return success;
 }
 
+bool Database::is_public_stats_enabled(uint64_t guild_id) {
+    auto conn = pool_->acquire();
+    const char* query = "SELECT public_stats FROM guild_settings WHERE guild_id = ?";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+
+    MYSQL_BIND param_bind[1];
+    memset(param_bind, 0, sizeof(param_bind));
+    param_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    param_bind[0].buffer = (char*)&guild_id;
+    param_bind[0].is_unsigned = 1;
+
+    if (mysql_stmt_bind_param(stmt, param_bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+
+    char public_stats = 0;
+    MYSQL_BIND result_bind[1];
+    memset(result_bind, 0, sizeof(result_bind));
+    result_bind[0].buffer_type = MYSQL_TYPE_TINY;
+    result_bind[0].buffer = &public_stats;
+
+    mysql_stmt_bind_result(stmt, result_bind);
+    mysql_stmt_store_result(stmt);
+
+    bool is_enabled = false;
+    if (mysql_stmt_fetch(stmt) == 0) {
+        is_enabled = public_stats != 0;
+    }
+
+    mysql_stmt_free_result(stmt);
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return is_enabled;
+}
+
+bool Database::set_public_stats_enabled(uint64_t guild_id, bool enabled) {
+    auto conn = pool_->acquire();
+    const char* query = "INSERT INTO guild_settings (guild_id, public_stats) VALUES (?, ?) "
+                        "ON DUPLICATE KEY UPDATE public_stats = VALUES(public_stats)";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+
+    MYSQL_BIND bind[2];
+    memset(bind, 0, sizeof(bind));
+
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&guild_id;
+    bind[0].is_unsigned = 1;
+
+    char stats_enabled = enabled ? 1 : 0;
+    bind[1].buffer_type = MYSQL_TYPE_TINY;
+    bind[1].buffer = &stats_enabled;
+
+    bool success = true;
+    if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        success = false;
+    }
+
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return success;
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Operations Wrappers
 // ────────────────────────────────────────────────────────────────────────
@@ -419,6 +495,16 @@ namespace logging_operations {
     bool set_guild_beta_tester(Database* db, uint64_t guild_id, bool is_beta) {
         if (!db) return false;
         return db->set_guild_beta_tester(guild_id, is_beta);
+    }
+
+    bool is_public_stats_enabled(Database* db, uint64_t guild_id) {
+        if (!db) return false;
+        return db->is_public_stats_enabled(guild_id);
+    }
+
+    bool set_public_stats_enabled(Database* db, uint64_t guild_id, bool enabled) {
+        if (!db) return false;
+        return db->set_public_stats_enabled(guild_id, enabled);
     }
 
 } // namespace logging_operations

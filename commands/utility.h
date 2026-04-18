@@ -17,6 +17,7 @@
 #include "utility/role.h"
 #include "utility/giveaways.h"
 #include "utility/privacy.h"
+#include "utility/settings.h"
 #include "utility/snipe.h"
 #ifdef HAVE_LIBCURL
 #include "utility/steal.h"
@@ -49,6 +50,7 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
         cmds.push_back(utility::get_commands_status_command(handler, db));
         if (db) {
             cmds.push_back(utility::get_suggestion_command(db));
+            cmds.push_back(utility::get_settings_command(db));
         }
         cmds.push_back(utility::get_bugreport_command());
         cmds.push_back(utility::get_autorole_command());

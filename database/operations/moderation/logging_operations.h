@@ -30,6 +30,8 @@ namespace logging_operations {
     // Beta Testing Access
     bool is_guild_beta_tester(Database* db, uint64_t guild_id);
     bool set_guild_beta_tester(Database* db, uint64_t guild_id, bool is_beta);
+    bool is_public_stats_enabled(Database* db, uint64_t guild_id);
+    bool set_public_stats_enabled(Database* db, uint64_t guild_id, bool enabled);
 }
 
 } // namespace db
