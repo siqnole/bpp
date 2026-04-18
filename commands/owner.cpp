@@ -41,7 +41,7 @@ time_t next_rotation_time() {
 } // anonymous namespace
 
 // ─── OStats paginator ───
-static constexpr int OSTATS_TOTAL_PAGES = 7;
+static constexpr int OSTATS_TOTAL_PAGES = 8;
 
 struct OStatsState {
     int current_page = 0; // 0-based, 0..OSTATS_TOTAL_PAGES-1
@@ -136,6 +136,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         "Fishing & Inventory",  // 4
         "Leveling & Community", // 5
         "System & Process",     // 6
+        "Render Previews",      // 7
     };
 
     std::string desc;
@@ -543,6 +544,36 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
                 chart_image = ch::render_horizontal_bar_chart("db table sizes (rows)", table_bars, 600, 0);
             }
         }
+    } else if (page == 7) {
+        // ── Page 8: Render Previews ──
+        desc += "Active ephemeral preview environments from Render.\n\n";
+
+        auto previews = sql_query(db, "SELECT branch, commit_sha, preview_url, status, created_at FROM site_previews WHERE status = 'active' ORDER BY created_at DESC LIMIT 10");
+        
+        if (previews.empty()) {
+            desc += "No active previews found.";
+        } else {
+            for (const auto& p : previews) {
+                // p.cols order: branch (0), commit_sha (1), preview_url (2), status (3), created_at (4)
+                std::string branch = p.cols[0];
+                std::string sha = p.cols[1].substr(0, 7);
+                std::string url = p.cols[2];
+                std::string created = p.cols[4];
+
+                desc += "• **" + branch + "** (`" + sha + "`)\n";
+                desc += "  [view site](" + url + ") • " + created + "\n\n";
+            }
+            if (previews.size() >= 10) {
+                desc += "*Showing latest 10 active previews.*";
+            }
+        }
+
+        // Display totals
+        int64_t total_active = sql_count(db, "SELECT COUNT(*) FROM site_previews WHERE status = 'active'");
+        int64_t total_historical = sql_count(db, "SELECT COUNT(*) FROM site_previews");
+        desc += "\n\n**summary**\n";
+        desc += "• active: " + std::to_string(total_active) + "\n";
+        desc += "• total historical: " + std::to_string(total_historical) + "\n";
     }
 
     // Truncate if too long
