@@ -2823,7 +2823,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
     cmds.push_back(toggle_cmd);
 
     // show current module/command permission settings for this guild
-    static Command* settings_cmd = new Command("settings", "show all module and command permission settings for this guild", "utility", {}, true,
+    static Command* permissions_cmd = new Command("permissions", "show all module and command permission settings for this guild", "utility", {}, true,
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& /*args*/) {
             bool allowed = is_owner(event.msg.author.id);
             if (!allowed) {
@@ -3024,7 +3024,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
             event.reply(dpp::ir_channel_message_with_source,
                 dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
         });
-    cmds.push_back(settings_cmd);
+    cmds.push_back(permissions_cmd);
 
     // Purge all data for a user (wipe from every table, cascading from users row)
     static Command purgeuser_cmd("purgeuser", "completely wipe a user's data from the database (owner only)", "owner", {"wipeuser", "clearuser", "resetuser"}, false,

@@ -198,175 +198,276 @@ inline ::std::vector<float> decode_audio(const ::std::string& bytes, double& dur
     return samples;
 }
 
+inline void process_ocr_request(dpp::cluster& bot, dpp::attachment attachment, std::function<void(const dpp::message&)> responder) {
+    if (attachment.size > 8 * 1024 * 1024) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Image is too large (max 8MB)."));
+        return;
+    }
+
+    ::std::string mime = attachment.content_type;
+    if (mime != "image/png" && mime != "image/jpeg" && mime != "image/webp") {
+        responder(dpp::message(bronx::EMOJI_DENY + " Unsupported file type. Please use PNG, JPEG, or WebP."));
+        return;
+    }
+
+    auto response = http_get_sync(attachment.url);
+    if (response.status != 200) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Failed to download image."));
+        return;
+    }
+
+    auto& manager = bronx::get_media_manager();
+    if (!manager.ocr_api) {
+        responder(dpp::message(bronx::EMOJI_DENY + " OCR service is not initialized."));
+        return;
+    }
+
+    Pix* pix = pixReadMem((const unsigned char*)response.body.data(), response.body.size());
+    if (!pix) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Failed to process image memory."));
+        return;
+    }
+
+    manager.ocr_api->SetImage(pix);
+    char* outText = manager.ocr_api->GetUTF8Text();
+    ::std::string text(outText);
+    delete[] outText;
+    pixDestroy(&pix);
+
+    text.erase(::std::remove(text.begin(), text.end(), '\0'), text.end());
+    text.erase(0, text.find_first_not_of(" \n\r\t"));
+    text.erase(text.find_last_not_of(" \n\r\t") + 1);
+
+    if (text.empty()) {
+        responder(dpp::message(bronx::EMOJI_DENY + " No text detected."));
+        return;
+    }
+
+    ::std::vector<::std::string> pages;
+    for (size_t i = 0; i < text.size(); i += 1900) { 
+        pages.push_back(text.substr(i, 1900));
+    }
+
+    for (size_t i = 0; i < pages.size(); ++i) {
+        auto embed = bronx::create_embed("```\n" + pages[i] + "\n```")
+            .set_title("OCR Result")
+            .set_footer(dpp::embed_footer().set_text("Page " + ::std::to_string(i + 1) + "/" + ::std::to_string(pages.size())));
+        
+        responder(dpp::message().add_embed(embed));
+    }
+}
+
+inline void process_transcribe_request(dpp::cluster& bot, dpp::attachment attachment, ::std::string language, std::function<void(const dpp::message&)> responder) {
+    if (attachment.size > 25 * 1024 * 1024) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Audio file is too large (max 25MB)."));
+        return;
+    }
+
+    ::std::string mime = attachment.content_type;
+    if (mime != "audio/ogg" && mime != "audio/mpeg" && mime != "audio/wav" && mime != "audio/flac" && mime != "application/ogg") {
+        if (attachment.filename.find(".ogg") == ::std::string::npos) {
+            responder(dpp::message(bronx::EMOJI_DENY + " Unsupported file type. Please use OGG, MP3, WAV, or FLAC."));
+            return;
+        }
+    }
+
+    auto response = http_get_sync(attachment.url);
+    if (response.status != 200) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Failed to download audio."));
+        return;
+    }
+
+    double duration = 0.0;
+    ::std::vector<float> pcm = decode_audio(response.body, duration);
+
+    if (pcm.empty()) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Failed to decode audio or file is empty."));
+        return;
+    }
+
+    auto& manager = bronx::get_media_manager();
+    if (!manager.whisper_ctx) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Transcription service is not initialized."));
+        return;
+    }
+
+    whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    params.language = language.c_str();
+    params.translate = false;
+    params.no_context = true;
+    params.print_progress = false;
+    params.print_realtime = false;
+    params.print_timestamps = false;
+
+    if (whisper_full(manager.whisper_ctx, params, pcm.data(), pcm.size()) != 0) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Transcription failed."));
+        return;
+    }
+
+    ::std::string transcript;
+    int n_segments = whisper_full_n_segments(manager.whisper_ctx);
+    for (int i = 0; i < n_segments; ++i) {
+        transcript += whisper_full_get_segment_text(manager.whisper_ctx, i);
+    }
+
+    if (transcript.empty()) {
+        responder(dpp::message(bronx::EMOJI_DENY + " No speech detected in audio."));
+        return;
+    }
+
+    const char* detected_lang = whisper_lang_str(whisper_full_lang_id(manager.whisper_ctx));
+    auto embed = bronx::create_embed("```\n" + transcript + "\n```")
+        .set_title("Audio Transcription")
+        .add_field("Detected Language", detected_lang ? detected_lang : "Unknown", true)
+        .add_field("Duration", ::std::to_string(duration) + "s", true);
+
+    responder(dpp::message().add_embed(embed));
+}
+
 inline void handle_ocr(dpp::cluster& bot, const dpp::slashcommand_t& event) {
     event.thinking(true);
-
     ::std::thread([&bot, event]() {
-        auto attachment_id = event.get_parameter("attachment");
-        auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id));
-
-        if (attachment.id == 0) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Attachment not found."));
+        auto attachment_id_param = event.get_parameter("attachment");
+        if (!::std::holds_alternative<dpp::snowflake>(attachment_id_param)) {
+            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Attachment not provided."));
             return;
         }
-
-        if (attachment.size > 8 * 1024 * 1024) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Image is too large (max 8MB).").set_flags(dpp::m_ephemeral));
-            return;
-        }
-
-        ::std::string mime = attachment.content_type;
-        if (mime != "image/png" && mime != "image/jpeg" && mime != "image/webp") {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Unsupported file type. Please use PNG, JPEG, or WebP.").set_flags(dpp::m_ephemeral));
-            return;
-        }
-
-        auto response = http_get_sync(attachment.url);
+        auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id_param));
         
-        if (response.status != 200) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Failed to download image."));
-            return;
-        }
-
-        auto& manager = bronx::get_media_manager();
-        if (!manager.ocr_api) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " OCR service is not initialized."));
-            return;
-        }
-
-        Pix* pix = pixReadMem((const unsigned char*)response.body.data(), response.body.size());
-        if (!pix) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Failed to process image memory."));
-            return;
-        }
-
-        manager.ocr_api->SetImage(pix);
-        char* outText = manager.ocr_api->GetUTF8Text();
-        ::std::string text(outText);
-        delete[] outText;
-        pixDestroy(&pix);
-
-        // Trim whitespace and null bytes
-        text.erase(::std::remove(text.begin(), text.end(), '\0'), text.end());
-        text.erase(0, text.find_first_not_of(" \n\r\t"));
-        text.erase(text.find_last_not_of(" \n\r\t") + 1);
-
-        if (text.empty()) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " No text detected.").set_flags(dpp::m_ephemeral));
-            return;
-        }
-
-        ::std::vector<::std::string> pages;
-        for (size_t i = 0; i < text.size(); i += 1900) { 
-            pages.push_back(text.substr(i, 1900));
-        }
-
-        for (size_t i = 0; i < pages.size(); ++i) {
-            auto embed = bronx::create_embed("```\n" + pages[i] + "\n```")
-                .set_title("OCR Result")
-                .set_footer(dpp::embed_footer().set_text("Page " + ::std::to_string(i + 1) + "/" + ::std::to_string(pages.size())));
-            
-            if (i == 0) {
-                event.edit_original_response(dpp::message().add_embed(embed));
+        bool sent_first = false;
+        process_ocr_request(bot, attachment, [&event, &sent_first](const dpp::message& m) {
+            if (!sent_first) {
+                event.edit_original_response(m);
+                sent_first = true;
             } else {
-                bot.message_create(dpp::message(event.command.channel_id, "").add_embed(embed));
+                dpp::message follow_up = m;
+                follow_up.set_channel_id(event.command.channel_id);
+                event.from()->creator->message_create(follow_up);
             }
-        }
+        });
     }).detach();
+}
+
+inline void handle_ocr_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+    dpp::message msg = event.msg;
+    
+    // Check current message first
+    if (!msg.attachments.empty()) {
+        ::std::thread([&bot, event, msg]() {
+            bool sent_first = false;
+            process_ocr_request(bot, msg.attachments[0], [&bot, &event, &sent_first](const dpp::message& m) {
+                dpp::message reply = m;
+                reply.set_channel_id(event.msg.channel_id);
+                if (!sent_first) {
+                    reply.set_reference(event.msg.id);
+                    sent_first = true;
+                }
+                bot.message_create(reply);
+            });
+        }).detach();
+        return;
+    }
+
+    // Check message reference (reply)
+    if (msg.message_reference.message_id != 0) {
+        bot.message_get(msg.message_reference.message_id, msg.channel_id, [&bot, event](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
+                return;
+            }
+            dpp::message ref_msg = ::std::get<dpp::message>(cb.value);
+            if (ref_msg.attachments.empty()) {
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Replied message has no attachments.").set_reference(event.msg.id));
+                return;
+            }
+            
+            ::std::thread([&bot, event, ref_msg]() {
+                bool sent_first = false;
+                process_ocr_request(bot, ref_msg.attachments[0], [&bot, &event, &sent_first](const dpp::message& m) {
+                    dpp::message reply = m;
+                    reply.set_channel_id(event.msg.channel_id);
+                    if (!sent_first) {
+                        reply.set_reference(event.msg.id);
+                        sent_first = true;
+                    }
+                    bot.message_create(reply);
+                });
+            }).detach();
+        });
+        return;
+    }
+
+    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No attachment found. Please attach an image or reply to one.").set_reference(event.msg.id));
 }
 
 inline void handle_transcribe(dpp::cluster& bot, const dpp::slashcommand_t& event) {
     event.thinking(true);
-
     ::std::thread([&bot, event]() {
-        auto attachment_id = event.get_parameter("attachment");
+        auto attachment_id_param = event.get_parameter("attachment");
+        if (!::std::holds_alternative<dpp::snowflake>(attachment_id_param)) {
+            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Attachment not provided."));
+            return;
+        }
+        auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id_param));
+        
         auto lang_param = event.get_parameter("language");
         auto language = ::std::holds_alternative<::std::string>(lang_param) ? ::std::get<::std::string>(lang_param) : "auto";
-        auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id));
 
-        if (attachment.id == 0) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Attachment not found."));
-            return;
-        }
-
-        if (attachment.size > 25 * 1024 * 1024) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Audio file is too large (max 25MB).").set_flags(dpp::m_ephemeral));
-            return;
-        }
-
-        ::std::string mime = attachment.content_type;
-        if (mime != "audio/ogg" && mime != "audio/mpeg" && mime != "audio/wav" && mime != "audio/flac" && mime != "application/ogg") {
-            if (attachment.filename.find(".ogg") == ::std::string::npos) {
-                event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Unsupported file type. Please use OGG, MP3, WAV, or FLAC.").set_flags(dpp::m_ephemeral));
-                return;
-            }
-        }
-
-        auto response = http_get_sync(attachment.url);
-        if (response.status != 200) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Failed to download audio."));
-            return;
-        }
-
-        double duration = 0.0;
-        ::std::vector<float> pcm = decode_audio(response.body, duration);
-
-        if (pcm.empty()) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Failed to decode audio or file is empty."));
-            return;
-        }
-
-        auto& manager = bronx::get_media_manager();
-        if (!manager.whisper_ctx) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Transcription service is not initialized."));
-            return;
-        }
-
-        whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-        params.language = language.c_str();
-        params.translate = false;
-        params.no_context = true;
-        params.print_progress = false;
-        params.print_realtime = false;
-        params.print_timestamps = false;
-
-        if (whisper_full(manager.whisper_ctx, params, pcm.data(), pcm.size()) != 0) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Transcription failed."));
-            return;
-        }
-
-        ::std::string transcript;
-        int n_segments = whisper_full_n_segments(manager.whisper_ctx);
-        for (int i = 0; i < n_segments; ++i) {
-            transcript += whisper_full_get_segment_text(manager.whisper_ctx, i);
-        }
-
-        if (transcript.empty()) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " No speech detected in audio.").set_flags(dpp::m_ephemeral));
-            return;
-        }
-
-        const char* detected_lang = whisper_lang_str(whisper_full_lang_id(manager.whisper_ctx));
-        
-        auto embed = bronx::create_embed("```\n" + transcript + "\n```")
-            .set_title("Audio Transcription")
-            .add_field("Detected Language", detected_lang ? detected_lang : "Unknown", true)
-            .add_field("Duration", ::std::to_string(duration) + "s", true);
-
-        event.edit_original_response(dpp::message().add_embed(embed));
+        process_transcribe_request(bot, attachment, language, [&event](const dpp::message& m) {
+            event.edit_original_response(m);
+        });
     }).detach();
 }
 
+inline void handle_transcribe_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+    dpp::message msg = event.msg;
+    ::std::string language = (args.size() > 0) ? args[0] : "auto";
+    
+    auto process_msg = [&bot, event, language](const dpp::message& target_msg) {
+        if (target_msg.attachments.empty()) {
+             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No audio attachment found.").set_reference(event.msg.id));
+             return;
+        }
+        ::std::thread([&bot, event, target_msg, language]() {
+            process_transcribe_request(bot, target_msg.attachments[0], language, [&bot, &event](const dpp::message& m) {
+                dpp::message reply = m;
+                reply.set_channel_id(event.msg.channel_id).set_reference(event.msg.id);
+                bot.message_create(reply);
+            });
+        }).detach();
+    };
+
+    if (!msg.attachments.empty()) {
+        process_msg(msg);
+        return;
+    }
+
+    if (msg.message_reference.message_id != 0) {
+        bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
+                return;
+            }
+            process_msg(::std::get<dpp::message>(cb.value));
+        });
+        return;
+    }
+
+    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No audio found. Please attach a file or reply to one.").set_reference(event.msg.id));
+}
+
 inline Command* get_ocr_command() {
-    static Command ocr("ocr", "Extract text from an image attachment", "Utility", {}, true, nullptr, handle_ocr, {
-        dpp::command_option(dpp::co_attachment, "attachment", "The image to extract text from", true)
+    static Command ocr("ocr", "Extract text from an image attachment", "Utility", {}, true, 
+        handle_ocr_text, handle_ocr, {
+        dpp::command_option(dpp::co_attachment, "attachment", "The image to extract text from", false)
     });
     return &ocr;
 }
 
 inline Command* get_transcribe_command() {
-    static Command transcribe("transcribe", "Transcribe audio to text", "Utility", {}, true, nullptr, handle_transcribe, {
-        dpp::command_option(dpp::co_attachment, "attachment", "The audio to transcribe", true),
+    static Command transcribe("transcribe", "Transcribe audio to text", "Utility", {"ts"}, true, 
+        handle_transcribe_text, handle_transcribe, {
+        dpp::command_option(dpp::co_attachment, "attachment", "The audio to transcribe", false),
         dpp::command_option(dpp::co_string, "language", "ISO-639-1 language code (default: auto)", false)
     });
     return &transcribe;
