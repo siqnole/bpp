@@ -197,7 +197,7 @@ int main(int argc, char* argv[]) {
         BOT_TOKEN = std::string(env_token);
         std::cout << clr::GREEN << "✔ " << clr::RESET << "Loaded BOT_TOKEN from environment variable.\n";
     } else {
-        BOT_TOKEN = "YOUR_TOKEN_HERE";
+        BOT_TOKEN = "";
         std::cout << clr::YELLOW << "⚠ " << clr::RESET << "Using hardcoded BOT_TOKEN.\n";
     }
     const std::string PREFIX = "b.";
