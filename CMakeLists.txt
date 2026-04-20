@@ -95,6 +95,37 @@ else()
     message(FATAL_ERROR "OpenSSL not found! Install: sudo apt install libssl-dev")
 endif()
 
+# Tesseract OCR and Leptonica
+pkg_check_modules(TESSERACT QUIET tesseract)
+pkg_check_modules(LEPTONICA QUIET lept)
+if(NOT TESSERACT_FOUND OR NOT LEPTONICA_FOUND)
+    # Fallback to manual find if pkg-config fails
+    find_path(TESSERACT_INCLUDE_DIRS tesseract/baseapi.h)
+    find_library(TESSERACT_LIBRARIES NAMES tesseract)
+    find_path(LEPTONICA_INCLUDE_DIRS leptonica/allheaders.h)
+    find_library(LEPTONICA_LIBRARIES NAMES lept)
+endif()
+
+# FFmpeg for audio decoding
+pkg_check_modules(AVCODEC REQUIRED libavcodec)
+pkg_check_modules(AVFORMAT REQUIRED libavformat)
+pkg_check_modules(AVUTIL REQUIRED libavutil)
+pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
+
+# whisper.cpp (Using local build from third_party/whisper.cpp)
+set(WHISPER_INCLUDE_DIRS 
+    "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/include"
+    "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/ggml/include"
+)
+set(WHISPER_LIBS "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/src/libwhisper.so")
+set(GGML_LIBS "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/ggml/src/libggml.so")
+set(GGML_CPU_LIBS "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/ggml/src/libggml-cpu.so")
+set(WHISPER_LIBRARIES ${WHISPER_LIBS} ${GGML_LIBS} ${GGML_CPU_LIBS})
+
+# Add RPATH so the bot finds these shared libraries at runtime
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/src;${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/ggml/src")
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+
 if(NOT MARIADB_LIBRARIES)
     message(FATAL_ERROR "MariaDB client library not found! Install: sudo apt install libmariadb-dev")
 endif()
@@ -161,6 +192,13 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${SQLITE3_INCLUDE_DIRS}
     ${CAIRO_INCLUDE_DIRS}
     ${OPENSSL_INCLUDE_DIR}
+    ${TESSERACT_INCLUDE_DIRS}
+    ${LEPTONICA_INCLUDE_DIRS}
+    ${AVCODEC_INCLUDE_DIRS}
+    ${AVFORMAT_INCLUDE_DIRS}
+    ${AVUTIL_INCLUDE_DIRS}
+    ${SWRESAMPLE_INCLUDE_DIRS}
+    ${WHISPER_INCLUDE_DIRS}
 )
 
 # Link libraries
@@ -170,6 +208,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${SQLITE3_LIBRARIES}
     ${CAIRO_LIBRARIES}
     OpenSSL::Crypto
+    ${TESSERACT_LIBRARIES}
+    ${LEPTONICA_LIBRARIES}
+    ${AVCODEC_LIBRARIES}
+    ${AVFORMAT_LIBRARIES}
+    ${AVUTIL_LIBRARIES}
+    ${SWRESAMPLE_LIBRARIES}
+    ${WHISPER_LIBRARIES}
 )
 
 # If libcurl was found, wire it up and enable the steal command at compile-time

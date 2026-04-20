@@ -21,6 +21,7 @@
 #include "utility/snipe.h"
 #ifdef HAVE_LIBCURL
 #include "utility/steal.h"
+#include "utility/media.h"
 #endif
 #include <vector>
 
@@ -57,6 +58,9 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
         cmds.push_back(utility::get_role_command());
 #ifdef HAVE_LIBCURL
         cmds.push_back(utility::get_steal_command());           // OPTIMIZATION Note: Text-only (slash removed)
+        // Media commands
+        cmds.push_back(utility::get_ocr_command());
+        cmds.push_back(utility::get_transcribe_command());
 #endif
         // Privacy command (requires db)
         if (db) {

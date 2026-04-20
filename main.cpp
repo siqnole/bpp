@@ -54,6 +54,7 @@
 #include "commands/world_events.h"
 #include "commands/server_economy.h"
 #include "commands/stats_cmd.h"
+#include "media_manager.h"
 #include "database/core/database.h"
 #include "database/operations/stats/stats_operations.h"
 #include "config_loader.h"
@@ -196,7 +197,7 @@ int main(int argc, char* argv[]) {
         BOT_TOKEN = std::string(env_token);
         std::cout << clr::GREEN << "✔ " << clr::RESET << "Loaded BOT_TOKEN from environment variable.\n";
     } else {
-        BOT_TOKEN = "token_here";
+        BOT_TOKEN = "YOUR_TOKEN_HERE";
         std::cout << clr::YELLOW << "⚠ " << clr::RESET << "Using hardcoded BOT_TOKEN.\n";
     }
     const std::string PREFIX = "b.";
@@ -204,6 +205,11 @@ int main(int argc, char* argv[]) {
     // PERFORMANCE OPTIMIZATION: Initialize cache system first
     bronx::cache::initialize_cache();
     std::cout << clr::GREEN << "✔ " << clr::RESET << "High-performance cache system initialized\n";
+
+    // Initialize Media Services (OCR & Whisper)
+    if (!bronx::get_media_manager().init("data/ggml-base.en.bin")) {
+        std::cerr << clr::YELLOW << "⚠ " << clr::RESET << "Media services failed to initialize (continuing without OCR/Transcribe)\n";
+    }
     
     // Load database configuration (unchanged)
     bronx::db::DatabaseConfig db_config;
@@ -567,6 +573,8 @@ int main(int argc, char* argv[]) {
     for (auto* cmd : commands::get_social_commands(&db)) {
         cmd_handler.register_command(cmd);
     }
+
+    // Media commands (OCR, Transcription)
 
     // Server economy admin commands
     for (auto* cmd : commands::server_economy::get_server_economy_commands(&db)) {
