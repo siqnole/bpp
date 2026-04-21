@@ -4,6 +4,7 @@
 #include "../../database/core/database.h"
 #include "../../database/operations/economy/history_operations.h"
 #include "../economy/helpers.h"
+#include "daily_stat_tracker.h"
 #include <dpp/dpp.h>
 #include <vector>
 #include <string>
@@ -22,28 +23,10 @@ using commands::economy::format_number;
 namespace commands {
 namespace daily_challenges {
 
-// ============================================================================
-// DAILY CHALLENGES — Rotating objectives that reward varied gameplay
-// ============================================================================
-// Each day at midnight EST, 3 random challenges are generated for each user.
-// Completing challenges awards bonus coins, XP, and lootboxes.
-//
-// Subcommands:
-//   /challenges           — view today's challenges + progress
-//   /challenges claim     — claim completed challenge rewards
-// ============================================================================
-
-// --- Challenge type definitions ---
-enum class ChallengeType {
-    SIMPLE,           // Single stat threshold (default: do X times)
-    STREAK,           // Consecutive wins/successes
-    VARIETY,          // Collect/do X different things
-    EFFICIENCY,       // Achieve goal in tight time/attempt window
-    RATIO,            // Win/loss or profit/loss ratio
-    HYBRID,           // Multi-stat requirement
-    PRECISE,          // Hit exact target (within margin)
-    CONDITIONAL       // Requires completing another action first
-};
+using ChallengeType = Database::ChallengeType;
+using ActiveChallenge = Database::ActiveChallenge;
+using ChallengeReward = Database::ChallengeReward;
+using ChallengeProgress = Database::ChallengeProgress;
 
 // --- Challenge template definitions ---
 struct ChallengeTemplate {
@@ -65,43 +48,6 @@ struct ChallengeTemplate {
     double ratio_threshold = 0.0;                    // for RATIO: win% or profit_ratio needed
     int64_t precision_margin = 0;                    // for PRECISE: allowed variance
     std::string prerequisite_challenge_id = "";      // for CONDITIONAL: must complete first
-};
-
-// Challenge completion data with nuanced tracking
-struct ChallengeProgress {
-    std::string challenge_id;
-    int64_t primary_progress;        // main stat value
-    std::vector<int64_t> secondary_progress;  // for HYBRID challenges
-    std::vector<std::string> variety_items;   // for VARIETY: what we've collected
-    int64_t current_streak;          // for STREAK: current consecutive count
-    int64_t total_attempts;          // for RATIO: total attempts/bets
-    int64_t total_wins;              // for RATIO: wins achieved
-    int64_t time_elapsed_minutes;    // for EFFICIENCY: how long it took
-    bool prerequisite_complete;      // for CONDITIONAL
-};
-
-struct ChallengeReward {
-    int64_t coins;
-    int64_t xp;
-    std::string item_id;        // optional item reward
-    std::string item_name;
-};
-
-struct ActiveChallenge {
-    std::string challenge_id;
-    std::string name;
-    std::string description;
-    std::string stat_name;
-    std::string category;
-    ChallengeType challenge_type;
-    int64_t target;
-    int64_t start_value;        // stat value when challenge was assigned
-    int64_t current_progress;   // current stat value - start_value
-    bool completed;
-    bool claimed;
-    ChallengeReward reward;
-    std::string emoji;
-    ChallengeProgress progress_data;  // detailed progress for nuanced challenges
 };
 
 // All available challenge templates
@@ -506,211 +452,23 @@ static std::string get_today_est() {
     strftime(buf, sizeof(buf), "%Y-%m-%d", &est_tm);
     return std::string(buf);
 }
+// Note: get_daily_stat, increment_daily_stat, set_daily_stat, and track_daily_stat
+// are now provided by daily_stat_tracker.h to avoid redefinition errors.
 
-#ifndef BRONX_GET_DAILY_STAT_DEFINED
-#define BRONX_GET_DAILY_STAT_DEFINED
-static int64_t get_daily_stat(Database* db, uint64_t user_id, const std::string& stat_name) {
-    std::string today = get_today_est();
-    std::string sql = "SELECT stat_value FROM daily_stats WHERE user_id = " + std::to_string(user_id)
-                    + " AND stat_name = '" + stat_name + "'"
-                    + " AND stat_date = '" + today + "'";
-    MYSQL_RES* res = economy::db_select(db, sql);
-    int64_t val = 0;
-    if (res) {
-        MYSQL_ROW row = mysql_fetch_row(res);
-        if (row && row[0]) val = std::stoll(row[0]);
-        mysql_free_result(res);
-    }
-    return val;
-}
-#endif
-
-static void increment_daily_stat(Database* db, uint64_t user_id, const std::string& stat_name, int64_t amount = 1) {
-    std::string today = get_today_est();
-    std::string sql = "INSERT INTO daily_stats (user_id, stat_name, stat_value, stat_date) "
-                      "VALUES (" + std::to_string(user_id) + ", '" + stat_name + "', "
-                      + std::to_string(amount) + ", '" + today + "') "
-                      "ON DUPLICATE KEY UPDATE stat_value = stat_value + " + std::to_string(amount);
-    economy::db_exec(db, sql);
-}
-
-// ============================================================================
-// NUANCED CHALLENGE TRACKING HELPERS
-// ============================================================================
-
-// Track consecutive wins for STREAK challenges
-static void update_streak(Database* db, uint64_t user_id, const std::string& challenge_id, bool is_success) {
-    std::string today = get_today_est();
-    
-    if (is_success) {
-        // Increment current streak
-        std::string sql = "INSERT INTO challenge_streaks (user_id, challenge_id, current_streak, streak_date) "
-                         "VALUES (" + std::to_string(user_id) + ", '" + challenge_id + "', 1, '" + today + "') "
-                         "ON DUPLICATE KEY UPDATE current_streak = current_streak + 1";
-        economy::db_exec(db, sql);
-    } else {
-        // Reset streak to 0
-        std::string sql = "UPDATE challenge_streaks SET current_streak = 0 "
-                         "WHERE user_id = " + std::to_string(user_id) + " AND challenge_id = '" + challenge_id + "' AND streak_date = '" + today + "'";
-        economy::db_exec(db, sql);
-    }
-}
-
-// Track unique items for VARIETY challenges
-static void track_variety_item(Database* db, uint64_t user_id, const std::string& challenge_id, const std::string& item_id) {
-    std::string today = get_today_est();
-    std::string escaped_item = economy::db_escape(db, item_id);
-    
-    std::string sql = "INSERT IGNORE INTO challenge_variety (user_id, challenge_id, item_id, variety_date) "
-                     "VALUES (" + std::to_string(user_id) + ", '" + challenge_id + "', '" + escaped_item + "', '" + today + "')";
-    economy::db_exec(db, sql);
-}
-
-// Count unique items collected
-static int64_t get_variety_count(Database* db, uint64_t user_id, const std::string& challenge_id) {
-    std::string today = get_today_est();
-    std::string sql = "SELECT COUNT(DISTINCT item_id) FROM challenge_variety "
-                     "WHERE user_id = " + std::to_string(user_id) + " AND challenge_id = '" + challenge_id + "' AND variety_date = '" + today + "'";
-    MYSQL_RES* res = economy::db_select(db, sql);
-    int64_t count = 0;
-    if (res) {
-        MYSQL_ROW row = mysql_fetch_row(res);
-        if (row && row[0]) count = std::stoll(row[0]);
-        mysql_free_result(res);
-    }
-    return count;
-}
-
-// Track gambling/mining attempts for RATIO challenges
-static void track_attempt(Database* db, uint64_t user_id, const std::string& challenge_id, bool is_success) {
-    std::string today = get_today_est();
-    std::string sql = "INSERT INTO challenge_attempts (user_id, challenge_id, attempt_type, is_success, attempt_date) "
-                     "VALUES (" + std::to_string(user_id) + ", '" + challenge_id + "', 'attempt', " 
-                     + std::string(is_success ? "TRUE" : "FALSE") + ", '" + today + "')";
-    economy::db_exec(db, sql);
-}
-
-// Get win/loss ratio for RATIO challenges
-struct AttemptStats {
-    int64_t total_attempts;
-    int64_t successful_attempts;
-    double win_rate;
-};
-
-static AttemptStats get_attempt_stats(Database* db, uint64_t user_id, const std::string& challenge_id) {
-    std::string today = get_today_est();
-    std::string sql = "SELECT COUNT(*) as total, SUM(IF(is_success, 1, 0)) as wins "
-                     "FROM challenge_attempts WHERE user_id = " + std::to_string(user_id) 
-                     + " AND challenge_id = '" + challenge_id + "' AND attempt_date = '" + today + "'";
-    MYSQL_RES* res = economy::db_select(db, sql);
-    AttemptStats stats = {0, 0, 0.0};
-    if (res) {
-        MYSQL_ROW row = mysql_fetch_row(res);
-        if (row) {
-            stats.total_attempts = row[0] ? std::stoll(row[0]) : 0;
-            stats.successful_attempts = row[1] ? std::stoll(row[1]) : 0;
-            if (stats.total_attempts > 0) {
-                stats.win_rate = static_cast<double>(stats.successful_attempts) / stats.total_attempts;
-            }
-        }
-        mysql_free_result(res);
-    }
-    return stats;
-}
 
 static std::vector<ActiveChallenge> get_user_challenges(Database* db, uint64_t user_id) {
+    if (!db) return {};
     std::string today = get_today_est();
-    std::vector<ActiveChallenge> challenges;
+    auto challenges = db->get_user_challenges(user_id, today);
     
-    std::string sql = "SELECT challenge_id, challenge_name, challenge_desc, stat_name, category, "
-                      "target, start_value, completed, claimed, reward_coins, reward_xp, emoji, challenge_type "
-                      "FROM daily_challenges WHERE user_id = " + std::to_string(user_id)
-                    + " AND assigned_date = '" + today + "' ORDER BY id";
-    MYSQL_RES* res = economy::db_select(db, sql);
-    if (res) {
-        MYSQL_ROW row;
-        while ((row = mysql_fetch_row(res))) {
-            ActiveChallenge c;
-            c.challenge_id = row[0] ? row[0] : "";
-            c.name = row[1] ? row[1] : "";
-            c.description = row[2] ? row[2] : "";
-            c.stat_name = row[3] ? row[3] : "";
-            c.category = row[4] ? row[4] : "";
-            c.target = row[5] ? std::stoll(row[5]) : 0;
-            c.start_value = row[6] ? std::stoll(row[6]) : 0;
-            c.completed = row[7] && std::string(row[7]) == "1";
-            c.claimed = row[8] && std::string(row[8]) == "1";
-            c.reward.coins = row[9] ? std::stoll(row[9]) : 0;
-            c.reward.xp = row[10] ? std::stoi(row[10]) : 0;
-            c.emoji = row[11] ? row[11] : "";
-            c.challenge_type = row[12] ? static_cast<ChallengeType>(std::stoi(row[12])) : ChallengeType::SIMPLE;
-            
-            // Calculate current progress from daily stats
-            c.current_progress = get_daily_stat(db, user_id, c.stat_name);
-            
-            // Load type-specific tracking data
-            switch (c.challenge_type) {
-                case ChallengeType::STREAK: {
-                    // Load current streak from database
-                    std::string streak_sql = "SELECT current_streak FROM challenge_streaks WHERE user_id = " 
-                        + std::to_string(user_id) + " AND challenge_id = '" + c.challenge_id + "' AND streak_date = '" + today + "'";
-                    MYSQL_RES* streak_res = economy::db_select(db, streak_sql);
-                    if (streak_res) {
-                        MYSQL_ROW streak_row = mysql_fetch_row(streak_res);
-                        if (streak_row && streak_row[0]) {
-                            c.progress_data.current_streak = std::stoll(streak_row[0]);
-                        }
-                        mysql_free_result(streak_res);
-                    }
-                    break;
-                }
-                case ChallengeType::VARIETY: {
-                    // Load unique items collected
-                    std::string variety_sql = "SELECT COUNT(DISTINCT item_id) FROM challenge_variety WHERE user_id = " 
-                        + std::to_string(user_id) + " AND challenge_id = '" + c.challenge_id + "' AND variety_date = '" + today + "'";
-                    MYSQL_RES* variety_res = economy::db_select(db, variety_sql);
-                    if (variety_res) {
-                        MYSQL_ROW variety_row = mysql_fetch_row(variety_res);
-                        if (variety_row && variety_row[0]) {
-                            c.current_progress = std::stoll(variety_row[0]);
-                        }
-                        mysql_free_result(variety_res);
-                    }
-                    break;
-                }
-                case ChallengeType::RATIO: {
-                    // Load attempt history
-                    std::string ratio_sql = "SELECT SUM(IF(is_success, 1, 0)) as wins, COUNT(*) as total FROM challenge_attempts "
-                        "WHERE user_id = " + std::to_string(user_id) + " AND challenge_id = '" + c.challenge_id + "' AND attempt_date = '" + today + "'";
-                    MYSQL_RES* ratio_res = economy::db_select(db, ratio_sql);
-                    if (ratio_res) {
-                        MYSQL_ROW ratio_row = mysql_fetch_row(ratio_res);
-                        if (ratio_row) {
-                            c.progress_data.total_wins = ratio_row[0] ? std::stoll(ratio_row[0]) : 0;
-                            c.progress_data.total_attempts = ratio_row[1] ? std::stoll(ratio_row[1]) : 0;
-                        }
-                        mysql_free_result(ratio_res);
-                    }
-                    break;
-                }
-                default:
-                    break;
+    // Auto-check completion logic
+    for (auto& c : challenges) {
+        if (!c.completed) {
+            if (is_challenge_complete(db, c, user_id)) {
+                c.completed = true;
+                db->update_challenge_status(user_id, c.challenge_id, today, true, false);
             }
-            
-            // Auto-check completion using type-specific validators
-            if (!c.completed) {
-                if (is_challenge_complete(db, c, user_id)) {
-                    c.completed = true;
-                    db->execute("UPDATE daily_challenges SET completed = TRUE "
-                               "WHERE user_id = " + std::to_string(user_id) + 
-                               " AND challenge_id = '" + c.challenge_id + "'"
-                               " AND assigned_date = '" + today + "'");
-                }
-            }
-            
-            challenges.push_back(c);
         }
-        mysql_free_result(res);
     }
     
     return challenges;
@@ -724,7 +482,6 @@ static void assign_daily_challenges(Database* db, uint64_t user_id) {
     std::random_device rd;
     std::mt19937 gen(rd());
     
-    // Create shuffled indices
     std::vector<size_t> indices(CHALLENGE_TEMPLATES.size());
     std::iota(indices.begin(), indices.end(), 0);
     std::shuffle(indices.begin(), indices.end(), gen);
@@ -734,34 +491,30 @@ static void assign_daily_challenges(Database* db, uint64_t user_id) {
         if (assigned >= 3) break;
         
         const auto& tmpl = CHALLENGE_TEMPLATES[idx];
-        
-        // Randomize the target within range
         std::uniform_int_distribution<int64_t> target_dist(tmpl.min_target, tmpl.max_target);
         int64_t target = target_dist(gen);
         
-        // Calculate reward based on difficulty
         auto diff = get_difficulty(tmpl, target);
         auto reward = calculate_reward(diff, networth);
-        
         std::string desc = format_description(tmpl.description, target);
         
-        // All string values come from our internal CHALLENGE_TEMPLATES constants, safe to concat
-        std::string sql = "INSERT IGNORE INTO daily_challenges "
-                          "(user_id, challenge_id, challenge_name, challenge_desc, stat_name, category, "
-                          " challenge_type, target, start_value, reward_coins, reward_xp, emoji, assigned_date) "
-                          "VALUES (" + std::to_string(user_id) + ", "
-                          "'" + economy::db_escape(db, tmpl.id) + "', "
-                          "'" + economy::db_escape(db, tmpl.name) + "', "
-                          "'" + economy::db_escape(db, desc) + "', "
-                          "'" + economy::db_escape(db, tmpl.stat_name) + "', "
-                          "'" + economy::db_escape(db, tmpl.category) + "', "
-                          + std::to_string(static_cast<int>(tmpl.type)) + ", "
-                          + std::to_string(target) + ", 0, "
-                          + std::to_string(reward.coins) + ", "
-                          + std::to_string(reward.xp) + ", "
-                          "'" + economy::db_escape(db, tmpl.emoji) + "', "
-                          "'" + today + "')";
-        if (economy::db_exec(db, sql)) {
+        ActiveChallenge c;
+        c.challenge_id = tmpl.id;
+        c.name = tmpl.name;
+        c.description = desc;
+        c.stat_name = tmpl.stat_name;
+        c.category = tmpl.category;
+        c.challenge_type = tmpl.type;
+        c.target = target;
+        c.start_value = 0; // Will be set to current stat in many cases, but for simple "do X times" it's often 0
+        
+        // For some stats, we might want to capture the current value as start_value
+        // but the daily_stats system handles it relative to the day.
+        
+        c.reward = {reward.coins, static_cast<int64_t>(reward.xp), "", ""};
+        c.emoji = tmpl.emoji;
+        
+        if (db->assign_daily_challenge(user_id, c, today)) {
             assigned++;
         }
     }
@@ -799,11 +552,8 @@ inline Command* create_challenges_command(Database* db) {
                         total_xp += c.reward.xp;
                         claimed_count++;
                         
-                        // Mark as claimed
-                        db->execute("UPDATE daily_challenges SET claimed = TRUE "
-                                   "WHERE user_id = " + std::to_string(user_id) + 
-                                   " AND challenge_id = '" + c.challenge_id + "'"
-                                   " AND assigned_date = '" + today + "'");
+                        // Mark as claimed securely
+                        db->update_challenge_status(user_id, c.challenge_id, today, true, true);
                     }
                 }
                 
@@ -933,8 +683,8 @@ inline Command* create_challenges_command(Database* db) {
             
             // Handle claim action
             if (action == "claim") {
-                auto challenges = get_user_challenges(db, user_id);
-                if (challenges.empty()) {
+                auto user_challenges_list = get_user_challenges(db, user_id);
+                if (user_challenges_list.empty()) {
                     event.reply(dpp::message().add_embed(
                         bronx::error("no challenges found! use `/challenges` to generate today's challenges.")));
                     return;
@@ -945,16 +695,14 @@ inline Command* create_challenges_command(Database* db) {
                 int claimed_count = 0;
                 std::string today = get_today_est();
                 
-                for (auto& c : challenges) {
+                for (auto& c : user_challenges_list) {
                     if (c.completed && !c.claimed) {
                         total_coins += c.reward.coins;
                         total_xp += c.reward.xp;
                         claimed_count++;
                         
-                        db->execute("UPDATE daily_challenges SET claimed = TRUE "
-                                   "WHERE user_id = " + std::to_string(user_id) + 
-                                   " AND challenge_id = '" + c.challenge_id + "'"
-                                   " AND assigned_date = '" + today + "'");
+                        // Mark as claimed securely
+                        db->update_challenge_status(user_id, c.challenge_id, today, true, true);
                     }
                 }
                 
@@ -969,7 +717,7 @@ inline Command* create_challenges_command(Database* db) {
                 }
                 
                 bool all_complete = true;
-                for (auto& c : challenges) {
+                for (auto& c : user_challenges_list) {
                     if (!c.completed) { all_complete = false; break; }
                 }
                 
@@ -997,13 +745,13 @@ inline Command* create_challenges_command(Database* db) {
             }
             
             // Default: view
-            auto challenges = get_user_challenges(db, user_id);
-            if (challenges.empty()) {
+            auto user_challenges_list = get_user_challenges(db, user_id);
+            if (user_challenges_list.empty()) {
                 assign_daily_challenges(db, user_id);
-                challenges = get_user_challenges(db, user_id);
+                user_challenges_list = get_user_challenges(db, user_id);
             }
             
-            if (challenges.empty()) {
+            if (user_challenges_list.empty()) {
                 event.reply(dpp::message().add_embed(bronx::error("failed to generate daily challenges!")));
                 return;
             }
@@ -1012,8 +760,8 @@ inline Command* create_challenges_command(Database* db) {
             int completed_count = 0;
             int claimable_count = 0;
             
-            for (size_t i = 0; i < challenges.size(); i++) {
-                auto& c = challenges[i];
+            for (size_t i = 0; i < user_challenges_list.size(); i++) {
+                auto& c = user_challenges_list[i];
                 
                 std::string status_emoji;
                 if (c.claimed) {
@@ -1037,11 +785,11 @@ inline Command* create_challenges_command(Database* db) {
                 desc += "\n\n";
             }
             
-            desc += "**" + std::to_string(completed_count) + "/" + std::to_string(challenges.size()) + "** completed";
+            desc += "**" + std::to_string(completed_count) + "/" + std::to_string(user_challenges_list.size()) + "** completed";
             if (claimable_count > 0) {
                 desc += " \xE2\x80\x94 use `/challenges claim` to collect rewards!";
             }
-            if (completed_count == static_cast<int>(challenges.size())) {
+            if (completed_count == static_cast<int>(user_challenges_list.size())) {
                 desc += "\n\xF0\x9F\x8C\x9F **All challenges complete! Bonus reward available!**";
             }
             

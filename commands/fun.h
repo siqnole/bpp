@@ -131,8 +131,8 @@ inline ::std::vector<Command*> get_fun_commands() {
                 dpp::message sent_msg = std::get<dpp::message>(cb.value);
                 
                 std::thread([&bot, event, sent_msg, query_str, is_pool]() {
-                    auto log_cb = [&bot, sent_msg, is_pool](const std::string& logs) {
-                        dpp::message update(sent_msg.channel_id, (is_pool ? "🔎 Exploring authentic TikTok feed...\n```\n" : "🔎 Searching for a random TikTok...\n```\n") + logs + "\n```");
+                    auto log_cb = [&bot, sent_msg](const std::string& logs) {
+                        dpp::message update(sent_msg.channel_id, "```\n" + logs + "\n```");
                         update.id = sent_msg.id;
                         bot.message_edit(update);
                     };
@@ -186,8 +186,8 @@ inline ::std::vector<Command*> get_fun_commands() {
                 dpp::message sent_msg = std::get<dpp::message>(cb.value);
                 
                 std::thread([&bot, event, sent_msg, query_str, is_pool]() {
-                    auto log_cb = [&bot, sent_msg, is_pool](const std::string& logs) {
-                        dpp::message update(sent_msg.channel_id, (is_pool ? "🔎 Exploring authentic Instagram feed...\n```\n" : "🔎 Searching for a random Reel...\n```\n") + logs + "\n```");
+                    auto log_cb = [&bot, sent_msg](const std::string& logs) {
+                        dpp::message update(sent_msg.channel_id, "```\n" + logs + "\n```");
                         update.id = sent_msg.id;
                         bot.message_edit(update);
                     };

@@ -1320,7 +1320,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
                 // However, try_spawn_random_event doesn't broadcast internally (it only updates DB and logs to console).
                 // I should add a broadcast call here if I want the announcement to appear.
                 auto embed = commands::world_events::build_event_start_embed(*result);
-                bot.message_create(dpp::message(event.msg.channel_id).add_embed(embed));
+                bot.message_create(dpp::message(event.msg.channel_id, "").add_embed(embed));
             } else {
                 bot.message_create(dpp::message(event.msg.channel_id,
                     bronx::error("Failed to spawn world event. Check console for details.")));

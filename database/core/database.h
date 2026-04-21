@@ -73,6 +73,83 @@ public:
     
     // Statistics
     bool increment_stat(uint64_t user_id, const std::string& stat_name, int64_t amount = 1);
+
+    // Daily statistics tracking for daily challenges system
+    bool increment_daily_stat(uint64_t user_id, const std::string& stat_name, int64_t amount, const std::string& date);
+    int64_t get_daily_stat(uint64_t user_id, const std::string& stat_name, const std::string& date);
+    bool set_daily_stat(uint64_t user_id, const std::string& stat_name, int64_t value, const std::string& date);
+    
+    // Detailed challenge tracking
+    bool update_challenge_streak(uint64_t user_id, const std::string& challenge_id, bool is_success, const std::string& date);
+    bool track_challenge_variety(uint64_t user_id, const std::string& challenge_id, const std::string& item_id, const std::string& date);
+    int64_t get_challenge_variety_count(uint64_t user_id, const std::string& challenge_id, const std::string& date);
+    bool track_challenge_attempt(uint64_t user_id, const std::string& challenge_id, bool is_success, const std::string& date);
+    struct AttemptStats { int64_t total; int64_t wins; };
+    AttemptStats get_challenge_attempt_stats(uint64_t user_id, const std::string& challenge_id, const std::string& date);
+
+    // Daily login streaks tracking
+    struct UserStreak {
+        int current_streak;
+        int longest_streak;
+        std::string last_claim_date;
+        int total_claims;
+        int64_t total_bonus;
+    };
+    UserStreak get_daily_streak_stats(uint64_t user_id);
+    bool update_daily_streak(uint64_t user_id, int current, int longest, const std::string& date, int64_t bonus);
+
+    // --- Challenge type definitions ---
+    enum class ChallengeType {
+        SIMPLE,           // Single stat threshold (default: do X times)
+        STREAK,           // Consecutive wins/successes
+        VARIETY,          // Collect/do X different things
+        EFFICIENCY,       // Achieve goal in tight time/attempt window
+        RATIO,            // Win/loss or profit/loss ratio
+        HYBRID,           // Multi-stat requirement
+        PRECISE,          // Hit exact target (within margin)
+        CONDITIONAL       // Requires completing another action first
+    };
+
+    struct ChallengeReward {
+        int64_t coins;
+        int64_t xp;
+        std::string item_id;
+        std::string item_name;
+    };
+
+    struct ChallengeProgress {
+        std::string challenge_id;
+        int64_t primary_progress;
+        std::vector<int64_t> secondary_progress;
+        std::vector<std::string> variety_items;
+        int64_t current_streak;
+        int64_t total_attempts;
+        int64_t total_wins;
+        int64_t time_elapsed_minutes;
+        bool prerequisite_complete;
+    };
+
+    struct ActiveChallenge {
+        std::string challenge_id;
+        std::string name;
+        std::string description;
+        std::string stat_name;
+        std::string category;
+        ChallengeType challenge_type;
+        int64_t target;
+        int64_t start_value;
+        int64_t current_progress;
+        bool completed;
+        bool claimed;
+        ChallengeReward reward;
+        std::string emoji;
+        ChallengeProgress progress_data;
+    };
+
+    // Challenge Management
+    std::vector<ActiveChallenge> get_user_challenges(uint64_t user_id, const std::string& date);
+    bool update_challenge_status(uint64_t user_id, const std::string& challenge_id, const std::string& date, bool completed, bool claimed);
+    bool assign_daily_challenge(uint64_t user_id, const ActiveChallenge& challenge, const std::string& date);
     int64_t get_stat(uint64_t user_id, const std::string& stat_name);
     
     // Passive mode (rob protection)

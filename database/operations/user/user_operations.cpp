@@ -898,14 +898,155 @@ int64_t Database::get_stat(uint64_t user_id, const std::string& stat_name) {
     
     mysql_stmt_bind_result(stmt, result_bind);
     mysql_stmt_store_result(stmt);
-    
-    if (mysql_stmt_fetch(stmt) != 0) {
-        value = 0; // stat doesn't exist
+    int64_t val = 0;
+    if (mysql_stmt_fetch(stmt) == 0) {
+        val = value;
     }
     
     mysql_stmt_close(stmt);
     pool_->release(conn);
-    return value;
+    return val;
+}
+
+bool Database::increment_daily_stat(uint64_t user_id, const std::string& stat_name, int64_t amount, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* query = 
+        "INSERT INTO daily_stats (user_id, stat_name, stat_value, stat_date) VALUES (?, ?, ?, ?) "
+        "ON DUPLICATE KEY UPDATE stat_value = stat_value + VALUES(stat_value)";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bind[4];
+    memset(bind, 0, sizeof(bind));
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)stat_name.c_str();
+    bind[1].buffer_length = stat_name.length();
+    
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&amount;
+    
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)date.c_str();
+    bind[3].buffer_length = date.length();
+    
+    if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return true;
+}
+
+int64_t Database::get_daily_stat(uint64_t user_id, const std::string& stat_name, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return 0;
+    
+    const char* query = "SELECT stat_value FROM daily_stats WHERE user_id = ? AND stat_name = ? AND stat_date = ? LIMIT 1";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
+    
+    MYSQL_BIND bind[3];
+    memset(bind, 0, sizeof(bind));
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)stat_name.c_str();
+    bind[1].buffer_length = stat_name.length();
+    
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)date.c_str();
+    bind[2].buffer_length = date.length();
+    
+    if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
+    
+    int64_t value = 0;
+    MYSQL_BIND result_bind[1];
+    memset(result_bind, 0, sizeof(result_bind));
+    result_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result_bind[0].buffer = &value;
+    
+    mysql_stmt_bind_result(stmt, result_bind);
+    mysql_stmt_store_result(stmt);
+    
+    int64_t val = 0;
+    if (mysql_stmt_fetch(stmt) == 0) {
+        val = value;
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return val;
+}
+
+bool Database::set_daily_stat(uint64_t user_id, const std::string& stat_name, int64_t value, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* query = 
+        "INSERT INTO daily_stats (user_id, stat_name, stat_value, stat_date) VALUES (?, ?, ?, ?) "
+        "ON DUPLICATE KEY UPDATE stat_value = VALUES(stat_value)";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bind[4];
+    memset(bind, 0, sizeof(bind));
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)stat_name.c_str();
+    bind[1].buffer_length = stat_name.length();
+    
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&value;
+    
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)date.c_str();
+    bind[3].buffer_length = date.length();
+    
+    if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return true;
 }
 
 // ========================================
@@ -1439,6 +1580,664 @@ std::map<std::string, int64_t> Database::get_fish_catch_counts_by_species(uint64
     mysql_stmt_close(stmt);
     pool_->release(conn);
     return result;
+}
+// ========================================
+// CHALLENGE TRACKING OPERATIONS
+// ========================================
+
+bool Database::update_challenge_streak(uint64_t user_id, const std::string& challenge_id, bool is_success, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt) { pool_->release(conn); return false; }
+    
+    if (is_success) {
+        const char* query = "INSERT INTO challenge_streaks (user_id, challenge_id, current_streak, streak_date) "
+                           "VALUES (?, ?, 1, ?) "
+                           "ON DUPLICATE KEY UPDATE current_streak = current_streak + 1";
+        if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+            mysql_stmt_close(stmt); pool_->release(conn); return false;
+        }
+        
+        MYSQL_BIND bind[3];
+        memset(bind, 0, sizeof(bind));
+        
+        unsigned long cid_len = challenge_id.length();
+        unsigned long date_len = date.length();
+        
+        bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[0].buffer = (char*)&user_id;
+        bind[0].is_unsigned = 1;
+        
+        bind[1].buffer_type = MYSQL_TYPE_STRING;
+        bind[1].buffer = (char*)challenge_id.c_str();
+        bind[1].buffer_length = challenge_id.length();
+        bind[1].length = &cid_len;
+        
+        bind[2].buffer_type = MYSQL_TYPE_STRING;
+        bind[2].buffer = (char*)date.c_str();
+        bind[2].buffer_length = date.length();
+        bind[2].length = &date_len;
+        
+        mysql_stmt_bind_param(stmt, bind);
+    } else {
+        const char* query = "UPDATE challenge_streaks SET current_streak = 0 "
+                           "WHERE user_id = ? AND challenge_id = ? AND streak_date = ?";
+        if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+            mysql_stmt_close(stmt); pool_->release(conn); return false;
+        }
+        
+        MYSQL_BIND bind[3];
+        memset(bind, 0, sizeof(bind));
+        
+        unsigned long cid_len = challenge_id.length();
+        unsigned long date_len = date.length();
+        
+        bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[0].buffer = (char*)&user_id;
+        bind[0].is_unsigned = 1;
+        
+        bind[1].buffer_type = MYSQL_TYPE_STRING;
+        bind[1].buffer = (char*)challenge_id.c_str();
+        bind[1].buffer_length = challenge_id.length();
+        bind[1].length = &cid_len;
+        
+        bind[2].buffer_type = MYSQL_TYPE_STRING;
+        bind[2].buffer = (char*)date.c_str();
+        bind[2].buffer_length = date.length();
+        bind[2].length = &date_len;
+        
+        mysql_stmt_bind_param(stmt, bind);
+    }
+    
+    bool success = mysql_stmt_execute(stmt) == 0;
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return success;
+}
+
+bool Database::track_challenge_variety(uint64_t user_id, const std::string& challenge_id, const std::string& item_id, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* query = "INSERT IGNORE INTO challenge_variety (user_id, challenge_id, item_id, variety_date) VALUES (?, ?, ?, ?)";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bind[4];
+    memset(bind, 0, sizeof(bind));
+    
+    unsigned long cid_len = challenge_id.length();
+    unsigned long iid_len = item_id.length();
+    unsigned long date_len = date.length();
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)challenge_id.c_str();
+    bind[1].buffer_length = challenge_id.length();
+    bind[1].length = &cid_len;
+    
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)item_id.c_str();
+    bind[2].buffer_length = item_id.length();
+    bind[2].length = &iid_len;
+    
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)date.c_str();
+    bind[3].buffer_length = date.length();
+    bind[3].length = &date_len;
+    
+    bool success = mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return success;
+}
+
+int64_t Database::get_challenge_variety_count(uint64_t user_id, const std::string& challenge_id, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return 0;
+    
+    const char* query = "SELECT COUNT(DISTINCT item_id) FROM challenge_variety WHERE user_id = ? AND challenge_id = ? AND variety_date = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
+    
+    MYSQL_BIND bind[3];
+    memset(bind, 0, sizeof(bind));
+    
+    unsigned long cid_len = challenge_id.length();
+    unsigned long date_len = date.length();
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)challenge_id.c_str();
+    bind[1].buffer_length = challenge_id.length();
+    bind[1].length = &cid_len;
+    
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)date.c_str();
+    bind[2].buffer_length = date.length();
+    bind[2].length = &date_len;
+    
+    int64_t count = 0;
+    if (mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0) {
+        MYSQL_BIND res[1];
+        memset(res, 0, sizeof(res));
+        res[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        res[0].buffer = &count;
+        mysql_stmt_bind_result(stmt, res);
+        mysql_stmt_store_result(stmt);
+        mysql_stmt_fetch(stmt);
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return count;
+}
+
+bool Database::track_challenge_attempt(uint64_t user_id, const std::string& challenge_id, bool is_success, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* query = "INSERT INTO challenge_attempts (user_id, challenge_id, attempt_type, is_success, attempt_date) VALUES (?, ?, 'attempt', ?, ?)";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bind[4];
+    memset(bind, 0, sizeof(bind));
+    
+    unsigned long cid_len = challenge_id.length();
+    unsigned long date_len = date.length();
+    int8_t success_bit = is_success ? 1 : 0;
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)challenge_id.c_str();
+    bind[1].buffer_length = challenge_id.length();
+    bind[1].length = &cid_len;
+    
+    bind[2].buffer_type = MYSQL_TYPE_TINY;
+    bind[2].buffer = &success_bit;
+    
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)date.c_str();
+    bind[3].buffer_length = date.length();
+    bind[3].length = &date_len;
+    
+    bool ok = mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
+}
+
+Database::AttemptStats Database::get_challenge_attempt_stats(uint64_t user_id, const std::string& challenge_id, const std::string& date) {
+    Database::AttemptStats stats = {0, 0};
+    auto conn = pool_->acquire();
+    if (!conn) return stats;
+    
+    const char* query = "SELECT COUNT(*), SUM(IF(is_success, 1, 0)) FROM challenge_attempts WHERE user_id = ? AND challenge_id = ? AND attempt_date = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return stats;
+    }
+    
+    MYSQL_BIND bind[3];
+    memset(bind, 0, sizeof(bind));
+    
+    unsigned long cid_len = challenge_id.length();
+    unsigned long date_len = date.length();
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)challenge_id.c_str();
+    bind[1].buffer_length = challenge_id.length();
+    bind[1].length = &cid_len;
+    
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)date.c_str();
+    bind[2].buffer_length = date.length();
+    bind[2].length = &date_len;
+    
+    if (mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0) {
+        MYSQL_BIND res[2];
+        memset(res, 0, sizeof(res));
+        res[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        res[0].buffer = &stats.total;
+        res[1].buffer_type = MYSQL_TYPE_LONGLONG;
+        res[1].buffer = &stats.wins;
+        mysql_stmt_bind_result(stmt, res);
+        mysql_stmt_store_result(stmt);
+        mysql_stmt_fetch(stmt);
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return stats;
+}
+
+Database::UserStreak Database::get_daily_streak_stats(uint64_t user_id) {
+    Database::UserStreak streak = {0, 0, "", 0, 0};
+    auto conn = pool_->acquire();
+    if (!conn) return streak;
+    
+    const char* query = "SELECT current_streak, longest_streak, last_claim_date, total_claims, total_streak_bonus "
+                       "FROM daily_streaks WHERE user_id = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return streak;
+    }
+    
+    MYSQL_BIND bind[1];
+    memset(bind, 0, sizeof(bind));
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    if (mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0) {
+        MYSQL_BIND res[5];
+        memset(res, 0, sizeof(res));
+        
+        char date_buf[11];
+        unsigned long date_len = 0;
+        
+        res[0].buffer_type = MYSQL_TYPE_LONG;
+        res[0].buffer = &streak.current_streak;
+        
+        res[1].buffer_type = MYSQL_TYPE_LONG;
+        res[1].buffer = &streak.longest_streak;
+        
+        res[2].buffer_type = MYSQL_TYPE_STRING;
+        res[2].buffer = date_buf;
+        res[2].buffer_length = sizeof(date_buf);
+        res[2].length = &date_len;
+        
+        res[3].buffer_type = MYSQL_TYPE_LONG;
+        res[3].buffer = &streak.total_claims;
+        
+        res[4].buffer_type = MYSQL_TYPE_LONGLONG;
+        res[4].buffer = &streak.total_bonus;
+        
+        mysql_stmt_bind_result(stmt, res);
+        mysql_stmt_store_result(stmt);
+        if (mysql_stmt_fetch(stmt) == 0) {
+            streak.last_claim_date = std::string(date_buf, date_len);
+        }
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return streak;
+}
+
+bool Database::update_daily_streak(uint64_t user_id, int current, int longest, const std::string& date, int64_t bonus) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* query = "INSERT INTO daily_streaks (user_id, current_streak, longest_streak, last_claim_date, total_claims, total_streak_bonus) "
+                       "VALUES (?, ?, ?, ?, 1, ?) "
+                       "ON DUPLICATE KEY UPDATE "
+                       "current_streak = ?, "
+                       "longest_streak = ?, "
+                       "last_claim_date = ?, "
+                       "total_claims = total_claims + 1, "
+                       "total_streak_bonus = total_streak_bonus + ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    MYSQL_BIND bind[10];
+    memset(bind, 0, sizeof(bind));
+    
+    unsigned long date_len = date.length();
+    
+    // INSERT values
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_LONG;
+    bind[1].buffer = &current;
+    
+    bind[2].buffer_type = MYSQL_TYPE_LONG;
+    bind[2].buffer = &longest;
+    
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)date.c_str();
+    bind[3].buffer_length = date.length();
+    bind[3].length = &date_len;
+    
+    bind[4].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[4].buffer = (char*)&bonus;
+    
+    // UPDATE values
+    bind[5].buffer_type = MYSQL_TYPE_LONG;
+    bind[5].buffer = &current;
+    
+    bind[6].buffer_type = MYSQL_TYPE_LONG;
+    bind[6].buffer = &longest;
+    
+    bind[7].buffer_type = MYSQL_TYPE_STRING;
+    bind[7].buffer = (char*)date.c_str();
+    bind[7].buffer_length = date.length();
+    bind[7].length = &date_len;
+    
+    bind[8].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[8].buffer = (char*)&bonus;
+    
+    bool ok = mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
+}
+
+std::vector<Database::ActiveChallenge> Database::get_user_challenges(uint64_t user_id, const std::string& date) {
+    std::vector<Database::ActiveChallenge> challenges;
+    auto conn = pool_->acquire();
+    if (!conn) return challenges;
+    
+    const char* query = "SELECT challenge_id, challenge_name, challenge_desc, stat_name, category, "
+                       "target, start_value, completed, claimed, reward_coins, reward_xp, emoji, challenge_type "
+                       "FROM daily_challenges WHERE user_id = ? AND assigned_date = ? ORDER BY id";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return challenges;
+    }
+    
+    unsigned long date_len = date.length();
+    MYSQL_BIND bind[2];
+    memset(bind, 0, sizeof(bind));
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)date.c_str();
+    bind[1].buffer_length = date.length();
+    bind[1].length = &date_len;
+    
+    if (mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0) {
+        MYSQL_BIND res[13];
+        memset(res, 0, sizeof(res));
+        
+        char id_buf[64], name_buf[128], desc_buf[256], stat_buf[64], cat_buf[64], emoji_buf[32];
+        unsigned long id_len, name_len, desc_len, stat_len, cat_len, emoji_len;
+        int type_int;
+        char completed_char, claimed_char;
+        
+        res[0].buffer_type = MYSQL_TYPE_STRING;
+        res[0].buffer = id_buf;
+        res[0].buffer_length = sizeof(id_buf);
+        res[0].length = &id_len;
+        
+        res[1].buffer_type = MYSQL_TYPE_STRING;
+        res[1].buffer = name_buf;
+        res[1].buffer_length = sizeof(name_buf);
+        res[1].length = &name_len;
+        
+        res[2].buffer_type = MYSQL_TYPE_STRING;
+        res[2].buffer = desc_buf;
+        res[2].buffer_length = sizeof(desc_buf);
+        res[2].length = &desc_len;
+        
+        res[3].buffer_type = MYSQL_TYPE_STRING;
+        res[3].buffer = stat_buf;
+        res[3].buffer_length = sizeof(stat_buf);
+        res[3].length = &stat_len;
+        
+        res[4].buffer_type = MYSQL_TYPE_STRING;
+        res[4].buffer = cat_buf;
+        res[4].buffer_length = sizeof(cat_buf);
+        res[4].length = &cat_len;
+        
+        res[5].buffer_type = MYSQL_TYPE_LONGLONG;
+        
+        res[6].buffer_type = MYSQL_TYPE_LONGLONG;
+        
+        res[7].buffer_type = MYSQL_TYPE_TINY;
+        res[7].buffer = &completed_char;
+        
+        res[8].buffer_type = MYSQL_TYPE_TINY;
+        res[8].buffer = &claimed_char;
+        
+        res[9].buffer_type = MYSQL_TYPE_LONGLONG;
+        
+        res[10].buffer_type = MYSQL_TYPE_LONG;
+        
+        res[11].buffer_type = MYSQL_TYPE_STRING;
+        res[11].buffer = emoji_buf;
+        res[11].buffer_length = sizeof(emoji_buf);
+        res[11].length = &emoji_len;
+        
+        res[12].buffer_type = MYSQL_TYPE_LONG;
+        res[12].buffer = &type_int;
+        
+        Database::ActiveChallenge c;
+        res[5].buffer = &c.target;
+        res[6].buffer = &c.start_value;
+        res[9].buffer = &c.reward.coins;
+        res[10].buffer = &c.reward.xp;
+
+        mysql_stmt_bind_result(stmt, res);
+        mysql_stmt_store_result(stmt);
+        
+        while (mysql_stmt_fetch(stmt) == 0) {
+            c.challenge_id = std::string(id_buf, id_len);
+            c.name = std::string(name_buf, name_len);
+            c.description = std::string(desc_buf, desc_len);
+            c.stat_name = std::string(stat_buf, stat_len);
+            c.category = std::string(cat_buf, cat_len);
+            c.emoji = std::string(emoji_buf, emoji_len);
+            c.challenge_type = static_cast<Database::ChallengeType>(type_int);
+            c.completed = completed_char != 0;
+            c.claimed = claimed_char != 0;
+            
+            challenges.push_back(c);
+        }
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    
+    for (auto& c : challenges) {
+        c.current_progress = get_daily_stat(user_id, c.stat_name, date) - c.start_value;
+        if (c.current_progress < 0) c.current_progress = 0;
+        
+        switch (c.challenge_type) {
+            case Database::ChallengeType::STREAK: {
+                auto stats = get_challenge_attempt_stats(user_id, c.challenge_id, date);
+                c.progress_data.current_streak = stats.wins;
+                break;
+            }
+            case Database::ChallengeType::VARIETY: {
+                c.current_progress = get_challenge_variety_count(user_id, c.challenge_id, date);
+                break;
+            }
+            case Database::ChallengeType::RATIO: {
+                auto stats = get_challenge_attempt_stats(user_id, c.challenge_id, date);
+                c.progress_data.total_wins = stats.wins;
+                c.progress_data.total_attempts = stats.total;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    
+    return challenges;
+}
+
+bool Database::update_challenge_status(uint64_t user_id, const std::string& challenge_id, const std::string& date, bool completed, bool claimed) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* query = "UPDATE daily_challenges SET completed = ?, claimed = ? "
+                       "WHERE user_id = ? AND challenge_id = ? AND assigned_date = ?";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    char completed_val = completed ? 1 : 0;
+    char claimed_val = claimed ? 1 : 0;
+    unsigned long id_len = challenge_id.length();
+    unsigned long date_len = date.length();
+    
+    MYSQL_BIND bind[5];
+    memset(bind, 0, sizeof(bind));
+    
+    bind[0].buffer_type = MYSQL_TYPE_TINY;
+    bind[0].buffer = &completed_val;
+    
+    bind[1].buffer_type = MYSQL_TYPE_TINY;
+    bind[1].buffer = &claimed_val;
+    
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[2].buffer = (char*)&user_id;
+    bind[2].is_unsigned = 1;
+    
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)challenge_id.c_str();
+    bind[3].buffer_length = challenge_id.length();
+    bind[3].length = &id_len;
+    
+    bind[4].buffer_type = MYSQL_TYPE_STRING;
+    bind[4].buffer = (char*)date.c_str();
+    bind[4].buffer_length = date.length();
+    bind[4].length = &date_len;
+    
+    bool ok = mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
+}
+
+bool Database::assign_daily_challenge(uint64_t user_id, const Database::ActiveChallenge& challenge, const std::string& date) {
+    auto conn = pool_->acquire();
+    if (!conn) return false;
+    
+    const char* query = "INSERT IGNORE INTO daily_challenges "
+                       "(user_id, challenge_id, challenge_name, challenge_desc, stat_name, category, "
+                       " challenge_type, target, start_value, reward_coins, reward_xp, emoji, assigned_date) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt || mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        if (stmt) mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
+    
+    int type_int = static_cast<int>(challenge.challenge_type);
+    unsigned long id_len = challenge.challenge_id.length();
+    unsigned long name_len = challenge.name.length();
+    unsigned long desc_len = challenge.description.length();
+    unsigned long stat_len = challenge.stat_name.length();
+    unsigned long cat_len = challenge.category.length();
+    unsigned long emoji_len = challenge.emoji.length();
+    unsigned long date_len = date.length();
+    
+    MYSQL_BIND bind[13];
+    memset(bind, 0, sizeof(bind));
+    
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = (char*)&user_id;
+    bind[0].is_unsigned = 1;
+    
+    bind[1].buffer_type = MYSQL_TYPE_STRING;
+    bind[1].buffer = (char*)challenge.challenge_id.c_str();
+    bind[1].buffer_length = challenge.challenge_id.length();
+    bind[1].length = &id_len;
+    
+    bind[2].buffer_type = MYSQL_TYPE_STRING;
+    bind[2].buffer = (char*)challenge.name.c_str();
+    bind[2].buffer_length = challenge.name.length();
+    bind[2].length = &name_len;
+    
+    bind[3].buffer_type = MYSQL_TYPE_STRING;
+    bind[3].buffer = (char*)challenge.description.c_str();
+    bind[3].buffer_length = challenge.description.length();
+    bind[3].length = &desc_len;
+    
+    bind[4].buffer_type = MYSQL_TYPE_STRING;
+    bind[4].buffer = (char*)challenge.stat_name.c_str();
+    bind[4].buffer_length = challenge.stat_name.length();
+    bind[4].length = &stat_len;
+    
+    bind[5].buffer_type = MYSQL_TYPE_STRING;
+    bind[5].buffer = (char*)challenge.category.c_str();
+    bind[5].buffer_length = challenge.category.length();
+    bind[5].length = &cat_len;
+    
+    bind[6].buffer_type = MYSQL_TYPE_LONG;
+    bind[6].buffer = &type_int;
+    
+    bind[7].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[7].buffer = (char*)&challenge.target;
+    
+    bind[8].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[8].buffer = (char*)&challenge.start_value;
+    
+    bind[9].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[9].buffer = (char*)&challenge.reward.coins;
+    
+    bind[10].buffer_type = MYSQL_TYPE_LONG;
+    bind[10].buffer = (char*)&challenge.reward.xp;
+    
+    bind[11].buffer_type = MYSQL_TYPE_STRING;
+    bind[11].buffer = (char*)challenge.emoji.c_str();
+    bind[11].buffer_length = challenge.emoji.length();
+    bind[11].length = &emoji_len;
+    
+    bind[12].buffer_type = MYSQL_TYPE_STRING;
+    bind[12].buffer = (char*)date.c_str();
+    bind[12].buffer_length = date.length();
+    bind[12].length = &date_len;
+    
+    bool ok = mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
 }
 
 } // namespace db

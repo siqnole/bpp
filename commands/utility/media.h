@@ -747,13 +747,10 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
     // Hybrid Strategy: ios (cookieless but bypasses signatures) -> web_embedded/tv (cookie-aware)
     // Critical: Explicitly enable Node.js runtime for signature decryption (n-challenge solver)
     std::string extractor_args = "--no-check-certificates --js-runtimes \"node:/usr/bin/node\"";
-    if (is_youtube) {
-        // ALWAYS try ios first because it bypasses the n-challenge solver requirements
-        // Then fallback to web_embedded and tv which support cookies for age-gated videos
-        extractor_args += " --extractor-args \"youtube:player-client=ios,web_embedded,tv\"";
-    }
-
     std::string error_log_path = temp_dir + "/error.log";
+    int result = -1;
+    
+
 
     // Try a few times with different binaries/settings
     auto run_ytdlp = [&](const std::string& binary, const std::string& formats, const std::string& args) {
@@ -809,8 +806,90 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
         return status;
     };
 
+    // Cobalt API integration for social media (TikTok, Reels, etc.)
+    bool use_cobalt = (url.find("tiktok.com") != std::string::npos || 
+                      url.find("instagram.com") != std::string::npos ||
+                      url.find("twitter.com") != std::string::npos ||
+                      url.find("x.com") != std::string::npos ||
+                      url.find("reddit.com") != std::string::npos);
+
+    if (use_cobalt) {
+        if (log_callback) log_callback("[Cobalt] Attempting high-speed retrieval...");
+        
+        // Synchronous-like request using dpp::cluster::request (we are in a detached thread)
+        std::string cobalt_url;
+        bool cobalt_success = false;
+        std::mutex cobalt_mtx;
+        std::condition_variable cobalt_cv;
+        bool cobalt_done = false;
+
+        nlohmann::json body = {
+            {"url", url},
+            {"videoQuality", "720"},
+            {"httpProxy", "none"},
+            {"fullAudio", false},
+            {"muteAudio", false},
+            {"removeWtm", true},
+            {"isAudioOnly", false},
+            {"isNoTTWatermark", true}
+        };
+
+        bot.request("https://api.cobalt.tools/api/json", dpp::m_post, [&cobalt_url, &cobalt_success, &cobalt_done, &cobalt_cv, &cobalt_mtx](const dpp::http_request_completion_t& response) {
+            std::lock_guard<std::mutex> lock(cobalt_mtx);
+            if (response.status == 200) {
+                try {
+                    auto j = nlohmann::json::parse(response.body);
+                    if (j.contains("url") && j["url"].is_string()) {
+                        cobalt_url = j["url"];
+                        cobalt_success = true;
+                    } else if (j.contains("status") && j["status"] == "redirect" && j.contains("url")) {
+                        cobalt_url = j["url"];
+                        cobalt_success = true;
+                    }
+                } catch (...) {}
+            }
+            cobalt_done = true;
+            cobalt_cv.notify_one();
+        }, body.dump(), "application/json", {{"Accept", "application/json"}});
+
+        // Wait up to 10 seconds for Cobalt
+        std::unique_lock<std::mutex> lock(cobalt_mtx);
+        cobalt_cv.wait_for(lock, std::chrono::seconds(10), [&cobalt_done] { return cobalt_done; });
+
+        if (cobalt_success && !cobalt_url.empty()) {
+            if (log_callback) log_callback("[Cobalt] Success! Downloading direct stream...");
+            
+            // Use curl to download the direct stream to out_path
+            std::string curl_cmd = "curl -L -s -o " + out_path + " \"" + cobalt_url + "\"";
+            int curl_status = std::system(curl_cmd.c_str());
+            
+            if (curl_status == 0 && std::filesystem::exists(out_path) && std::filesystem::file_size(out_path) > 0) {
+                if (log_callback) log_callback("[Cobalt] Download complete. Finalizing...");
+                // Proceed to file size check and delivery (which is later in process_download_request)
+                // We'll skip the yt-dlp section by setting result = 0 and bypassing it
+                
+                // Fetch metadata if possible (yt-dlp is still good for this, or we can trust the file)
+                meta = fetch_metadata(url, cookie_path);
+                
+                // Continue to the bottom of the function logic
+                // For simplicity, we'll just set up variables to skip the main loop
+                goto cobalt_finalize;
+            }
+        }
+        if (log_callback) log_callback("[Cobalt] Failed or timed out. Falling back to yt-dlp...");
+    }
+
+    if (is_youtube) {
+        // ALWAYS try ios first because it bypasses the n-challenge solver requirements
+        // Then fallback to web_embedded and tv which support cookies for age-gated videos
+        extractor_args += " --extractor-args \"youtube:player-client=ios,web_embedded,tv\"";
+    }
+
+    // Try a few times with different binaries/settings
+
+
     // Attempt 1: Optimal mix based on cookie availability
-    int result = run_ytdlp(ytdlp_path, format_sel, extractor_args);
+    result = run_ytdlp(ytdlp_path, format_sel, extractor_args);
     
     if (result != 0 && is_youtube) {
         if (!cookie_path.empty()) {
@@ -850,6 +929,7 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
         return;
     }
 
+cobalt_finalize:
     // Build the rich embed if metadata was fetched successfully
     dpp::embed embed;
     if (meta.success) {
@@ -859,7 +939,7 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
         embed = bronx::create_embed(desc)
             .set_title(meta.title)
             .set_author(meta.uploader, "", "")
-            .set_image(meta.thumbnail)
+            .set_thumbnail(meta.thumbnail)
             .add_field("👁️ Views", meta.views, true)
             .add_field("❤️ Likes", meta.likes, true)
             .add_field("💬 Comments", meta.comments, true);
@@ -906,7 +986,10 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
     std::filesystem::remove_all(temp_dir);
 
     dpp::message msg;
-    if (meta.success) msg.add_embed(embed);
+    if (meta.success) {
+        embed.set_video("attachment://video.mp4");
+        msg.add_embed(embed);
+    }
     msg.add_file("video.mp4", vid_data);
     responder(msg);
 }

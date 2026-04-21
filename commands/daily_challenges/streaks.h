@@ -79,67 +79,31 @@ static void ensure_streak_tables(Database* db) {
 // DB helpers
 // ============================================================================
 
-struct UserStreak {
-    int current_streak;
-    int longest_streak;
-    std::string last_claim_date;
-    int total_claims;
-    int64_t total_bonus;
-};
-
-static std::string get_today_est_streak() {
-    auto now = std::chrono::system_clock::now();
-    time_t tnow = std::chrono::system_clock::to_time_t(now);
-    time_t est = tnow - 5 * 3600;
-    tm est_tm = *gmtime(&est);
-    char buf[11];
-    strftime(buf, sizeof(buf), "%Y-%m-%d", &est_tm);
-    return std::string(buf);
-}
-
-static std::string get_yesterday_est() {
-    auto now = std::chrono::system_clock::now();
-    time_t tnow = std::chrono::system_clock::to_time_t(now);
-    time_t est = tnow - 5 * 3600 - 86400; // yesterday EST
-    tm est_tm = *gmtime(&est);
-    char buf[11];
-    strftime(buf, sizeof(buf), "%Y-%m-%d", &est_tm);
-    return std::string(buf);
-}
-
-static UserStreak get_user_streak(Database* db, uint64_t user_id) {
-    UserStreak streak = {0, 0, "", 0, 0};
-    std::string sql = "SELECT current_streak, longest_streak, last_claim_date, total_claims, total_streak_bonus "
-                      "FROM daily_streaks WHERE user_id = " + std::to_string(user_id);
-    MYSQL_RES* res = economy::db_select(db, sql);
-    if (res) {
-        MYSQL_ROW row = mysql_fetch_row(res);
-        if (row) {
-            streak.current_streak = row[0] ? std::stoi(row[0]) : 0;
-            streak.longest_streak = row[1] ? std::stoi(row[1]) : 0;
-            streak.last_claim_date = row[2] ? row[2] : "";
-            streak.total_claims = row[3] ? std::stoi(row[3]) : 0;
-            streak.total_bonus = row[4] ? std::stoll(row[4]) : 0;
-        }
-        mysql_free_result(res);
-    }
-    return streak;
-}
+// Using bronx::db::Database::UserStreak instead of local struct
 
 // Called when user claims daily — updates streak
 static int64_t update_streak_on_daily_claim(Database* db, uint64_t user_id) {
-    ensure_streak_tables(db);
+    // Logic for today/yesterday EST
+    auto get_date_str = [](int offset_days) {
+        auto now = std::chrono::system_clock::now();
+        time_t tnow = std::chrono::system_clock::to_time_t(now);
+        time_t est = tnow - 5 * 3600 + (offset_days * 86400);
+        tm est_tm = *gmtime(&est);
+        char buf[11];
+        strftime(buf, sizeof(buf), "%Y-%m-%d", &est_tm);
+        return std::string(buf);
+    };
     
-    std::string today = get_today_est_streak();
-    std::string yesterday = get_yesterday_est();
+    std::string today_str = get_date_str(0);
+    std::string yesterday_str = get_date_str(-1);
     
-    auto streak = get_user_streak(db, user_id);
+    auto streak = db->get_daily_streak_stats(user_id);
     
     // Already claimed today
-    if (streak.last_claim_date == today) return 0;
+    if (streak.last_claim_date == today_str) return 0;
     
     int new_streak;
-    if (streak.last_claim_date == yesterday) {
+    if (streak.last_claim_date == yesterday_str) {
         // Consecutive — increment streak
         new_streak = streak.current_streak + 1;
     } else {
@@ -158,17 +122,8 @@ static int64_t update_streak_on_daily_claim(Database* db, uint64_t user_id) {
         }
     }
     
-    // Upsert streak data
-    std::string sql = "INSERT INTO daily_streaks (user_id, current_streak, longest_streak, last_claim_date, total_claims, total_streak_bonus) "
-                      "VALUES (" + std::to_string(user_id) + ", " + std::to_string(new_streak) + ", "
-                      + std::to_string(new_longest) + ", '" + today + "', 1, " + std::to_string(milestone_bonus) + ") "
-                      "ON DUPLICATE KEY UPDATE "
-                      "current_streak = " + std::to_string(new_streak) + ", "
-                      "longest_streak = " + std::to_string(new_longest) + ", "
-                      "last_claim_date = '" + today + "', "
-                      "total_claims = total_claims + 1, "
-                      "total_streak_bonus = total_streak_bonus + " + std::to_string(milestone_bonus);
-    economy::db_exec(db, sql);
+    // Update DB with prepared statement
+    db->update_daily_streak(user_id, new_streak, new_longest, today_str, milestone_bonus);
     
     // Award milestone bonus
     if (milestone_bonus > 0) {
@@ -190,11 +145,21 @@ inline Command* create_streak_command(Database* db) {
             uint64_t user_id = event.msg.author.id;
             db->ensure_user_exists(user_id);
             
-            auto streak = get_user_streak(db, user_id);
+            auto streak = db->get_daily_streak_stats(user_id);
             
-            // Check if streak is still active (not broken)
-            std::string today = get_today_est_streak();
-            std::string yesterday = get_yesterday_est();
+            // Logic for today/yesterday EST
+            auto get_date_str = [](int offset_days) {
+                auto now = std::chrono::system_clock::now();
+                time_t tnow = std::chrono::system_clock::to_time_t(now);
+                time_t est = tnow - 5 * 3600 + (offset_days * 86400);
+                tm est_tm = *gmtime(&est);
+                char buf[11];
+                strftime(buf, sizeof(buf), "%Y-%m-%d", &est_tm);
+                return std::string(buf);
+            };
+            
+            std::string today = get_date_str(0);
+            std::string yesterday = get_date_str(-1);
             bool streak_active = (streak.last_claim_date == today || streak.last_claim_date == yesterday);
             int display_streak = streak_active ? streak.current_streak : 0;
             
@@ -255,10 +220,21 @@ inline Command* create_streak_command(Database* db) {
             uint64_t user_id = event.command.get_issuing_user().id;
             db->ensure_user_exists(user_id);
             
-            auto streak = get_user_streak(db, user_id);
+            auto streak = db->get_daily_streak_stats(user_id);
             
-            std::string today = get_today_est_streak();
-            std::string yesterday = get_yesterday_est();
+            // Logic for today/yesterday EST
+            auto get_date_str = [](int offset_days) {
+                auto now = std::chrono::system_clock::now();
+                time_t tnow = std::chrono::system_clock::to_time_t(now);
+                time_t est = tnow - 5 * 3600 + (offset_days * 86400);
+                tm est_tm = *gmtime(&est);
+                char buf[11];
+                strftime(buf, sizeof(buf), "%Y-%m-%d", &est_tm);
+                return std::string(buf);
+            };
+            
+            std::string today = get_date_str(0);
+            std::string yesterday = get_date_str(-1);
             bool streak_active = (streak.last_claim_date == today || streak.last_claim_date == yesterday);
             int display_streak = streak_active ? streak.current_streak : 0;
             

@@ -21,7 +21,7 @@ namespace commands {
 void register_event_handlers(
     dpp::cluster& bot,
     OptimizedCommandHandler& cmd_handler,
-    Database& db,
+    bronx::db::Database& db,
     bronx::perf::AsyncStatWriter& async_stat_writer,
     bronx::snipe::MessageCache& message_cache,
     bronx::snipe::SnipeCache& snipe_cache,
