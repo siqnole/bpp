@@ -22,6 +22,7 @@
 #ifdef HAVE_LIBCURL
 #include "utility/steal.h"
 #include "utility/media.h"
+#include "utility/media_edit.h"
 #endif
 #include <vector>
 
@@ -63,6 +64,10 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
         cmds.push_back(utility::get_transcribe_command());
         cmds.push_back(utility::get_gif_command());
         cmds.push_back(utility::get_download_command());
+        // Media edit commands
+        for (auto* cmd : utility::get_media_edit_commands()) {
+            cmds.push_back(cmd);
+        }
 #endif
         // Privacy command (requires db)
         if (db) {

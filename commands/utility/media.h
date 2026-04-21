@@ -378,9 +378,8 @@ inline void process_gif_request(dpp::cluster& bot, dpp::attachment attachment, s
     out_file.write(response.body.data(), response.body.size());
     out_file.close();
 
-    // ffmpeg -i input -vf "fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" output.gif
-    // This provides high-quality GIFs by generating a custom palette for the video.
-    std::string cmd = "ffmpeg -y -i " + in_path + " -vf \"fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse\" " + out_path + " > /dev/null 2>&1";
+    // Optimized GIF settings: 10 second limit, 320p width, 12fps, and bayer dithering for smaller file size.
+    std::string cmd = "ffmpeg -y -i " + in_path + " -t 10 -vf \"fps=12,scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1\" " + out_path + " > /dev/null 2>&1";
     
     int result = std::system(cmd.c_str());
     if (result != 0) {
