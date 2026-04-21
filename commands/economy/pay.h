@@ -2,6 +2,7 @@
 #include "helpers.h"
 #include "../../database/operations/economy/server_economy_operations.h"
 #include "../daily_challenges/daily_stat_tracker.h"
+#include "../../server_logger.h"
 
 using namespace bronx::db::server_economy_operations;
 
@@ -254,6 +255,18 @@ inline Command* create_pay_command(Database* db) {
                 // Record stats for all three anti-bypass layers
                 record_pay_stats(db, event.msg.author.id, recipient_id, amount);
                 
+                // Log to economy-logs
+                if (guild_id) {
+                    dpp::embed log_emb = bronx::info("Economy Transaction: Payment")
+                        .set_color(0x00FF00)
+                        .add_field("Sender", "<@" + std::to_string(event.msg.author.id) + ">", true)
+                        .add_field("Recipient", "<@" + std::to_string(recipient_id) + ">", true)
+                        .add_field("Amount", "$" + format_number(amount), true);
+                    if (tax > 0) log_emb.add_field("Tax", "$" + format_number(tax), true);
+                    log_emb.set_timestamp(time(0));
+                    bronx::logger::ServerLogger::get().log_embed(*guild_id, bronx::logger::LOG_TYPE_ECONOMY, log_emb);
+                }
+                
                 std::string tax_display = "";
                 if (tax > 0) {
                     tax_display = "\n💸 " + std::to_string((int)tax_rate) + "% tax: $" + format_number(tax);
@@ -391,6 +404,18 @@ inline Command* create_pay_command(Database* db) {
                 
                 // Record stats for all three anti-bypass layers
                 record_pay_stats(db, sender_id, recipient_id, amount);
+                
+                // Log to economy-logs
+                if (guild_id) {
+                    dpp::embed log_emb = bronx::info("Economy Transaction: Payment")
+                        .set_color(0x00FF00)
+                        .add_field("Sender", "<@" + std::to_string(sender_id) + ">", true)
+                        .add_field("Recipient", "<@" + std::to_string(recipient_id) + ">", true)
+                        .add_field("Amount", "$" + format_number(amount), true);
+                    if (tax > 0) log_emb.add_field("Tax", "$" + format_number(tax), true);
+                    log_emb.set_timestamp(time(0));
+                    bronx::logger::ServerLogger::get().log_embed(*guild_id, bronx::logger::LOG_TYPE_ECONOMY, log_emb);
+                }
                 
                 std::string tax_display = "";
                 if (tax > 0) {

@@ -12,6 +12,7 @@
 #include "../../database/operations/moderation/infraction_config_operations.h"
 #include "../quiet_moderation/mod_log.h"
 #include "../../embed_style.h"
+#include "../../server_logger.h"
 
 #include <dpp/nlohmann/json.hpp>
 
@@ -119,6 +120,9 @@ inline void send_mod_log(dpp::cluster& bot, bronx::db::Database* db,
     }
 
     commands::quiet_moderation::send_embed_via_webhook(bot, channel, embed);
+
+    // Also send to central server logger (LOG_TYPE_MODERATION)
+    bronx::logger::ServerLogger::get().log_embed(guild_id, bronx::logger::LOG_TYPE_MODERATION, embed);
 }
 
 inline bool check_hierarchy(const dpp::guild& guild, dpp::snowflake actor_id, dpp::snowflake target_id) {

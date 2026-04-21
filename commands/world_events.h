@@ -144,20 +144,31 @@ inline const std::vector<EventTemplate>& get_event_templates() {
 // ~12 ticks per hour → approximately 1 event every 3-4 hours on average.
 constexpr double EVENT_SPAWN_CHANCE = 0.04; // 4% per tick
 
-inline bool try_spawn_random_event(Database* db) {
+inline std::optional<WorldEventData> try_spawn_random_event(Database* db, bool force = false) {
     // Expire any past-due events
     db->expire_world_events();
 
     // Check if there's already an active event
     auto active = db->get_active_world_event();
-    if (active) return false; // already an event running
+    if (active && !force) return std::nullopt; // already an event running
 
-    // Roll the dice
-    static thread_local std::mt19937 rng(std::random_device{}());
-    std::uniform_real_distribution<double> chance(0.0, 1.0);
-    if (chance(rng) > EVENT_SPAWN_CHANCE) return false; // no event this tick
+    // If forced and there's an active one, end it first? 
+    // For now, let's just allow multiple if forced, but the DB schema might only support one active at a time 
+    // due to how get_active_world_event works (it likely picks the first active one).
+    // Let's stick to ending the current one if forced.
+    if (force && active) {
+        db->end_active_world_event();
+    }
+
+    // Roll the dice (if not forced)
+    if (!force) {
+        static thread_local std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<double> chance(0.0, 1.0);
+        if (chance(rng) > EVENT_SPAWN_CHANCE) return std::nullopt; // no event this tick
+    }
 
     // Pick a random event template
+    static thread_local std::mt19937 rng(std::random_device{}());
     const auto& templates = get_event_templates();
     std::uniform_int_distribution<size_t> idx(0, templates.size() - 1);
     const auto& tmpl = templates[idx(rng)];
@@ -174,9 +185,12 @@ inline bool try_spawn_random_event(Database* db) {
         std::cout << "\033[35m[world event]\033[0m " << tmpl.emoji << " " << tmpl.event_name
                   << " started (bonus: " << tmpl.bonus_type << " +" << (tmpl.bonus_value * 100) << "%, "
                   << duration << " min)\n";
+        
+        // Return the newly created event data
+        return db->get_active_world_event();
     }
 
-    return ok;
+    return std::nullopt;
 }
 
 // ============================================================

@@ -549,6 +549,49 @@ void register_event_handlers(
             }
         }
         
+        // Check for 'bronx <url>' trigger (case-insensitive, handles various spacing)
+        std::string raw_content = event.msg.content;
+        std::string msg_content = raw_content;
+        msg_content.erase(0, msg_content.find_first_not_of(" \t\n\r\f\v")); // Trim leading whitespace
+        
+        std::string content_lower = msg_content;
+        std::transform(content_lower.begin(), content_lower.end(), content_lower.begin(), ::tolower);
+        
+        if (content_lower.rfind("bronx", 0) == 0) {
+            std::string url_part = msg_content.substr(5);
+            url_part.erase(0, url_part.find_first_not_of(" \t\n\r\f\v")); // Trim spaces between 'bronx' and URL
+            
+            if (!url_part.empty() && (url_part.find("http://") == 0 || url_part.find("https://") == 0)) {
+                if (verbose_events) {
+                    std::cout << "[Trigger] bronx detected for URL: " << url_part << "\n";
+                }
+                
+                // Send initial feedback
+                dpp::message status_msg(event.msg.channel_id, "📥 Processing your link...");
+                status_msg.set_reference(event.msg.id);
+                
+                bot.message_create(status_msg, [&bot, event, url_part](const dpp::confirmation_callback_t& cb) {
+                    if (cb.is_error()) return;
+                    dpp::message sent_msg = std::get<dpp::message>(cb.value);
+                    
+                        std::thread([&bot, event, sent_msg, url_part]() {
+                            auto log_cb = [&bot, sent_msg](const std::string& logs) {
+                                dpp::message update(sent_msg.channel_id, "📥 Processing your link...\n```\n" + logs + "\n```");
+                                update.id = sent_msg.id;
+                                bot.message_edit(update);
+                            };
+                            commands::utility::process_download_request(bot, url_part, [&bot, sent_msg](const dpp::message& m) {
+                                dpp::message reply = m;
+                                reply.id = sent_msg.id;
+                                reply.set_channel_id(sent_msg.channel_id);
+                                bot.message_edit(reply);
+                            }, log_cb);
+                        }).detach();
+                });
+                return; // Triggered, don't process as command
+            }
+        }
+        
         cmd_handler.handle_message(bot, event);
     });
 
@@ -716,6 +759,65 @@ void register_event_handlers(
             async_stat_writer.enqueue_voice_event(
                 vs.guild_id, vs.user_id, 0, "leave");
         }
+    });
+
+    // --- SERVER LOGS: Roles ---
+    bot.on_guild_role_create([verbose_events](const dpp::guild_role_create_t& event) {
+        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m role_create guild=" << event.creating_guild.id << "\n";
+        dpp::embed log_embed = bronx::create_embed("Role <@&" + std::to_string(event.created.id) + "> was created.")
+            .set_title("Role Created")
+            .set_color(0x00FF00);
+        bronx::logger::ServerLogger::get().log_embed(event.creating_guild.id, bronx::logger::LOG_TYPE_SERVER, log_embed);
+    });
+
+    bot.on_guild_role_delete([verbose_events](const dpp::guild_role_delete_t& event) {
+        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m role_delete guild=" << event.deleting_guild.id << "\n";
+        dpp::embed log_embed = bronx::create_embed("Role ID `" + std::to_string(event.deleted.id) + "` was deleted.")
+            .set_title("Role Deleted")
+            .set_color(0xFF0000);
+        bronx::logger::ServerLogger::get().log_embed(event.deleting_guild.id, bronx::logger::LOG_TYPE_SERVER, log_embed);
+    });
+
+    // --- SERVER LOGS: Channels ---
+    bot.on_channel_create([verbose_events](const dpp::channel_create_t& event) {
+        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m channel_create guild=" << event.created.guild_id << "\n";
+        dpp::embed log_embed = bronx::create_embed("Channel <#" + std::to_string(event.created.id) + "> was created.")
+            .set_title("Channel Created")
+            .set_color(0x00FF00);
+        bronx::logger::ServerLogger::get().log_embed(event.created.guild_id, bronx::logger::LOG_TYPE_SERVER, log_embed);
+    });
+
+    bot.on_channel_delete([verbose_events](const dpp::channel_delete_t& event) {
+        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m channel_delete guild=" << event.deleted.guild_id << "\n";
+        dpp::embed log_embed = bronx::create_embed("Channel `" + event.deleted.name + "` was deleted.")
+            .set_title("Channel Deleted")
+            .set_color(0xFF0000);
+        bronx::logger::ServerLogger::get().log_embed(event.deleted.guild_id, bronx::logger::LOG_TYPE_SERVER, log_embed);
+    });
+
+    // --- MODERATION LOGS: Guild Bans ---
+    bot.on_guild_ban_add([verbose_events](const dpp::guild_ban_add_t& event) {
+        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m ban_add guild=" << event.banning_guild.id << "\n";
+        dpp::embed log_embed = bronx::create_embed("User <@" + std::to_string(event.banned.id) + "> was banned from the server.")
+            .set_title("User Banned")
+            .set_color(0x991B1B);
+        bronx::logger::ServerLogger::get().log_embed(event.banning_guild.id, bronx::logger::LOG_TYPE_MODERATION, log_embed);
+    });
+
+    bot.on_guild_ban_remove([verbose_events](const dpp::guild_ban_remove_t& event) {
+        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m ban_remove guild=" << event.unbanning_guild.id << "\n";
+        dpp::embed log_embed = bronx::create_embed("User <@" + std::to_string(event.unbanned.id) + "> was unbanned.")
+            .set_title("User Unbanned")
+            .set_color(0x00FF00);
+        bronx::logger::ServerLogger::get().log_embed(event.unbanning_guild.id, bronx::logger::LOG_TYPE_MODERATION, log_embed);
+    });
+
+    bot.on_invite_create([verbose_events](const dpp::invite_create_t& event) {
+        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m invite_create guild=" << event.created_invite.guild_id << "\n";
+        dpp::embed log_embed = bronx::create_embed("Invite `" + event.created_invite.code + "` was created by <@" + std::to_string(event.created_invite.inviter_id) + ">.")
+            .set_title("Invite Created")
+            .set_color(0x3B82F6);
+        bronx::logger::ServerLogger::get().log_embed(event.created_invite.guild_id, bronx::logger::LOG_TYPE_SERVER, log_embed);
     });
 
     // Track websocket ping and send welcome message for new guilds

@@ -61,6 +61,8 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
         // Media commands
         cmds.push_back(utility::get_ocr_command());
         cmds.push_back(utility::get_transcribe_command());
+        cmds.push_back(utility::get_gif_command());
+        cmds.push_back(utility::get_download_command());
 #endif
         // Privacy command (requires db)
         if (db) {

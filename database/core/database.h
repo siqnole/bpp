@@ -339,6 +339,9 @@ public:
     // Helper method for stats-based leaderboards
     std::vector<LeaderboardEntry> get_stats_leaderboard(const std::string& stat_name, uint64_t guild_id, int limit, const std::string& emoji = "");
     
+    // Fetch top wealthy users in a specific guild (used for Raid Tax)
+    std::vector<LeaderboardEntry> get_guild_top_wealthy_users(uint64_t guild_id, int limit = 3);
+    
     // ========================================
     // LEVELING SYSTEM (unified: guild_id=0 → global, >0 → per-server)
     // ========================================

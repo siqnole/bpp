@@ -15,6 +15,7 @@
 #include "economy_core.h"
 #include "titles.h"
 #include "owner/gambling_audit.h"
+#include "world_events.h"
 
 #include <dpp/version.h>
 #include <fstream>
@@ -1298,6 +1299,34 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
             bot.message_create(msg);
         });
     cmds.push_back(&servers_cmd);
+
+    // World Event Spawn Command (Owner utility)
+    static Command spawnevent("spawnevent", "force a world event to spawn (owner only)", "owner", {"forceevent", "startevent"}, false,
+        [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+            if (!is_owner(event.msg.author.id)) {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::error("This command is restricted to the bot owner.")));
+                return;
+            }
+
+            auto result = commands::world_events::try_spawn_random_event(db, true); // true = force spawn
+
+            if (result) {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::success("🌍 **World Event Triggered!**\nStarted: **" + result->event_name + "** (" + result->emoji + ")")));
+                
+                // Optional: trigger the announcement broadcast normally sent by the bot
+                // For now, let's assume the user wants to see the announcement 
+                // However, try_spawn_random_event doesn't broadcast internally (it only updates DB and logs to console).
+                // I should add a broadcast call here if I want the announcement to appear.
+                auto embed = commands::world_events::build_event_start_embed(*result);
+                bot.message_create(dpp::message(event.msg.channel_id).add_embed(embed));
+            } else {
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::error("Failed to spawn world event. Check console for details.")));
+            }
+        });
+    cmds.push_back(&spawnevent);
     
     // mysql eval command
     static Command mysql_cmd("mysql", "execute arbitrary mysql statement (owner only)", "owner", {"sql"}, false,

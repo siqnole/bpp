@@ -491,5 +491,68 @@ void Database::update_leaderboard_cache() {
     // Placeholder for cache update
 }
 
+std::vector<LeaderboardEntry> Database::get_guild_top_wealthy_users(uint64_t guild_id, int limit) {
+    std::vector<LeaderboardEntry> entries;
+    auto conn = pool_->acquire();
+    if (!conn) return entries;
+
+    // Join with server_xp to verify guild membership. 
+    // We only tax users with at least 1,000,000 networth.
+    std::string query = "SELECT u.user_id, (u.wallet + u.bank) as networth "
+                       "FROM users u "
+                       "JOIN server_xp s ON u.user_id = s.user_id "
+                       "WHERE s.guild_id = ? AND (u.wallet + u.bank) >= 1000000 "
+                       "GROUP BY u.user_id "
+                       "ORDER BY networth DESC LIMIT ?";
+
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (!stmt) {
+        pool_->release(conn);
+        return entries;
+    }
+
+    if (mysql_stmt_prepare(stmt, query.c_str(), query.length()) != 0) {
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return entries;
+    }
+
+    MYSQL_BIND bind[2] = {};
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[0].buffer = &guild_id;
+    bind[0].is_unsigned = 1;
+
+    bind[1].buffer_type = MYSQL_TYPE_LONG;
+    bind[1].buffer = &limit;
+
+    mysql_stmt_bind_param(stmt, bind);
+
+    if (mysql_stmt_execute(stmt) == 0) {
+        MYSQL_BIND result_bind[2] = {};
+        uint64_t user_id;
+        int64_t networth;
+
+        result_bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
+        result_bind[0].buffer = &user_id;
+        result_bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+        result_bind[1].buffer = &networth;
+
+        mysql_stmt_bind_result(stmt, result_bind);
+
+        int rank = 1;
+        while (mysql_stmt_fetch(stmt) == 0) {
+            LeaderboardEntry entry;
+            entry.user_id = user_id;
+            entry.value = networth;
+            entry.rank = rank++;
+            entries.push_back(entry);
+        }
+    }
+
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return entries;
+}
+
 } // namespace db
 } // namespace bronx

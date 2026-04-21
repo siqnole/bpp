@@ -3,6 +3,7 @@
 #include "embed_style.h"
 #include "database/core/database.h"
 #include "economy_core.h"
+#include "../server_logger.h"
 #include <dpp/dpp.h>
 #include <map>
 #include <set>
@@ -48,7 +49,8 @@ struct RaidSession {
     uint64_t guild_id;
     uint64_t host_id;
     int64_t  entry_fee;
-    int64_t  total_pool;        // entry_fee × members × 2
+    int64_t  total_pool;        // (entry_fee × members × 2) + taxed_pool
+    int64_t  taxed_pool = 0;    // amount taken from the rich
 
     std::vector<uint64_t>       members;
     std::map<uint64_t, int>     player_hp;          // 100 starting HP
@@ -115,7 +117,10 @@ static dpp::message build_raid_lobby(const RaidSession& s) {
         "**Raiders (" + std::to_string(s.members.size()) + "/8):**\n";
     for (uint64_t mid : s.members)
         desc += "• <@" + std::to_string(mid) + ">\n";
-    desc += "\n*<@" + std::to_string(s.host_id) + "> can start early or wait 30 seconds (min 2 players)*";
+    if (s.taxed_pool > 0) {
+        desc += "\n💎 **Necessary Poison Active**\n"
+                "The server's elite have 'donated' **$" + format_number(s.taxed_pool) + "** to the prize pool!";
+    }
 
     dpp::component join_btn = dpp::component()
         .set_type(dpp::cot_button)
@@ -142,7 +147,8 @@ static const std::vector<std::string> ROUND_NAMES = {"", "Round 1 — Charge!", 
 static dpp::message build_raid_round(const RaidSession& s) {
     std::string desc = "**🐉 Boss Raid — " + ROUND_NAMES[s.round] + "**\n\n"
         "**Boss HP:**\n" + boss_hp_bar(s.boss_hp, s.boss_hp_max) +
-        "\n**Raiders:**\n";
+        "\n**Prize Pool:** **$" + format_number(s.total_pool) + "**" + (s.taxed_pool > 0 ? " (💎 Necessary Poison active)" : "") +
+        "\n\n**Raiders:**\n";
     for (uint64_t mid : s.members) {
         int hp = s.player_hp.count(mid) ? s.player_hp.at(mid) : 0;
         bool acted = s.round_acted.count(mid) > 0;
@@ -215,6 +221,10 @@ static void execute_raid_payout(dpp::cluster& bot, Database* db, uint64_t channe
             result_desc += "<@" + std::to_string(mid) + "> — dmg: " + format_number(dmg)
                 + " | " + status + " → **$" + format_number(payout) + "**\n";
         }
+    }
+
+    if (s.taxed_pool > 0) {
+        result_desc += "\n*This raid was subsidized by **$" + format_number(s.taxed_pool) + "** from the server's elite via Necessary Poison.*";
     }
 
     dpp::message msg;
@@ -337,7 +347,49 @@ static void launch_raid(dpp::cluster& bot, Database* db, uint64_t channel_id) {
         it->second.round        = 1;
         it->second.boss_hp_max  = (int64_t)n * 5000;
         it->second.boss_hp      = it->second.boss_hp_max;
-        it->second.total_pool   = it->second.entry_fee * (int64_t)n * 2LL;
+        
+        // --- Necessary Poison: Tax the Top 3 Richest ---
+        auto wealthy_users = db->get_guild_top_wealthy_users(it->second.guild_id, 3);
+        int64_t total_taxed = 0;
+        for (auto& wu : wealthy_users) {
+            if (wu.value < 1000000) continue; // targeting users with $1M+
+            
+            int64_t tax = (int64_t)((double)wu.value * 0.025); // 2.5% tax
+            if (tax < 5000) tax = 5000; // minimum impact
+            
+            // Deduct from wallet first, then bank
+            int64_t wallet = db->get_wallet(wu.user_id);
+            if (wallet >= tax) {
+                db->update_wallet(wu.user_id, -tax);
+            } else {
+                int64_t remaining = tax - wallet;
+                db->update_wallet(wu.user_id, -wallet);
+                db->update_bank(wu.user_id, -remaining);
+            }
+            total_taxed += tax;
+
+            // Notify the victim (async)
+            uint64_t victim_id = wu.user_id;
+            uint64_t g_id = it->second.guild_id;
+            std::string tax_str = format_number(tax);
+            bot.direct_message_create(victim_id, dpp::message("💎 **Necessary Poison: Wealth Redistribution**\n\nThe server elite must provide. You have been taxed **$" + tax_str + "** (2.5%) to fund a local Boss Raid. Thank you for your service."), [victim_id](const dpp::confirmation_callback_t& cb){});
+        }
+        
+        it->second.taxed_pool = total_taxed;
+        it->second.total_pool = (it->second.entry_fee * (int64_t)n * 2LL) + total_taxed;
+
+        // Log "Necessary Poison" to economy-logs
+        if (total_taxed > 0) {
+            dpp::embed log_emb = bronx::info("Economy Transaction: Necessary Poison")
+                .set_color(0x3B82F6)
+                .set_title("💎 Wealth Redistribution")
+                .add_field("Total Taxed", "$" + format_number(total_taxed), true)
+                .add_field("Victims", std::to_string(wealthy_users.size()), true)
+                .add_field("Raid Target", "Boss Raid in <#" + std::to_string(it->second.channel_id) + ">", false);
+            log_emb.set_timestamp(time(0));
+            bronx::logger::ServerLogger::get().log_embed(it->second.guild_id, bronx::logger::LOG_TYPE_ECONOMY, log_emb);
+        }
+
         for (uint64_t mid : it->second.members) {
             it->second.player_hp[mid]    = 100;
             it->second.damage_dealt[mid] = 0;
