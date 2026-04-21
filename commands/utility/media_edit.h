@@ -46,7 +46,8 @@ static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
     {"crt", {"CRT", "Retro TV scanlines", "geq=r='if(mod(Y,2),R,R*0.5)':g='if(mod(Y,2),G,G*0.5)':b='if(mod(Y,2),B,B*0.5)',vignette"}},
     {"pixelsort", {"Pixelsort", "Digital smear effect", "transpose,boxblur=20:1,transpose"}},
     {"hyperpixel", {"Hyperpixel", "Extreme low-res scaling", "scale=iw/20:-1,scale=iw*20:-1:flags=neighbor"}},
-    {"datamosh", {"Datamosh", "Melty motion interpolation", "minterpolate=fps=15:scd=none:me_mode=bidir:mi_mode=mci", true}},
+    {"datamosh", {"Datamosh", "Pixel bleed glitch", "mpdecimate,lagfun=decay=0.98:range=50,scale=iw/2:-1,scale=iw*2:-1:flags=neighbor", true}},
+    {"melt", {"Melt", "Liquification effect", "minterpolate=fps=20:scd=none:me_mode=bidir:mi_mode=mci", true}},
     {"smear", {"Smear", "Ghostly motion trails", "lagfun=decay=0.95:range=24", true}}
 };
 
@@ -144,26 +145,9 @@ inline void handle_media_edit_text(dpp::cluster& bot, const dpp::message_create_
     auto it = EFFECT_REGISTRY.find(effect_key);
     if (it == EFFECT_REGISTRY.end() && effect_key != "random") return;
 
-    std::string filter;
-    std::string effect_name;
-
-    if (effect_key == "random") {
-        std::vector<std::string> keys;
-        for (auto const& [key, val] : EFFECT_REGISTRY) keys.push_back(key);
-        std::random_device rd;
-        std::mt19937 g(rd());
-        std::shuffle(keys.begin(), keys.end(), g);
-        
-        filter = EFFECT_REGISTRY.at(keys[0]).filter + "," + EFFECT_REGISTRY.at(keys[1]).filter + "," + EFFECT_REGISTRY.at(keys[2]).filter;
-        effect_name = "Random (3x)";
-    } else {
-        filter = it->second.filter;
-        effect_name = it->second.name;
-    }
-
     dpp::message msg = event.msg;
     
-    auto process_msg = [&bot, event, filter, effect_name](const dpp::message& target_msg) {
+    auto process_msg = [&bot, event, it, effect_key](const dpp::message& target_msg) {
         if (target_msg.attachments.empty()) {
              bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No media found to edit.").set_reference(event.msg.id));
              return;
@@ -183,8 +167,42 @@ inline void handle_media_edit_text(dpp::cluster& bot, const dpp::message_create_
             return;
         }
 
+        bool is_animated = (found_attachment->content_type == "image/gif" || found_attachment->content_type.find("video/") != std::string::npos);
+        
+        std::string filter;
+        std::string final_effect_name;
+
+        // Selection Logic
+        if (effect_key == "random") {
+            std::vector<std::string> keys;
+            for (auto const& [key, val] : EFFECT_REGISTRY) {
+                // If static, skip animated_only effects
+                if (!is_animated && val.animated_only) continue;
+                keys.push_back(key);
+            }
+
+            if (keys.size() < 3) {
+                 bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Not enough compatible effects found for this file type.").set_reference(event.msg.id));
+                 return;
+            }
+
+            std::random_device rd;
+            std::mt19937 g(rd());
+            std::shuffle(keys.begin(), keys.end(), g);
+            
+            filter = EFFECT_REGISTRY.at(keys[0]).filter + "," + EFFECT_REGISTRY.at(keys[1]).filter + "," + EFFECT_REGISTRY.at(keys[2]).filter;
+            final_effect_name = "Random (" + EFFECT_REGISTRY.at(keys[0]).name + " + " + EFFECT_REGISTRY.at(keys[1]).name + " + " + EFFECT_REGISTRY.at(keys[2]).name + ")";
+        } else {
+            if (!is_animated && it->second.animated_only) {
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " The **" + it->second.name + "** effect only works on animated GIFs or Videos.").set_reference(event.msg.id));
+                return;
+            }
+            filter = it->second.filter;
+            final_effect_name = it->second.name;
+        }
+
         dpp::attachment attachment = *found_attachment;
-        bot.message_create(dpp::message(event.msg.channel_id, "✨ Applying **" + effect_name + "**...").set_reference(event.msg.id), [&bot, event, attachment, filter](const dpp::confirmation_callback_t& cb) {
+        bot.message_create(dpp::message(event.msg.channel_id, "✨ Applying **" + final_effect_name + "**...").set_reference(event.msg.id), [&bot, event, attachment, filter](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) return;
             dpp::message status_msg = std::get<dpp::message>(cb.value);
 
