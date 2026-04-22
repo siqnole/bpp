@@ -37,13 +37,15 @@ extern ::std::map<uint64_t, RRMessage> reaction_roles;
 void set_reactionrole_db(bronx::db::Database* db);
 void sync_existing_reactions(dpp::cluster& bot, uint64_t message_id, uint64_t channel_id,
                              const std::string& emoji_reaction, uint64_t role_id,
-                             uint64_t guild_id, uint64_t after_user = 0);
+                             uint64_t guild_id, uint64_t after_user = 0,
+                             std::function<void()> on_complete = {});
 void load_persistent_reaction_roles(dpp::cluster& bot);
 void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t message_id,
                      uint64_t guild_id, uint64_t user_id,
                      std::function<void(const dpp::embed&)> reply_embed,
                      std::function<void(dpp::message)> reply_msg);
 Command* get_reactionrole_command();
+Command* get_rrsync_command();
 void register_reactionrole_interactions(dpp::cluster& bot);
 
 } // namespace utility

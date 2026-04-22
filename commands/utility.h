@@ -45,6 +45,7 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
         cmds.push_back(utility::get_poll_command());
         cmds.push_back(utility::get_cleanup_command());
         cmds.push_back(utility::get_reactionrole_command());
+        cmds.push_back(utility::get_rrsync_command());
         cmds.push_back(utility::get_autopurge_command());
         cmds.push_back(utility::get_prefix_command());
         // status commands require handler pointer

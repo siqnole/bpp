@@ -133,49 +133,81 @@ static ::std::string normalize_emoji_for_reaction(::std::string s);
 // user who already reacted but may not have the role. Handles pagination (Discord caps at 100).
 // PERFORMANCE FIX: Staggers guild_member_add_role calls via timers (1 per 500ms)
 // to avoid flooding the REST queue and delaying command responses.
+struct SyncTask {
+    uint64_t message_id;
+    uint64_t channel_id;
+    std::string emoji_reaction;
+    uint64_t role_id;
+    uint64_t guild_id;
+};
+
 void sync_existing_reactions(dpp::cluster& bot, uint64_t message_id, uint64_t channel_id,
                                     const std::string& emoji_reaction, uint64_t role_id,
-                                    uint64_t guild_id, uint64_t after_user) {
+                                    uint64_t guild_id, uint64_t after_user,
+                                    std::function<void()> on_complete) {
     if (guild_id == 0) return;
     bot.message_get_reactions(message_id, channel_id, emoji_reaction, 0, after_user, 100,
-        [&bot, message_id, channel_id, emoji_reaction, role_id, guild_id](const dpp::confirmation_callback_t& cb) {
+        [&bot, message_id, channel_id, emoji_reaction, role_id, guild_id, on_complete](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
                 std::cerr << "[reaction-roles] sync: failed to fetch reactions: " << cb.get_error().message << std::endl;
+                if (on_complete) on_complete();
                 return;
             }
             auto users = std::get<dpp::user_map>(cb.value);
             uint64_t last_id = 0;
-            // Collect non-bot user IDs, then stagger the role-add calls
             auto user_ids = std::make_shared<std::vector<uint64_t>>();
             for (const auto& [uid, user] : users) {
                 if (user.is_bot()) continue;
                 user_ids->push_back(static_cast<uint64_t>(uid));
                 last_id = static_cast<uint64_t>(uid);
             }
-            // Stagger: process one role-add per second via a repeating timer
+
+            auto finalize_page = [&bot, users, message_id, channel_id, emoji_reaction, role_id, guild_id, last_id, on_complete]() {
+                if (users.size() >= 100 && last_id != 0) {
+                    bot.start_timer([&bot, message_id, channel_id, emoji_reaction, role_id, guild_id, last_id, on_complete](dpp::timer t) {
+                        bot.stop_timer(t);
+                        sync_existing_reactions(bot, message_id, channel_id, emoji_reaction, role_id, guild_id, last_id, on_complete);
+                    }, 5); // 5s between pages
+                } else {
+                    if (on_complete) on_complete();
+                }
+            };
+
             if (!user_ids->empty()) {
                 auto idx = std::make_shared<size_t>(0);
-                bot.start_timer([&bot, guild_id, role_id, user_ids, idx](dpp::timer t) {
+                bot.start_timer([&bot, guild_id, role_id, user_ids, idx, finalize_page](dpp::timer t) {
                     if (*idx >= user_ids->size()) {
                         bot.stop_timer(t);
+                        finalize_page();
                         return;
                     }
                     uint64_t uid = (*user_ids)[*idx];
                     (*idx)++;
                     bot.guild_member_add_role(guild_id, uid, role_id, [uid](const dpp::confirmation_callback_t& rcb) {
-                        if (rcb.is_error()) {
-                            std::cerr << "[reaction-roles] sync: could not add role to " << uid << ": " << rcb.get_error().message << std::endl;
+                        if (rcb.is_error() && rcb.get_error().code != 50013) { // Ignore missing perms, log others
+                             std::cerr << "[reaction-roles] sync: could not add role to " << uid << ": " << rcb.get_error().message << std::endl;
                         }
                     });
-                }, 1); // 1 role-add per second
+                }, 2); // Increased to 2s per role-add for safety
+            } else {
+                finalize_page();
             }
-            // Paginate if we got a full page — add a 5s delay before next page
-            // to let the current batch of role-adds drain first
-            if (users.size() >= 100 && last_id != 0) {
-                bot.start_timer([&bot, message_id, channel_id, emoji_reaction, role_id, guild_id, last_id](dpp::timer) {
-                    sync_existing_reactions(bot, message_id, channel_id, emoji_reaction, role_id, guild_id, last_id);
-                }, 5, [](dpp::timer){});
-            }
+        });
+}
+
+void process_sync_queue(dpp::cluster& bot, std::shared_ptr<std::vector<SyncTask>> queue, size_t index) {
+    if (index >= queue->size()) {
+        std::cout << "[reaction-roles] all sync tasks completed" << std::endl;
+        return;
+    }
+    const auto& task = (*queue)[index];
+    sync_existing_reactions(bot, task.message_id, task.channel_id, task.emoji_reaction, task.role_id, task.guild_id, 0,
+        [&bot, queue, index]() {
+            // Wait 2s between different emojis to let Discord's internal bucket settle
+            bot.start_timer([&bot, queue, index](dpp::timer t) {
+                bot.stop_timer(t);
+                process_sync_queue(bot, queue, index + 1);
+            }, 2);
         });
 }
 
@@ -476,7 +508,8 @@ struct RRCheckSession {
     uint64_t user_id;        // who initiated
     std::vector<PendingRREmoji> emojis;          // all unmapped emojis
     std::vector<std::pair<uint64_t, std::string>> guild_roles; // cached (id, name)
-    size_t page;             // current page (0-indexed, 5 items per page)
+    size_t page;             // current page of emojis (0-indexed, 4 items per page)
+    size_t role_page;        // current page of roles (0-indexed, 25 items per page)
     size_t answered_on_page; // how many dropdowns on the current page have been answered
     std::chrono::steady_clock::time_point created_at; // for session expiry
 };
@@ -506,13 +539,14 @@ static std::string rr_session_key(uint64_t message_id, uint64_t user_id) {
 // Build / rebuild the check message for the current page of a session.
 static dpp::message build_check_page(const RRCheckSession& s) {
     dpp::message resp;
-    size_t start = s.page * 5;
-    size_t end = std::min(start + 5, s.emojis.size());
-    size_t total_pages = (s.emojis.size() + 4) / 5;
+    size_t start = s.page * 4;
+    size_t end = std::min(start + 4, s.emojis.size());
+    size_t total_pages = (s.emojis.size() + 3) / 4;
 
     for (size_t i = start; i < end; ++i) {
         const auto& em = s.emojis[i];
         std::string emoji_display;
+        std::string emoji_plain = em.emoji_str; // For text-only placeholders
         if (em.emoji_id != 0)
             emoji_display = "<:" + em.emoji_str + ":" + std::to_string(em.emoji_id) + ">";
         else
@@ -522,35 +556,61 @@ static dpp::message build_check_page(const RRCheckSession& s) {
         std::string custom_id = "rr_chk_" + std::to_string(s.message_id) + "_" + std::to_string(i) + "_" + std::to_string(s.user_id);
 
         if (em.assigned_role != 0) {
-            // already answered — show disabled select with the chosen role
             dpp::role* r = dpp::find_role(em.assigned_role);
             std::string role_label = r ? r->name : std::to_string(em.assigned_role);
 
             dpp::component select;
             select.set_type(dpp::cot_selectmenu)
-                  .set_placeholder(emoji_display + " → " + role_label + " " + bronx::EMOJI_CHECK)
+                  .set_placeholder(emoji_plain + " → " + role_label + " ✅")
                   .set_id(custom_id)
                   .set_disabled(true);
-            // need at least one option even if disabled
             select.add_select_option(dpp::select_option(role_label, std::to_string(em.assigned_role)));
             resp.add_component(dpp::component().add_component(select));
         } else {
             dpp::component select;
             select.set_type(dpp::cot_selectmenu)
-                  .set_placeholder("what role is " + emoji_display + " for?")
+                  .set_placeholder("what role is " + emoji_plain + " for?")
                   .set_id(custom_id);
-            for (const auto& [role_id, role_name] : s.guild_roles) {
+            
+            size_t r_start = s.role_page * 25;
+            size_t r_end = std::min(r_start + 25, s.guild_roles.size());
+            for (size_t ri = r_start; ri < r_end; ++ri) {
+                const auto& [role_id, role_name] = s.guild_roles[ri];
                 select.add_select_option(dpp::select_option(role_name, std::to_string(role_id)));
             }
             resp.add_component(dpp::component().add_component(select));
         }
     }
 
+    // Role pagination row (5th row)
+    size_t total_role_pages = (s.guild_roles.size() + 24) / 25;
+    if (total_role_pages > 1) {
+        dpp::component nav;
+        
+        dpp::component prev;
+        prev.set_type(dpp::cot_button).set_label("Prev Roles").set_style(dpp::cos_secondary)
+            .set_id("rr_chk_rprev_" + std::to_string(s.message_id) + "_" + std::to_string(s.user_id))
+            .set_disabled(s.role_page == 0);
+        
+        dpp::component info;
+        info.set_type(dpp::cot_button).set_label("Roles " + std::to_string(s.role_page + 1) + "/" + std::to_string(total_role_pages)).set_style(dpp::cos_secondary)
+            .set_id("rr_chk_rinfo_" + std::to_string(s.message_id) + "_" + std::to_string(s.user_id))
+            .set_disabled(true);
+
+        dpp::component next;
+        next.set_type(dpp::cot_button).set_label("Next Roles").set_style(dpp::cos_secondary)
+            .set_id("rr_chk_rnext_" + std::to_string(s.message_id) + "_" + std::to_string(s.user_id))
+            .set_disabled(s.role_page + 1 >= total_role_pages);
+
+        nav.add_component(prev).add_component(info).add_component(next);
+        resp.add_component(nav);
+    }
+
     // summary text
     size_t total_done = 0;
     for (const auto& em : s.emojis) if (em.assigned_role != 0) ++total_done;
     std::string status = "assigned " + std::to_string(total_done) + "/" + std::to_string(s.emojis.size());
-    if (total_pages > 1) status += "  •  page " + std::to_string(s.page + 1) + "/" + std::to_string(total_pages);
+    if (total_pages > 1) status += "  •  emoji page " + std::to_string(s.page + 1) + "/" + std::to_string(total_pages);
 
     resp.add_embed(bronx::info("please remind me, what role is each emoji for?\n" + status));
     return resp;
@@ -581,6 +641,68 @@ static dpp::message build_check_confirm(const RRCheckSession& s) {
     resp.add_component(dpp::component().add_component(btn));
 
     return resp;
+}
+
+// Scan message content for role mentions/names and emoji names/markup to pre-fill assignments.
+static void attempt_auto_map(RRCheckSession& s, const std::string& content) {
+    if (content.empty()) return;
+
+    std::stringstream ss(content);
+    std::string line;
+    std::regex role_mention_re("<@&(\\d+)>");
+    std::regex emoji_markup_re("<a?:[a-zA-Z0-9_]+:(\\d+)>");
+
+    while (std::getline(ss, line)) {
+        if (line.empty()) continue;
+
+        uint64_t found_role = 0;
+        std::smatch m;
+
+        // 1. Try to find a role ID via mention
+        if (std::regex_search(line, m, role_mention_re)) {
+            found_role = std::stoull(m[1].str());
+        } else {
+            // 2. Try to find a role by name (case-insensitive)
+            std::string lower_line = line;
+            std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+            for (const auto& [rid, rname] : s.guild_roles) {
+                std::string lower_rname = rname;
+                std::transform(lower_rname.begin(), lower_rname.end(), lower_rname.begin(), ::tolower);
+                if (lower_line.find(lower_rname) != std::string::npos) {
+                    found_role = rid;
+                    break;
+                }
+            }
+        }
+
+        if (found_role == 0) continue;
+
+        // 3. Try to find a corresponding emoji ID in the line
+        uint64_t found_emoji_id = 0;
+        if (std::regex_search(line, m, emoji_markup_re)) {
+            found_emoji_id = std::stoull(m[1].str());
+        }
+
+        // 4. Match with unassigned emojis in the session
+        for (auto& em : s.emojis) {
+            if (em.assigned_role != 0) continue;
+
+            bool match = false;
+            if (found_emoji_id != 0 && em.emoji_id == found_emoji_id) {
+                match = true;
+            } else if (!em.emoji_str.empty()) {
+                // Simple check for unicode emoji or shortname presence
+                if (line.find(em.emoji_str) != std::string::npos) {
+                    match = true;
+                }
+            }
+
+            if (match) {
+                em.assigned_role = found_role;
+                break;
+            }
+        }
+    }
 }
 
 // Handle "rr check": fetch the target message, find reactions that the bot made,
@@ -659,7 +781,6 @@ void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t message_id
             reply_embed(bronx::error("no assignable roles found in this server"));
             return;
         }
-        if (guild_roles.size() > 25) guild_roles.resize(25);
 
         // create session
         cleanup_expired_check_sessions(); // clean up stale sessions
@@ -671,14 +792,28 @@ void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t message_id
         session.emojis = std::move(unmapped);
         session.guild_roles = std::move(guild_roles);
         session.page = 0;
+        session.role_page = 0;
         session.answered_on_page = 0;
         session.created_at = std::chrono::steady_clock::now();
 
+        // [AUTO-PARSING]
+        attempt_auto_map(session, msg.content);
+
+        // check if all emojis total are already done via auto-mapping
+        size_t total_done = 0;
+        for (const auto& em : session.emojis) if (em.assigned_role != 0) ++total_done;
+        
         std::string key = rr_session_key(message_id, user_id);
         {
             std::lock_guard<std::mutex> lock(rr_check_mutex);
             rr_check_sessions[key] = std::move(session);
-            reply_msg(build_check_page(rr_check_sessions[key]));
+            
+            if (total_done == rr_check_sessions[key].emojis.size()) {
+                // All mapped! Skip to summary
+                reply_msg(build_check_confirm(rr_check_sessions[key]));
+            } else {
+                reply_msg(build_check_page(rr_check_sessions[key]));
+            }
         }
     });
 }
@@ -795,12 +930,12 @@ Command* get_reactionrole_command() {
                 }
                 // ---- rr remove <messageid|^> <emoji> ----
                 if (first == "remove" || first == "delete" || first == "rm") {
-                    if (args.size() < 3) {
+                    if (args.size() < 4) {
                         bronx::send_message(bot, event, bronx::error("usage: rr remove <messageid|messagelink|^> <emoji>"));
                         return;
                     }
                     uint64_t channel_id = 0, message_id = 0;
-                    if (args[1] == "^") {
+                    if (args[2] == "^") {
                         // Use message_reference if replying, otherwise fetch above
                         if (event.msg.message_reference.message_id != 0) {
                             message_id = static_cast<uint64_t>(event.msg.message_reference.message_id);
@@ -811,7 +946,7 @@ Command* get_reactionrole_command() {
                             // async fetch — handle in continuation
                             uint64_t ch_id = event.msg.channel_id;
                             uint64_t cur_msg = static_cast<uint64_t>(event.msg.id);
-                            std::string emoji_arg = args[2];
+                            std::string emoji_arg = args[3];
                             uint64_t guild_id = static_cast<uint64_t>(event.msg.guild_id);
                             bot.messages_get(ch_id, 0, 0, 0, 3, [&bot, event, ch_id, cur_msg, emoji_arg, guild_id](const dpp::confirmation_callback_t& cb) {
                                 if (cb.is_error()) {
@@ -864,13 +999,13 @@ Command* get_reactionrole_command() {
                             return;
                         }
                     } else {
-                        if (!parse_message_ref(args[1], event.msg.channel_id, channel_id, message_id)) {
+                        if (!parse_message_ref(args[2], event.msg.channel_id, channel_id, message_id)) {
                             bronx::send_message(bot, event, bronx::error("invalid message id or link"));
                             return;
                         }
                     }
                     // synchronous path (message_id resolved)
-                    std::string emoji_arg = args[2];
+                    std::string emoji_arg = args[3];
                     auto [emoji_id, emoji_str] = parse_emoji_raw(emoji_arg);
                     std::string emoji_norm = normalize_emoji_for_reaction(emoji_arg);
                     auto it = reaction_roles.find(message_id);
@@ -901,6 +1036,81 @@ Command* get_reactionrole_command() {
                     }
                     if (!found) {
                         bronx::send_message(bot, event, bronx::error("no matching reaction role found for that emoji"));
+                    }
+                    return;
+                }
+                // ---- rr sync [messageid|^] ----
+                if (first == "sync") {
+                    uint64_t guild_id = static_cast<uint64_t>(event.msg.guild_id);
+                    
+                    auto perform_sync = [&bot, event, guild_id](uint64_t msg_id) {
+                        auto it = reaction_roles.find(msg_id);
+                        if (it == reaction_roles.end()) {
+                            bronx::send_message(bot, event, bronx::error("no reaction roles found on that message"));
+                            return;
+                        }
+                        
+                        int count = 0;
+                        for (const auto& e : it->second.entries) {
+                            sync_existing_reactions(bot, msg_id, it->second.channel_id, e.raw, e.role_id, guild_id);
+                            count++;
+                        }
+                        bronx::send_message(bot, event, bronx::success("syncing " + std::to_string(count) + " reaction role(s) on [message](https://discord.com/channels/" + std::to_string(guild_id) + "/" + std::to_string(it->second.channel_id) + "/" + std::to_string(msg_id) + ")"));
+                    };
+
+                    if (args.size() >= 3) {
+                        if (args[2] == "^") {
+                            if (event.msg.message_reference.message_id != 0) {
+                                perform_sync(static_cast<uint64_t>(event.msg.message_reference.message_id));
+                            } else {
+                                uint64_t ch_id = event.msg.channel_id;
+                                uint64_t cur_msg = static_cast<uint64_t>(event.msg.id);
+                                bot.messages_get(ch_id, 0, 0, 0, 3, [&bot, event, cur_msg, perform_sync](const dpp::confirmation_callback_t& cb) {
+                                    if (cb.is_error()) {
+                                        bronx::send_message(bot, event, bronx::error("failed to fetch recent messages"));
+                                        return;
+                                    }
+                                    auto messages = std::get<dpp::message_map>(cb.value);
+                                    uint64_t target = 0;
+                                    for (const auto& [mid, m] : messages) {
+                                        if (static_cast<uint64_t>(mid) < cur_msg) {
+                                            if (target == 0 || static_cast<uint64_t>(mid) > target) target = static_cast<uint64_t>(mid);
+                                        }
+                                    }
+                                    if (target == 0) {
+                                        bronx::send_message(bot, event, bronx::error("no message found above this command"));
+                                        return;
+                                    }
+                                    perform_sync(target);
+                                });
+                            }
+                        } else {
+                            uint64_t ch_id = 0, msg_id = 0;
+                            if (!parse_message_ref(args[2], event.msg.channel_id, ch_id, msg_id)) {
+                                bronx::send_message(bot, event, bronx::error("invalid message id or link"));
+                                return;
+                            }
+                            perform_sync(msg_id);
+                        }
+                    } else {
+                        // Sync all in guild
+                        int count = 0;
+                        int msg_count = 0;
+                        for (const auto& [msg_id, rr_msg] : reaction_roles) {
+                            dpp::channel* ch = dpp::find_channel(rr_msg.channel_id);
+                            if (ch && static_cast<uint64_t>(ch->guild_id) == guild_id) {
+                                for (const auto& e : rr_msg.entries) {
+                                    sync_existing_reactions(bot, msg_id, rr_msg.channel_id, e.raw, e.role_id, guild_id);
+                                    count++;
+                                }
+                                msg_count++;
+                            }
+                        }
+                        if (count == 0) {
+                            bronx::send_message(bot, event, bronx::info("no reaction roles to sync in this server"));
+                        } else {
+                            bronx::send_message(bot, event, bronx::success("syncing " + std::to_string(count) + " reaction role(s) across " + std::to_string(msg_count) + " message(s) in this server"));
+                        }
                     }
                     return;
                 }
@@ -1488,8 +1698,6 @@ Command* get_reactionrole_command() {
             }
 
             // Standard message reference parsing for slash commands
-
-            // Standard message reference parsing for slash commands
             auto [emoji_id, emoji_str] = parse_emoji_raw(emoji_raw);
             if (emoji_id != 0) {
                 std::string prefix = "<";
@@ -1582,6 +1790,201 @@ Command* get_reactionrole_command() {
     return rr;
 }
 
+Command* get_rrsync_command() {
+    static Command* rrsync = new Command("rr-sync", "force sync reaction roles to ensure everyone has their roles", "utility", {}, true,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+            // Permission check for prefix command
+            if (!event.msg.guild_id) {
+                bronx::send_message(bot, event, bronx::error("this command must be used in a server"));
+                return;
+            }
+            dpp::guild_member member = event.msg.member;
+            if (!member_can_manage_roles(bot, event.msg.guild_id, member)) {
+                bronx::send_message(bot, event, bronx::error("you need Manage Roles or Administrator to use this command"));
+                return;
+            }
+
+            uint64_t guild_id = static_cast<uint64_t>(event.msg.guild_id);
+            uint64_t ch_id = 0, msg_id = 0;
+
+                if (!args.empty()) {
+                    if (args[0] == "^") {
+                        uint64_t channel_id = event.msg.channel_id;
+                        // Prefer message_reference (reply) if available
+                        if (event.msg.message_reference.message_id != 0) {
+                            msg_id = static_cast<uint64_t>(event.msg.message_reference.message_id);
+                            auto it = reaction_roles.find(msg_id);
+                            if (it == reaction_roles.end()) {
+                                bronx::send_message(bot, event, bronx::error("no reaction roles found on that message"));
+                                return;
+                            }
+                            auto queue = std::make_shared<std::vector<SyncTask>>();
+                            for (const auto& e : it->second.entries) {
+                                queue->push_back({msg_id, it->second.channel_id, e.raw, e.role_id, guild_id});
+                            }
+                            process_sync_queue(bot, queue, 0);
+                            bronx::send_message(bot, event, bronx::success("syncing " + std::to_string(queue->size()) + " reaction role(s) on [message](https://discord.com/channels/" + std::to_string(guild_id) + "/" + std::to_string(it->second.channel_id) + "/" + std::to_string(msg_id) + ") sequentially..."));
+                        } else {
+                            bot.messages_get(channel_id, 0, 0, 0, 3, [&bot, event, guild_id](const dpp::confirmation_callback_t& cb) {
+                                if (cb.is_error()) {
+                                    bronx::send_message(bot, event, bronx::error("failed to fetch recent messages"));
+                                    return;
+                                }
+                                auto messages = std::get<dpp::message_map>(cb.value);
+                                uint64_t target = 0;
+                                uint64_t cur_msg = static_cast<uint64_t>(event.msg.id);
+                                for (const auto& [mid, m] : messages) {
+                                    if (static_cast<uint64_t>(mid) < cur_msg) {
+                                        if (target == 0 || static_cast<uint64_t>(mid) > target) target = static_cast<uint64_t>(mid);
+                                    }
+                                }
+                                if (target == 0) {
+                                    bronx::send_message(bot, event, bronx::error("no message found above this command"));
+                                    return;
+                                }
+                                auto it = reaction_roles.find(target);
+                                if (it == reaction_roles.end()) {
+                                    bronx::send_message(bot, event, bronx::error("no reaction roles found on that message"));
+                                    return;
+                                }
+                                auto queue = std::make_shared<std::vector<SyncTask>>();
+                                for (const auto& e : it->second.entries) {
+                                    queue->push_back({target, it->second.channel_id, e.raw, e.role_id, guild_id});
+                                }
+                                process_sync_queue(bot, queue, 0);
+                                bronx::send_message(bot, event, bronx::success("syncing " + std::to_string(queue->size()) + " reaction role(s) on [message](https://discord.com/channels/" + std::to_string(guild_id) + "/" + std::to_string(it->second.channel_id) + "/" + std::to_string(target) + ") sequentially..."));
+                            });
+                        }
+                    } else if (parse_message_ref(args[0], event.msg.channel_id, ch_id, msg_id)) {
+                        auto it = reaction_roles.find(msg_id);
+                        if (it == reaction_roles.end()) {
+                            bronx::send_message(bot, event, bronx::error("no reaction roles found on that message"));
+                            return;
+                        }
+                        auto queue = std::make_shared<std::vector<SyncTask>>();
+                        for (const auto& e : it->second.entries) {
+                            queue->push_back({msg_id, it->second.channel_id, e.raw, e.role_id, guild_id});
+                        }
+                        process_sync_queue(bot, queue, 0);
+                        bronx::send_message(bot, event, bronx::success("syncing " + std::to_string(queue->size()) + " reaction role(s) on [message](https://discord.com/channels/" + std::to_string(guild_id) + "/" + std::to_string(it->second.channel_id) + "/" + std::to_string(msg_id) + ") sequentially..."));
+                    } else {
+                        bronx::send_message(bot, event, bronx::error("invalid message id, link, or ^"));
+                    }
+                } else {
+                    // Collect tasks for guild-wide sync
+                    auto queue = std::make_shared<std::vector<SyncTask>>();
+                    int msg_count = 0;
+                    for (const auto& [m_id, rr_msg] : reaction_roles) {
+                        dpp::channel* ch = dpp::find_channel(rr_msg.channel_id);
+                        if (ch && static_cast<uint64_t>(ch->guild_id) == guild_id) {
+                            for (const auto& e : rr_msg.entries) {
+                                queue->push_back({m_id, rr_msg.channel_id, e.raw, e.role_id, guild_id});
+                            }
+                            msg_count++;
+                        }
+                    }
+                    if (queue->empty()) {
+                        bronx::send_message(bot, event, bronx::info("no reaction roles to sync in this server"));
+                    } else {
+                        process_sync_queue(bot, queue, 0);
+                        bronx::send_message(bot, event, bronx::success("syncing " + std::to_string(queue->size()) + " reaction role(s) across " + std::to_string(msg_count) + " message(s) in this server sequentially... (this will take some time)"));
+                    }
+                }
+        },
+        [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            if (!event.command.guild_id) {
+                event.reply(dpp::message().add_embed(bronx::error("this command must be used in a server")));
+                return;
+            }
+
+            uint64_t guild_id = static_cast<uint64_t>(event.command.guild_id);
+            uint64_t user_id = event.command.get_issuing_user().id;
+
+            bot.guild_get_member(event.command.guild_id, user_id, [&bot, event, guild_id](const dpp::confirmation_callback_t& memb_cb) {
+                if (memb_cb.is_error()) {
+                    event.reply(dpp::message().add_embed(bronx::error("failed to verify permissions")));
+                    return;
+                }
+                auto member = ::std::get<dpp::guild_member>(memb_cb.value);
+                if (!member_can_manage_roles(bot, event.command.guild_id, member)) {
+                    event.reply(dpp::message().add_embed(bronx::error("you need Manage Roles or Administrator to use this command")));
+                    return;
+                }
+
+                auto perform_sync = [&bot, event, guild_id](uint64_t m_id) {
+                    auto it = reaction_roles.find(m_id);
+                    if (it == reaction_roles.end()) {
+                        event.reply(dpp::message().add_embed(bronx::error("no reaction roles found on that message")));
+                        return;
+                    }
+                    auto queue = std::make_shared<std::vector<SyncTask>>();
+                    for (const auto& e : it->second.entries) {
+                        queue->push_back({m_id, it->second.channel_id, e.raw, e.role_id, guild_id});
+                    }
+                    process_sync_queue(bot, queue, 0);
+                    event.reply(dpp::message().add_embed(bronx::success("syncing " + std::to_string(queue->size()) + " reaction role(s) on [message](https://discord.com/channels/" + std::to_string(guild_id) + "/" + std::to_string(it->second.channel_id) + "/" + std::to_string(m_id) + ") sequentially...")));
+                };
+
+                auto message_param = event.get_parameter("message");
+                if (std::holds_alternative<std::string>(message_param)) {
+                    std::string message_ref = std::get<std::string>(message_param);
+                    if (message_ref == "^") {
+                        uint64_t channel_id = event.command.channel_id;
+                        bot.messages_get(channel_id, 0, 0, 0, 3, [&bot, event, perform_sync](const dpp::confirmation_callback_t& cb) {
+                            if (cb.is_error()) {
+                                event.reply(dpp::message().add_embed(bronx::error("failed to fetch recent messages")));
+                                return;
+                            }
+                            auto messages = std::get<dpp::message_map>(cb.value);
+                            uint64_t target = 0;
+                            uint64_t cur_id = static_cast<uint64_t>(event.command.id); // interaction id is not message id, but we can't easily get command's message id for slash.
+                            // However, we just need the most recent message before now.
+                            for (const auto& [mid, m] : messages) {
+                                if (target == 0 || static_cast<uint64_t>(mid) > target) target = static_cast<uint64_t>(mid);
+                            }
+                            if (target == 0) {
+                                event.reply(dpp::message().add_embed(bronx::error("no message found in this channel")));
+                                return;
+                            }
+                            perform_sync(target);
+                        });
+                    } else {
+                        uint64_t ch_id = 0, target_msg_id = 0;
+                        if (!parse_message_ref(message_ref, event.command.channel_id, ch_id, target_msg_id)) {
+                            event.reply(dpp::message().add_embed(bronx::error("invalid message id or link")));
+                            return;
+                        }
+                        perform_sync(target_msg_id);
+                    }
+                } else {
+                    // Sync all in guild
+                    auto queue = std::make_shared<std::vector<SyncTask>>();
+                    int msg_count = 0;
+                    for (const auto& [msg_id, rr_msg] : reaction_roles) {
+                        dpp::channel* ch = dpp::find_channel(rr_msg.channel_id);
+                        if (ch && static_cast<uint64_t>(ch->guild_id) == guild_id) {
+                            for (const auto& e : rr_msg.entries) {
+                                queue->push_back({msg_id, rr_msg.channel_id, e.raw, e.role_id, guild_id});
+                            }
+                            msg_count++;
+                        }
+                    }
+                    if (queue->empty()) {
+                        event.reply(dpp::message().add_embed(bronx::info("no reaction roles to sync in this server")));
+                    } else {
+                        process_sync_queue(bot, queue, 0);
+                        event.reply(dpp::message().add_embed(bronx::success("syncing " + std::to_string(queue->size()) + " reaction role(s) across " + std::to_string(msg_count) + " message(s) in this server sequentially... (this will take some time)")));
+                    }
+                }
+            });
+        },
+        {
+            dpp::command_option(dpp::co_string, "message", "optional message id, message link, or ^ for message above", false)
+        }
+    );
+    return rrsync;
+}
+
 // Register reaction handlers
 void register_reactionrole_interactions(dpp::cluster& bot) {
     // ── handle dropdown selection from rr check sessions ──
@@ -1637,12 +2040,16 @@ void register_reactionrole_interactions(dpp::cluster& bot) {
 
         // mark this emoji as assigned
         s.emojis[emoji_idx].assigned_role = role_id;
-        s.answered_on_page++;
 
         // check how many on this page are done
-        size_t page_start = s.page * 5;
-        size_t page_end = std::min(page_start + 5, s.emojis.size());
+        size_t page_start = s.page * 4;
+        size_t page_end = std::min(page_start + 4, s.emojis.size());
         size_t page_size = page_end - page_start;
+
+        size_t done_on_page = 0;
+        for (size_t i = page_start; i < page_end; ++i) {
+            if (s.emojis[i].assigned_role != 0) done_on_page++;
+        }
 
         // check if all emojis total are done
         size_t total_done = 0;
@@ -1652,10 +2059,11 @@ void register_reactionrole_interactions(dpp::cluster& bot) {
         if (all_done) {
             // show confirmation summary
             event.reply(dpp::ir_update_message, build_check_confirm(s));
-        } else if (s.answered_on_page >= page_size) {
-            // current page fully answered — advance to next page
+        } else if (done_on_page >= page_size && page_end < s.emojis.size()) {
+            // current page fully answered — advance to next page if more exist
             s.page++;
             s.answered_on_page = 0;
+            s.role_page = 0; // Reset role page when moving to next emoji page
             event.reply(dpp::ir_update_message, build_check_page(s));
         } else {
             // update current page (show the just-picked one as disabled)
@@ -1666,10 +2074,16 @@ void register_reactionrole_interactions(dpp::cluster& bot) {
     // ── handle confirm button from rr check sessions ──
     bot.on_button_click([&bot](const dpp::button_click_t& event) {
         std::string cid = event.custom_id;
-        if (cid.rfind("rr_chk_confirm_", 0) != 0) return; // not ours
+        
+        // parse: rr_chk_confirm_<message_id>_<user_id>, rr_chk_rprev_<mid>_<uid>, etc.
+        bool is_confirm = (cid.rfind("rr_chk_confirm_", 0) == 0);
+        bool is_rprev = (cid.rfind("rr_chk_rprev_", 0) == 0);
+        bool is_rnext = (cid.rfind("rr_chk_rnext_", 0) == 0);
+        
+        if (!is_confirm && !is_rprev && !is_rnext) return;
 
-        // parse: rr_chk_confirm_<message_id>_<user_id>
-        auto mid_start = 15; // strlen("rr_chk_confirm_")
+        size_t prefix_len = is_confirm ? 15 : (is_rprev ? 13 : 13); // "rr_chk_rnext_" is 13 too
+        auto mid_start = prefix_len;
         auto mid_end = cid.find('_', mid_start);
         if (mid_end == std::string::npos) return;
         uint64_t target_msg = 0;
@@ -1678,71 +2092,102 @@ void register_reactionrole_interactions(dpp::cluster& bot) {
         try { session_uid = std::stoull(cid.substr(mid_end + 1)); } catch (...) { return; }
 
         std::string key = rr_session_key(target_msg, session_uid);
-        RRCheckSession s;
-        {
-            std::lock_guard<std::mutex> lock(rr_check_mutex);
-            auto sit = rr_check_sessions.find(key);
-            if (sit == rr_check_sessions.end()) {
-                event.reply(dpp::message().add_embed(bronx::error("this check session has expired")).set_flags(dpp::m_ephemeral));
-                return;
-            }
+        
+        if (is_confirm) {
+            RRCheckSession s;
+            {
+                std::lock_guard<std::mutex> lock(rr_check_mutex);
+                auto sit = rr_check_sessions.find(key);
+                if (sit == rr_check_sessions.end()) {
+                    event.reply(dpp::message().add_embed(bronx::error("this check session has expired")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
 
-            s = sit->second; // copy before erase
-            rr_check_sessions.erase(sit);
+                s = sit->second; // copy before erase
+                rr_check_sessions.erase(sit);
 
-            // verify user
-            if (static_cast<uint64_t>(event.command.get_issuing_user().id) != s.user_id) {
-                event.reply(dpp::message().add_embed(bronx::error("only the person who ran the check can confirm")).set_flags(dpp::m_ephemeral));
-                rr_check_sessions[key] = std::move(s); // put back
-                return;
-            }
-        }
-
-        // persist all assigned reaction roles, sync existing reactions
-        int saved = 0;
-        for (const auto& em : s.emojis) {
-            if (em.assigned_role == 0) continue;
-
-            RREntry e;
-            e.role_id = em.assigned_role;
-            e.emoji_id = em.emoji_id;
-            e.emoji_str = em.emoji_str;
-            e.raw = em.emoji_raw;
-            reaction_roles[s.message_id].channel_id = s.channel_id;
-            reaction_roles[s.message_id].entries.push_back(e);
-
-            if (rr_db) {
-                try {
-                    std::string db_emoji = prepare_emoji_for_storage(em.emoji_raw);
-                    if (!db_emoji.empty()) {
-                        rr_db->add_reaction_role(s.guild_id, s.message_id, s.channel_id, db_emoji, em.emoji_id, em.assigned_role);
-                    }
-                } catch (const std::exception& ex) {
-                    std::cerr << "[reaction-roles] DB add error (rr check confirm): " << ex.what() << std::endl;
+                // verify user
+                if (static_cast<uint64_t>(event.command.get_issuing_user().id) != s.user_id) {
+                    event.reply(dpp::message().add_embed(bronx::error("only the person who ran the check can confirm")).set_flags(dpp::m_ephemeral));
+                    rr_check_sessions[key] = std::move(s); // put back
+                    return;
                 }
             }
 
-            sync_existing_reactions(bot, s.message_id, s.channel_id, em.emoji_raw, em.assigned_role, s.guild_id);
-            ++saved;
-        }
+            // persist all assigned reaction roles, prepare sync tasks
+            auto sync_queue = std::make_shared<std::vector<SyncTask>>();
+            int saved = 0;
+            for (const auto& em : s.emojis) {
+                if (em.assigned_role == 0) continue;
 
-        // final updated message — remove button, show done
-        dpp::message final_msg;
-        std::string summary;
-        for (const auto& em : s.emojis) {
-            if (em.assigned_role == 0) continue;
-            std::string emoji_display;
-            if (em.emoji_id != 0)
-                emoji_display = "<:" + em.emoji_str + ":" + std::to_string(em.emoji_id) + ">";
-            else
-                emoji_display = em.emoji_str;
+                RREntry e;
+                e.role_id = em.assigned_role;
+                e.emoji_id = em.emoji_id;
+                e.emoji_str = em.emoji_str;
+                e.raw = em.emoji_raw;
+                reaction_roles[s.message_id].channel_id = s.channel_id;
+                reaction_roles[s.message_id].entries.push_back(e);
 
-            dpp::role* r = dpp::find_role(em.assigned_role);
-            std::string role_name = r ? r->name : std::to_string(em.assigned_role);
-            summary += emoji_display + " → <@&" + std::to_string(em.assigned_role) + "> (**" + role_name + "**)\n";
+                if (rr_db) {
+                    try {
+                        std::string db_emoji = prepare_emoji_for_storage(em.emoji_raw);
+                        if (!db_emoji.empty()) {
+                            rr_db->add_reaction_role(s.guild_id, s.message_id, s.channel_id, db_emoji, em.emoji_id, em.assigned_role);
+                        }
+                    } catch (const std::exception& ex) {
+                        std::cerr << "[reaction-roles] DB add error (rr check confirm): " << ex.what() << std::endl;
+                    }
+                }
+
+                sync_queue->push_back({s.message_id, s.channel_id, em.emoji_raw, em.assigned_role, s.guild_id});
+                ++saved;
+            }
+
+            if (!sync_queue->empty()) {
+                std::cout << "[reaction-roles] bulk sync starting for message " << s.message_id << " (" << sync_queue->size() << " tasks)" << std::endl;
+                process_sync_queue(bot, sync_queue, 0);
+            }
+
+            // final updated message — remove button, show done
+            dpp::message final_msg;
+            std::string summary;
+            for (const auto& em : s.emojis) {
+                if (em.assigned_role == 0) continue;
+                std::string emoji_display;
+                if (em.emoji_id != 0)
+                    emoji_display = "<:" + em.emoji_str + ":" + std::to_string(em.emoji_id) + ">";
+                else
+                    emoji_display = em.emoji_str;
+
+                dpp::role* r = dpp::find_role(em.assigned_role);
+                std::string role_name = r ? r->name : std::to_string(em.assigned_role);
+                summary += emoji_display + " → <@&" + std::to_string(em.assigned_role) + "> (**" + role_name + "**)\n";
+            }
+            final_msg.add_embed(bronx::success(std::to_string(saved) + " reaction role(s) saved and syncing sequentially!\n\n" + summary));
+            event.reply(dpp::ir_update_message, final_msg);
+        } else {
+            // Role pagination
+            std::lock_guard<std::mutex> lock(rr_check_mutex);
+            auto sit = rr_check_sessions.find(key);
+            if (sit == rr_check_sessions.end()) {
+                event.reply(dpp::message().add_embed(bronx::error("this session has expired")).set_flags(dpp::m_ephemeral));
+                return;
+            }
+            
+            RRCheckSession& s = sit->second;
+            if (static_cast<uint64_t>(event.command.get_issuing_user().id) != s.user_id) {
+                event.reply(dpp::message().add_embed(bronx::error("only the person who ran the check can navigate")).set_flags(dpp::m_ephemeral));
+                return;
+            }
+
+            if (is_rprev && s.role_page > 0) s.role_page--;
+            else if (is_rnext) {
+                size_t total_role_pages = (s.guild_roles.size() + 24) / 25;
+                if (s.role_page + 1 < total_role_pages) s.role_page++;
+            }
+            
+            event.reply(dpp::ir_update_message, build_check_page(s));
         }
-        final_msg.add_embed(bronx::success(std::to_string(saved) + " reaction role(s) saved and syncing!\n\n" + summary));
-        event.reply(dpp::ir_update_message, final_msg);
     });
 
     // add role when reaction added

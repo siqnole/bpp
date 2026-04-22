@@ -5,6 +5,17 @@ project(discord-bot)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Include FetchContent module for TUI and other dependencies
+include(FetchContent)
+
+# FTXUI (Terminal User Interface) integration
+FetchContent_Declare(
+    ftxui
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+    GIT_TAG v5.0.0
+)
+FetchContent_MakeAvailable(ftxui)
+
 # ============================================================================
 # BUILD PERFORMANCE: ccache — caches compiled objects between builds.
 # Install with:  sudo apt install ccache
@@ -152,6 +163,7 @@ add_executable(${PROJECT_NAME}
     ${CMAKE_SOURCE_DIR}/main.cpp
     ${EVENTS_SOURCES}
     ${CMAKE_SOURCE_DIR}/server_logger.cpp
+    ${CMAKE_SOURCE_DIR}/tui_logger.cpp
     ${COMMAND_SOURCES}
     ${DATABASE_SOURCES}
     ${PERFORMANCE_SOURCES}
@@ -215,6 +227,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${AVUTIL_LIBRARIES}
     ${SWRESAMPLE_LIBRARIES}
     ${WHISPER_LIBRARIES}
+    ftxui::screen
+    ftxui::dom
+    ftxui::component
 )
 
 # If libcurl was found, wire it up and enable the steal command at compile-time

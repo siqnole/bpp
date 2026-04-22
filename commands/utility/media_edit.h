@@ -51,7 +51,7 @@ static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
     {"smear", {"Smear", "Ghostly motion trails", "lagfun=decay=0.95:range=24", true}}
 };
 
-inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, const std::string& filter_chain, std::function<void(const dpp::message&)> responder) {
+inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, const std::string& filter_chain, std::function<void(const dpp::message&)> responder, double target_fps = 12.0, int target_duration = 10) {
     if (attachment.size > 25 * 1024 * 1024) {
         responder(dpp::message(bronx::EMOJI_DENY + " File is too large (max 25MB)."));
         return;
@@ -85,8 +85,6 @@ inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, co
 
     // Output settings
     std::string out_ext = animated ? ".gif" : in_ext;
-    // If input is video but we want an image effect, we might still want video output.
-    // However, the user said "warp the image/video/gif", so we keep the format as much as possible.
     if (is_video) out_ext = ".mp4";
     
     std::string out_path = temp_dir + "/output" + out_ext;
@@ -97,12 +95,15 @@ inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, co
 
     // Construct FFmpeg command
     std::string cmd;
+    std::string fps_str = std::to_string(target_fps);
+    std::string dur_str = std::to_string(target_duration);
+
     if (animated && out_ext == ".gif") {
         // High quality GIF encoding with palette
-        cmd = "ffmpeg -y -i " + in_path + " -t 10 -vf \"" + filter_chain + ",fps=12,scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1\" " + out_path + " > /dev/null 2>&1";
+        cmd = "ffmpeg -y -i " + in_path + " -t " + dur_str + " -vf \"" + filter_chain + ",fps=" + fps_str + ",scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1\" " + out_path + " > /dev/null 2>&1";
     } else if (is_video) {
         // Video to video
-        cmd = "ffmpeg -y -i " + in_path + " -t 15 -vf \"" + filter_chain + "\" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 28 -preset faster -c:a copy " + out_path + " > /dev/null 2>&1";
+        cmd = "ffmpeg -y -i " + in_path + " -t " + dur_str + " -vf \"" + filter_chain + "\" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 28 -preset faster -c:a copy " + out_path + " > /dev/null 2>&1";
     } else {
         // Image to image
         cmd = "ffmpeg -y -i " + in_path + " -vf \"" + filter_chain + "\" " + out_path + " > /dev/null 2>&1";
@@ -139,6 +140,91 @@ inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, co
     dpp::message msg;
     msg.add_file("edited" + out_ext, res_data);
     responder(msg);
+}
+
+inline void handle_speed_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+    if (args.empty()) {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please provide a speed (e.g., `2x`, `0.5x`, `15fps`, `1fps`).").set_reference(event.msg.id));
+        return;
+    }
+
+    std::string speed_arg = args[0];
+    double target_fps = 12.0;
+    std::string filter = "setpts=PTS"; // Default identity
+    std::string label = "Speed";
+
+    try {
+        if (speed_arg.find("fps") != std::string::npos) {
+            double fps = std::stod(speed_arg.substr(0, speed_arg.find("fps")));
+            if (fps <= 0 || fps > 120) throw std::invalid_argument("FPS out of range (0.1 - 120)");
+            target_fps = fps;
+            label = std::to_string(fps) + " FPS";
+        } else if (speed_arg.back() == 'x') {
+            double multiplier = std::stod(speed_arg.substr(0, speed_arg.size() - 1));
+            if (multiplier <= 0 || multiplier > 50) throw std::invalid_argument("Multiplier out of range (0.01x - 50x)");
+            target_fps = 12.0 * multiplier;
+            filter = "setpts=PTS/" + std::to_string(multiplier);
+            label = speed_arg;
+        } else {
+             // Treat as multiplier if no suffix
+             double multiplier = std::stod(speed_arg);
+             if (multiplier <= 0 || multiplier > 50) throw std::invalid_argument("Invalid speed format");
+             target_fps = 12.0 * multiplier;
+             filter = "setpts=PTS/" + std::to_string(multiplier);
+             label = speed_arg + "x";
+        }
+    } catch (...) {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Invalid speed. Examples: `2x`, `0.5x`, `30fps`, `0.5fps`.").set_reference(event.msg.id));
+        return;
+    }
+
+    dpp::message msg = event.msg;
+    
+    auto process_msg = [&bot, event, filter, target_fps, label](const dpp::message& target_msg) {
+        if (target_msg.attachments.empty()) {
+             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No media found to edit.").set_reference(event.msg.id));
+             return;
+        }
+        
+        const dpp::attachment* attachment = nullptr;
+        for (const auto& a : target_msg.attachments) {
+            if (a.content_type.find("image/") != std::string::npos || a.content_type.find("video/") != std::string::npos) {
+                attachment = &a;
+                break;
+            }
+        }
+        
+        if (!attachment) {
+            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No supported media found.").set_reference(event.msg.id));
+            return;
+        }
+
+        dpp::attachment att = *attachment;
+        bot.message_create(dpp::message(event.msg.channel_id, "⏳ Adjusting speed to **" + label + "**...").set_reference(event.msg.id), [&bot, event, att, filter, target_fps](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) return;
+            dpp::message status_msg = std::get<dpp::message>(cb.value);
+
+            ::std::thread([&bot, event, att, filter, target_fps, status_msg]() {
+                process_media_edit(bot, att, filter, [&bot, &status_msg](const dpp::message& m) {
+                    dpp::message reply = m;
+                    reply.id = status_msg.id;
+                    reply.set_channel_id(status_msg.channel_id);
+                    bot.message_edit(reply);
+                }, target_fps);
+            }).detach();
+        });
+    };
+
+    if (!msg.attachments.empty()) {
+        process_msg(msg);
+    } else if (msg.message_reference.message_id != 0) {
+        bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) return;
+            process_msg(::std::get<dpp::message>(cb.value));
+        });
+    } else {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please attach a GIF/Video or reply to one.").set_reference(event.msg.id));
+    }
 }
 
 inline void handle_media_edit_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args, const std::string& effect_key) {
@@ -236,6 +322,14 @@ inline void handle_media_edit_text(dpp::cluster& bot, const dpp::message_create_
     bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please attach an image/video or reply to one.").set_reference(event.msg.id));
 }
 
+inline Command* get_speed_command() {
+    static Command speed_cmd("speed", "Change the speed of a GIF or Video (e.g. 2x, 0.5x, 30fps)", "Media", {"velocity", "fps"}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            handle_speed_text(bot, event, args);
+        });
+    return &speed_cmd;
+}
+
 inline std::vector<Command*> get_media_edit_commands() {
     static std::vector<Command*> cmds;
     if (!cmds.empty()) return cmds;
@@ -248,6 +342,9 @@ inline std::vector<Command*> get_media_edit_commands() {
             });
         cmds.push_back(cmd);
     }
+
+    // Speed command
+    cmds.push_back(get_speed_command());
 
     // Random command
     static Command random_cmd("random", "Apply 3 random effects to media", "Media", {}, false,

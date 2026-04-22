@@ -100,6 +100,33 @@ inline ::std::vector<Command*> get_fun_commands() {
         });
     cmds.push_back(&pat);
 
+    // Study command (fake facts)
+    static Command study("study", "get your friends to study with fake facts!", "fun", {}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+            std::string subject = args.empty() ? "your work" : "";
+            if (!args.empty()) {
+                for (const auto& arg : args) subject += arg + " ";
+                if (!subject.empty() && subject.back() == ' ') subject.pop_back();
+            }
+
+            std::vector<std::string> fake_facts = {
+                "90% of C students commit crime within 3 years of graduating...",
+                "Researchers found a 100% correlation between bad grades and being unable to find the TV remote.",
+                "Failing a test has been linked to spontaneous combustion in 14.5% of cases.",
+                "Every time you procrastinate, a penguin loses its tuxedo.",
+                "Statistics show that people with straight A's are 300% less likely to be abducted by aliens.",
+                "A study by the University of Fake Science claims that bad grades cause your hair to turn into spaghetti.",
+                "99% of people who don't study for " + subject + " eventually forget how to use a spoon."
+            };
+
+            std::string fact = fake_facts[rand() % fake_facts.size()];
+            auto embed = bronx::create_embed(fact + "\n\nget working on **" + subject + "**...")
+                .set_color(bronx::COLOR_INFO);
+
+            bronx::send_message(bot, event, embed);
+        });
+    cmds.push_back(&study);
+
     // .fyp command (prefix-only as requested, but easily extensible to slash)
     static Command fyp("fyp", "Get a random TikTok/Short", "Fun", {"tt"}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {

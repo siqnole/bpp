@@ -39,7 +39,7 @@ struct MediaManager {
             // Tesseract is already init'd, but we fail if either fails for simplicity in this bot
             return false;
         }
-        std::cout << "\033[1;32m[MediaManager]\033[0m whisper.cpp context initialized from " << whisper_model_path << ".\n";
+        std::cerr << "\033[1;32m[MediaManager]\033[0m whisper.cpp context initialized from " << whisper_model_path << ".\n";
 
         return true;
     }
