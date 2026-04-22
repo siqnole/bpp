@@ -16,6 +16,7 @@ struct MediaEffect {
     std::string description;
     std::string filter;
     bool animated_only = false; // For effects that require time (t)
+    bool complex = false;       // Uses complex filtergraph (semicolons/stream labels) — can't be chained
 };
 
 static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
@@ -25,8 +26,8 @@ static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
     {"edge", {"Edge", "Canny edge detection", "edgedetect=mode=colormix:high=0.1:low=0.1"}},
     {"pixelate", {"Pixelate", "Mosaic/Pixelation effect", "scale=iw/10:-1,scale=iw*10:-1:flags=neighbor"}},
     {"sepia", {"Sepia", "Vintage brown tone", "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131"}},
-    {"mirror", {"Mirror", "Horizontal mirror", "split[l][r];[r]hflip[f];[l][f]hstack"}},
-    {"vmirror", {"Vertical Mirror", "Vertical mirror", "split[t][b];[b]vflip[f];[t][f]vstack"}},
+    {"mirror", {"Mirror", "Horizontal mirror", "split[l][r];[r]hflip[f];[l][f]hstack", false, /*complex=*/true}},
+    {"vmirror", {"Vertical Mirror", "Vertical mirror", "split[t][b];[b]vflip[f];[t][f]vstack", false, /*complex=*/true}},
     {"flip", {"Flip", "Horizontal flip", "hflip"}},
     {"flop", {"Flop", "Vertical flip", "vflip"}},
     {"rgb", {"RGB Party", "Rainbow hue cycling", "hue=h=t*360", true}},
@@ -37,78 +38,145 @@ static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
     {"cyberpunk", {"Cyberpunk", "Neon enhancement", "eq=contrast=1.5:saturation=2,hue=h=280:s=1.2"}},
     {"oilpaint", {"Oil Paint", "Artistic smudge effect", "hqdn3d=1.5:1.5:6:6,unsharp=5:5:1.0"}},
     {"acid", {"Acid Trip", "Psychedelic hue/sat oscillation", "hue=h='T*100':s='sin(T)*2+2'", true}},
-    {"kaleidoscope", {"Kaleidoscope", "4-way mirrored symmetry", "split=4[v1][v2][v3][v4];[v2]hflip[v2h];[v3]vflip[v3v];[v4]hflip,vflip[v4hv];[v1][v2h]hstack[top];[v3v][v4hv]hstack[bottom];[top][bottom]vstack,scale=iw/2:ih/2"}},
+    {"kaleidoscope", {"Kaleidoscope", "4-way mirrored symmetry", "split=4[v1][v2][v3][v4];[v2]hflip[v2h];[v3]vflip[v3v];[v4]hflip,vflip[v4hv];[v1][v2h]hstack[top];[v3v][v4hv]hstack[bottom];[top][bottom]vstack,scale=iw/2:ih/2", false, /*complex=*/true}},
     {"bulge", {"Bulge", "Fish-eye lens distortion", "vignette,lenscorrection=k1=0.2:k2=0.2"}},
-    {"wave", {"Wave", "Aquatic ripples", "format=rgb24,geq=r='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':g='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':b='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))'", true}},
+    {"wave", {"Wave", "Aquatic ripples", "format=rgb24,geq=r='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':g='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':b='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))'", true, /*complex=*/true}},
     {"thermal", {"Thermal", "Heatmap simulation", "format=gray,colorchannelmixer=1:0:0:0:0:1:0:0:0:0:1:0,curves=all='0/0 0.5/1 1/0',hue=h=240:s=2"}},
     {"night", {"Night Vision", "Amplified green grain", "hue=s=0,eq=brightness=0.1:contrast=1.5,colorchannelmixer=0:1:0:0:0:1:0:0:0:1:0:0,noise=alls=20:allf=t+u"}},
     {"xray", {"X-Ray", "Inverted skeletal look", "negate,format=gray,curves=all='0/0 0.5/1 1/0'"}},
-    {"crt", {"CRT", "Retro TV scanlines", "geq=r='if(mod(Y,2),R,R*0.5)':g='if(mod(Y,2),G,G*0.5)':b='if(mod(Y,2),B,B*0.5)',vignette"}},
+    {"crt", {"CRT", "Retro TV scanlines", "format=rgb24,noise=alls=8:allf=t,chromashift=cbh=1:crh=-1,vignette"}},
     {"pixelsort", {"Pixelsort", "Digital smear effect", "transpose,boxblur=20:1,transpose"}},
     {"hyperpixel", {"Hyperpixel", "Extreme low-res scaling", "scale=iw/20:-1,scale=iw*20:-1:flags=neighbor"}},
-    {"datamosh", {"Datamosh", "Pixel bleed glitch", "mpdecimate,lagfun=decay=0.98:range=50,scale=iw/2:-1,scale=iw*2:-1:flags=neighbor", true}},
-    {"melt", {"Melt", "Liquification effect", "minterpolate=fps=20:scd=none:me_mode=bidir:mi_mode=mci", true}},
+    {"datamosh", {"Datamosh", "Pixel bleed glitch", "mpdecimate,lagfun=decay=0.98:range=50,scale=iw/2:-1,scale=iw*2:-1:flags=neighbor", true, /*complex=*/true}},
+    {"melt", {"Melt", "Liquification effect", "minterpolate=fps=20:scd=none:me_mode=bidir:mi_mode=mci", true, /*complex=*/true}},
     {"smear", {"Smear", "Ghostly motion trails", "lagfun=decay=0.95:range=24", true}}
 };
 
-inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, const std::string& filter_chain, std::function<void(const dpp::message&)> responder, double target_fps = 12.0, int target_duration = 10) {
-    if (attachment.size > 25 * 1024 * 1024) {
+// ---------------------------------------------------------------------------
+// Lightweight source descriptor — avoids dpp::attachment's non-default ctor
+// ---------------------------------------------------------------------------
+struct MediaSource {
+    std::string url;
+    std::string filename;
+    std::string content_type;
+    uint64_t    size     = 0;     // 0 means unknown (skip pre-size check)
+    bool        want_gif = false; // Force GIF output even if source is MP4
+
+    // Construct from a real dpp::attachment
+    static MediaSource from_attachment(const dpp::attachment& a) {
+        bool gif = (a.content_type == "image/gif");
+        return {a.url, a.filename, a.content_type, a.size, gif};
+    }
+
+    // Construct from a Discord embed (Tenor / Giphy / URL embeds).
+    // Returns an empty MediaSource if nothing usable is found.
+    // All embed sources default to want_gif=true — the user sees a GIF,
+    // so we should output a GIF regardless of how Discord delivers it.
+    static MediaSource from_embeds(const std::vector<dpp::embed>& embeds) {
+        for (const auto& e : embeds) {
+            // Tenor sends the actual animation as embed.video (mp4 internally)
+            if (e.video.has_value() && !e.video->url.empty() &&
+                e.video->url.substr(0, 4) == "http") {
+                return {e.video->url, "embed.mp4", "video/mp4", 0, /*want_gif=*/true};
+            }
+            if (e.thumbnail.has_value() && !e.thumbnail->url.empty() &&
+                e.thumbnail->url.substr(0, 4) == "http") {
+                return {e.thumbnail->url, "embed.gif", "image/gif", 0, /*want_gif=*/true};
+            }
+            if (e.image.has_value() && !e.image->url.empty() &&
+                e.image->url.substr(0, 4) == "http") {
+                return {e.image->url, "embed.gif", "image/gif", 0, /*want_gif=*/true};
+            }
+        }
+        return {};  // empty — caller checks url.empty()
+    }
+
+    bool empty() const { return url.empty(); }
+    bool is_animated() const {
+        return content_type == "image/gif" ||
+               content_type.find("video/") != std::string::npos;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Core processing — now uses MediaSource instead of dpp::attachment
+// ---------------------------------------------------------------------------
+inline void process_media_edit(
+    dpp::cluster& bot,
+    const MediaSource& src,
+    const std::string& filter_chain,
+    std::function<void(const dpp::message&)> responder,
+    double target_fps = 12.0,
+    int    target_duration = 10)
+{
+    if (src.size > 25 * 1024 * 1024) {
         responder(dpp::message(bronx::EMOJI_DENY + " File is too large (max 25MB)."));
         return;
     }
 
-    auto response = http_get_sync(attachment.url);
+    auto response = http_get_sync(src.url);
     if (response.status != 200) {
         responder(dpp::message(bronx::EMOJI_DENY + " Failed to download attachment."));
         return;
     }
 
-    // Generate unique filenames for this request
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(100000, 999999);
     std::string id = std::to_string(dis(gen));
-    
+
     std::string temp_dir = "/tmp/bronx_edit_" + id;
     std::filesystem::create_directories(temp_dir);
-    
-    std::string in_ext = attachment.filename.substr(attachment.filename.find_last_of("."));
-    // Ensure extension is safe
-    if (in_ext.find("/") != std::string::npos) in_ext = ".bin";
-    
-    std::string in_path = temp_dir + "/input" + in_ext;
-    
-    std::string mime = attachment.content_type;
-    bool is_video = (mime.find("video/") != std::string::npos);
-    bool is_gif = (mime == "image/gif");
-    bool animated = is_video || is_gif;
 
-    // Output settings
-    std::string out_ext = animated ? ".gif" : in_ext;
-    if (is_video) out_ext = ".mp4";
-    
+    std::string in_ext = src.filename.substr(src.filename.find_last_of("."));
+    if (in_ext.find("/") != std::string::npos) in_ext = ".bin";
+
+    std::string in_path = temp_dir + "/input" + in_ext;
+
+    bool is_video  = (src.content_type.find("video/") != std::string::npos);
+    bool is_gif    = (src.content_type == "image/gif");
+    bool animated  = is_video || is_gif;
+
+    // If the user sees this as a GIF (direct upload or embed), output GIF.
+    // This ensures Tenor embeds (delivered as MP4) still come back as GIFs.
+    bool output_gif = is_gif || src.want_gif;
+
+    std::string out_ext;
+    if (output_gif) {
+        out_ext = ".gif";
+    } else if (is_video) {
+        out_ext = ".mp4";
+    } else {
+        out_ext = animated ? ".gif" : in_ext;
+    }
+
     std::string out_path = temp_dir + "/output" + out_ext;
 
     std::ofstream out_file(in_path, std::ios::binary);
     out_file.write(response.body.data(), response.body.size());
     out_file.close();
 
-    // Construct FFmpeg command
-    std::string cmd;
     std::string fps_str = std::to_string(target_fps);
     std::string dur_str = std::to_string(target_duration);
+    std::string cmd;
 
     if (animated && out_ext == ".gif") {
-        // High quality GIF encoding with palette
-        cmd = "ffmpeg -y -i " + in_path + " -t " + dur_str + " -vf \"" + filter_chain + ",fps=" + fps_str + ",scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1\" " + out_path + " > /dev/null 2>&1";
+        // GIF output: use palette-based encoding for quality
+        // Prepend format=rgba to handle pal8 GIF input that most filters can't process
+        // When source is a video (Tenor MP4), omit audio flags; ffmpeg handles it.
+        cmd = "ffmpeg -y -i " + in_path + " -t " + dur_str +
+              " -vf \"format=rgba," + filter_chain + ",fps=" + fps_str +
+              ",scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1\""
+              " " + out_path + " > /dev/null 2>&1";
     } else if (is_video) {
-        // Video to video
-        cmd = "ffmpeg -y -i " + in_path + " -t " + dur_str + " -vf \"" + filter_chain + "\" -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 28 -preset faster -c:a copy " + out_path + " > /dev/null 2>&1";
+        cmd = "ffmpeg -y -i " + in_path + " -t " + dur_str +
+              " -vf \"" + filter_chain + "\""
+              " -c:v libx264 -pix_fmt yuv420p -profile:v baseline -level 3.0 -crf 28 -preset faster -c:a copy"
+              " " + out_path + " > /dev/null 2>&1";
     } else {
-        // Image to image
         cmd = "ffmpeg -y -i " + in_path + " -vf \"" + filter_chain + "\" " + out_path + " > /dev/null 2>&1";
     }
-    
+
     int result = std::system(cmd.c_str());
     if (result != 0) {
         std::filesystem::remove_all(temp_dir);
@@ -125,9 +193,9 @@ inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, co
 
     std::streamsize res_size = res_file.tellg();
     if (res_size > 25 * 1024 * 1024) {
-         std::filesystem::remove_all(temp_dir);
-         responder(dpp::message(bronx::EMOJI_DENY + " Processed file is too large for Discord (max 25MB)."));
-         return;
+        std::filesystem::remove_all(temp_dir);
+        responder(dpp::message(bronx::EMOJI_DENY + " Processed file is too large for Discord (max 25MB)."));
+        return;
     }
 
     res_file.seekg(0, std::ios::beg);
@@ -142,186 +210,214 @@ inline void process_media_edit(dpp::cluster& bot, dpp::attachment attachment, co
     responder(msg);
 }
 
+// ---------------------------------------------------------------------------
+// Shared helper: resolve a MediaSource from a message (attachment or embed)
+// ---------------------------------------------------------------------------
+inline MediaSource resolve_media_source(const dpp::message& msg) {
+    for (const auto& a : msg.attachments) {
+        if (a.content_type.find("image/") != std::string::npos ||
+            a.content_type.find("video/") != std::string::npos) {
+            return MediaSource::from_attachment(a);
+        }
+    }
+    return MediaSource::from_embeds(msg.embeds);
+}
+
+// ---------------------------------------------------------------------------
+// .speed command
+// ---------------------------------------------------------------------------
 inline void handle_speed_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
     if (args.empty()) {
-        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please provide a speed (e.g., `2x`, `0.5x`, `15fps`, `1fps`).").set_reference(event.msg.id));
+        bot.message_create(dpp::message(event.msg.channel_id,
+            bronx::EMOJI_DENY + " Please provide a speed (e.g., `2x`, `0.5x`, `15fps`, `1fps`).").set_reference(event.msg.id));
         return;
     }
 
     std::string speed_arg = args[0];
     double target_fps = 12.0;
-    std::string filter = "setpts=PTS"; // Default identity
-    std::string label = "Speed";
+    std::string filter = "setpts=PTS";
+    std::string label  = "Speed";
 
     try {
         if (speed_arg.find("fps") != std::string::npos) {
             double fps = std::stod(speed_arg.substr(0, speed_arg.find("fps")));
-            if (fps <= 0 || fps > 120) throw std::invalid_argument("FPS out of range (0.1 - 120)");
+            if (fps <= 0 || fps > 120) throw std::invalid_argument("FPS out of range (0.01-120)");
             target_fps = fps;
-            label = std::to_string(fps) + " FPS";
+            // Scale timestamps relative to the 12fps baseline so the fps filter has
+            // enough frames to sample from.  This is equivalent to the multiplier
+            // mode but expressed as an absolute rate:
+            //   0.3fps → 0.3/12 = 0.025x speed  →  setpts = PTS * (12/0.3) = PTS*40
+            //   100fps → 100/12 ≈ 8.33x speed   →  setpts = PTS / (100/12) = PTS/8.33
+            double ratio = fps / 12.0;   // > 1 = faster, < 1 = slower
+            if (ratio >= 1.0) {
+                filter = "setpts=PTS/" + std::to_string(ratio);
+            } else {
+                filter = "setpts=PTS*" + std::to_string(1.0 / ratio);
+            }
+            // Clean label: strip trailing zeros
+            std::string fps_label = std::to_string(fps);
+            fps_label.erase(fps_label.find_last_not_of('0') + 1);
+            if (fps_label.back() == '.') fps_label.pop_back();
+            label = fps_label + " FPS";
         } else if (speed_arg.back() == 'x') {
-            double multiplier = std::stod(speed_arg.substr(0, speed_arg.size() - 1));
-            if (multiplier <= 0 || multiplier > 50) throw std::invalid_argument("Multiplier out of range (0.01x - 50x)");
-            target_fps = 12.0 * multiplier;
-            filter = "setpts=PTS/" + std::to_string(multiplier);
-            label = speed_arg;
+            double mul = std::stod(speed_arg.substr(0, speed_arg.size() - 1));
+            if (mul <= 0 || mul > 50) throw std::invalid_argument("Multiplier out of range");
+            target_fps = 12.0 * mul;
+            filter     = "setpts=PTS/" + std::to_string(mul);
+            label      = speed_arg;
         } else {
-             // Treat as multiplier if no suffix
-             double multiplier = std::stod(speed_arg);
-             if (multiplier <= 0 || multiplier > 50) throw std::invalid_argument("Invalid speed format");
-             target_fps = 12.0 * multiplier;
-             filter = "setpts=PTS/" + std::to_string(multiplier);
-             label = speed_arg + "x";
+            double mul = std::stod(speed_arg);
+            if (mul <= 0 || mul > 50) throw std::invalid_argument("Invalid speed");
+            target_fps = 12.0 * mul;
+            filter     = "setpts=PTS/" + std::to_string(mul);
+            label      = speed_arg + "x";
         }
     } catch (...) {
-        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Invalid speed. Examples: `2x`, `0.5x`, `30fps`, `0.5fps`.").set_reference(event.msg.id));
+        bot.message_create(dpp::message(event.msg.channel_id,
+            bronx::EMOJI_DENY + " Invalid speed. Examples: `2x`, `0.5x`, `30fps`, `0.5fps`.").set_reference(event.msg.id));
         return;
     }
 
-    dpp::message msg = event.msg;
-    
-    auto process_msg = [&bot, event, filter, target_fps, label](const dpp::message& target_msg) {
-        if (target_msg.attachments.empty()) {
-             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No media found to edit.").set_reference(event.msg.id));
-             return;
-        }
-        
-        const dpp::attachment* attachment = nullptr;
-        for (const auto& a : target_msg.attachments) {
-            if (a.content_type.find("image/") != std::string::npos || a.content_type.find("video/") != std::string::npos) {
-                attachment = &a;
-                break;
-            }
-        }
-        
-        if (!attachment) {
-            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No supported media found.").set_reference(event.msg.id));
+    auto do_process = [&bot, event, filter, target_fps, label](const dpp::message& target_msg) {
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+            bot.message_create(dpp::message(event.msg.channel_id,
+                bronx::EMOJI_DENY + " No media found. Reply to an uploaded GIF/Video or a Tenor/Giphy embed.").set_reference(event.msg.id));
             return;
         }
 
-        dpp::attachment att = *attachment;
-        bot.message_create(dpp::message(event.msg.channel_id, "⏳ Adjusting speed to **" + label + "**...").set_reference(event.msg.id), [&bot, event, att, filter, target_fps](const dpp::confirmation_callback_t& cb) {
-            if (cb.is_error()) return;
-            dpp::message status_msg = std::get<dpp::message>(cb.value);
+        std::string status_text = src.content_type.find("video/") != std::string::npos
+            ? "⏳ Adjusting speed to **" + label + "** (embed)..."
+            : "⏳ Adjusting speed to **" + label + "**...";
 
-            ::std::thread([&bot, event, att, filter, target_fps, status_msg]() {
-                process_media_edit(bot, att, filter, [&bot, &status_msg](const dpp::message& m) {
-                    dpp::message reply = m;
-                    reply.id = status_msg.id;
-                    reply.set_channel_id(status_msg.channel_id);
-                    bot.message_edit(reply);
-                }, target_fps);
-            }).detach();
-        });
+        bot.message_create(dpp::message(event.msg.channel_id, status_text).set_reference(event.msg.id),
+            [&bot, src, filter, target_fps](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) return;
+                dpp::message status_msg = std::get<dpp::message>(cb.value);
+                ::std::thread([&bot, src, filter, target_fps, status_msg]() {
+                    process_media_edit(bot, src, filter, [&bot, status_msg](const dpp::message& m) {
+                        dpp::message reply = m;
+                        reply.id = status_msg.id;
+                        reply.set_channel_id(status_msg.channel_id);
+                        bot.message_edit(reply);
+                    }, target_fps);
+                }).detach();
+            });
     };
 
-    if (!msg.attachments.empty()) {
-        process_msg(msg);
+    dpp::message msg = event.msg;
+    if (!msg.attachments.empty() || !msg.embeds.empty()) {
+        do_process(msg);
     } else if (msg.message_reference.message_id != 0) {
-        bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
-            if (cb.is_error()) return;
-            process_msg(::std::get<dpp::message>(cb.value));
-        });
+        bot.message_get(msg.message_reference.message_id, msg.channel_id,
+            [do_process, &bot, event](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) {
+                    bot.message_create(dpp::message(event.msg.channel_id,
+                        bronx::EMOJI_DENY + " Failed to fetch the replied message.").set_reference(event.msg.id));
+                    return;
+                }
+                do_process(::std::get<dpp::message>(cb.value));
+            });
     } else {
-        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please attach a GIF/Video or reply to one.").set_reference(event.msg.id));
+        bot.message_create(dpp::message(event.msg.channel_id,
+            bronx::EMOJI_DENY + " Please attach a GIF/Video or reply to one.").set_reference(event.msg.id));
     }
 }
 
+// ---------------------------------------------------------------------------
+// Effect commands (.blur, .hue, .random, etc.)
+// ---------------------------------------------------------------------------
 inline void handle_media_edit_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args, const std::string& effect_key) {
     auto it = EFFECT_REGISTRY.find(effect_key);
     if (it == EFFECT_REGISTRY.end() && effect_key != "random") return;
 
     dpp::message msg = event.msg;
-    
-    auto process_msg = [&bot, event, it, effect_key](const dpp::message& target_msg) {
-        if (target_msg.attachments.empty()) {
-             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No media found to edit.").set_reference(event.msg.id));
-             return;
-        }
-        
-        // Find first image/video
-        const dpp::attachment* found_attachment = nullptr;
-        for (const auto& a : target_msg.attachments) {
-            if (a.content_type.find("image/") != std::string::npos || a.content_type.find("video/") != std::string::npos) {
-                found_attachment = &a;
-                break;
-            }
-        }
-        
-        if (!found_attachment) {
-            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No supported media found.").set_reference(event.msg.id));
+
+    auto do_process = [&bot, event, it, effect_key](const dpp::message& target_msg) {
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+            bot.message_create(dpp::message(event.msg.channel_id,
+                bronx::EMOJI_DENY + " No media found. Reply to an uploaded GIF/Video or a Tenor/Giphy embed.").set_reference(event.msg.id));
             return;
         }
 
-        bool is_animated = (found_attachment->content_type == "image/gif" || found_attachment->content_type.find("video/") != std::string::npos);
-        
+        bool is_animated = src.is_animated();
         std::string filter;
         std::string final_effect_name;
 
-        // Selection Logic
         if (effect_key == "random") {
             std::vector<std::string> keys;
             for (auto const& [key, val] : EFFECT_REGISTRY) {
-                // If static, skip animated_only effects
                 if (!is_animated && val.animated_only) continue;
+                if (val.complex) continue; // Complex filtergraphs can't be comma-chained
                 keys.push_back(key);
             }
-
             if (keys.size() < 3) {
-                 bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Not enough compatible effects found for this file type.").set_reference(event.msg.id));
-                 return;
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::EMOJI_DENY + " Not enough compatible effects found for this file type.").set_reference(event.msg.id));
+                return;
             }
-
             std::random_device rd;
             std::mt19937 g(rd());
             std::shuffle(keys.begin(), keys.end(), g);
-            
-            filter = EFFECT_REGISTRY.at(keys[0]).filter + "," + EFFECT_REGISTRY.at(keys[1]).filter + "," + EFFECT_REGISTRY.at(keys[2]).filter;
-            final_effect_name = "Random (" + EFFECT_REGISTRY.at(keys[0]).name + " + " + EFFECT_REGISTRY.at(keys[1]).name + " + " + EFFECT_REGISTRY.at(keys[2]).name + ")";
+            // Normalize pixel format between effects to prevent format mismatches
+            filter = EFFECT_REGISTRY.at(keys[0]).filter + ",format=rgba," +
+                     EFFECT_REGISTRY.at(keys[1]).filter + ",format=rgba," +
+                     EFFECT_REGISTRY.at(keys[2]).filter;
+            final_effect_name = "Random (" + EFFECT_REGISTRY.at(keys[0]).name + " + " +
+                                              EFFECT_REGISTRY.at(keys[1]).name + " + " +
+                                              EFFECT_REGISTRY.at(keys[2]).name + ")";
         } else {
             if (!is_animated && it->second.animated_only) {
-                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " The **" + it->second.name + "** effect only works on animated GIFs or Videos.").set_reference(event.msg.id));
+                bot.message_create(dpp::message(event.msg.channel_id,
+                    bronx::EMOJI_DENY + " The **" + it->second.name + "** effect only works on animated GIFs or Videos.").set_reference(event.msg.id));
                 return;
             }
             filter = it->second.filter;
             final_effect_name = it->second.name;
         }
 
-        dpp::attachment attachment = *found_attachment;
-        bot.message_create(dpp::message(event.msg.channel_id, "✨ Applying **" + final_effect_name + "**...").set_reference(event.msg.id), [&bot, event, attachment, filter](const dpp::confirmation_callback_t& cb) {
-            if (cb.is_error()) return;
-            dpp::message status_msg = std::get<dpp::message>(cb.value);
-
-            ::std::thread([&bot, event, attachment, filter, status_msg]() {
-                process_media_edit(bot, attachment, filter, [&bot, &status_msg](const dpp::message& m) {
-                    dpp::message reply = m;
-                    reply.id = status_msg.id;
-                    reply.set_channel_id(status_msg.channel_id);
-                    bot.message_edit(reply);
-                });
-            }).detach();
-        });
+        bot.message_create(dpp::message(event.msg.channel_id,
+            "✨ Applying **" + final_effect_name + "**...").set_reference(event.msg.id),
+            [&bot, src, filter](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) return;
+                dpp::message status_msg = std::get<dpp::message>(cb.value);
+                ::std::thread([&bot, src, filter, status_msg]() {
+                    process_media_edit(bot, src, filter, [&bot, status_msg](const dpp::message& m) {
+                        dpp::message reply = m;
+                        reply.id = status_msg.id;
+                        reply.set_channel_id(status_msg.channel_id);
+                        bot.message_edit(reply);
+                    });
+                }).detach();
+            });
     };
 
-    if (!msg.attachments.empty()) {
-        process_msg(msg);
+    if (!msg.attachments.empty() || !msg.embeds.empty()) {
+        do_process(msg);
         return;
     }
 
     if (msg.message_reference.message_id != 0) {
-        bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
-            if (cb.is_error()) {
-                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
-                return;
-            }
-            process_msg(::std::get<dpp::message>(cb.value));
-        });
+        bot.message_get(msg.message_reference.message_id, msg.channel_id,
+            [do_process, &bot, event](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) {
+                    bot.message_create(dpp::message(event.msg.channel_id,
+                        bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
+                    return;
+                }
+                do_process(::std::get<dpp::message>(cb.value));
+            });
         return;
     }
 
-    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please attach an image/video or reply to one.").set_reference(event.msg.id));
+    bot.message_create(dpp::message(event.msg.channel_id,
+        bronx::EMOJI_DENY + " Please attach an image/video or reply to one.").set_reference(event.msg.id));
 }
 
+// ---------------------------------------------------------------------------
+// Command exports
+// ---------------------------------------------------------------------------
 inline Command* get_speed_command() {
     static Command speed_cmd("speed", "Change the speed of a GIF or Video (e.g. 2x, 0.5x, 30fps)", "Media", {"velocity", "fps"}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
@@ -334,7 +430,6 @@ inline std::vector<Command*> get_media_edit_commands() {
     static std::vector<Command*> cmds;
     if (!cmds.empty()) return cmds;
 
-    // Individual commands
     for (auto const& [key, effect] : EFFECT_REGISTRY) {
         auto* cmd = new Command(key, effect.description, "Media", {}, false,
             [key](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
@@ -343,10 +438,8 @@ inline std::vector<Command*> get_media_edit_commands() {
         cmds.push_back(cmd);
     }
 
-    // Speed command
     cmds.push_back(get_speed_command());
 
-    // Random command
     static Command random_cmd("random", "Apply 3 random effects to media", "Media", {}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
             handle_media_edit_text(bot, event, args, "random");
