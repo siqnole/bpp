@@ -268,6 +268,7 @@ struct GuildLevelingConfig {
     int xp_cooldown_seconds;
     std::optional<uint64_t> announcement_channel;
     bool announce_levelup;
+    std::string announcement_message;
 };
 
 struct LevelRole {

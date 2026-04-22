@@ -629,6 +629,7 @@ CREATE TABLE IF NOT EXISTS guild_leveling_config (
     xp_cooldown_seconds INT NOT NULL DEFAULT 60,
     announcement_channel BIGINT UNSIGNED NULL,
     announce_levelup BOOLEAN NOT NULL DEFAULT TRUE,
+    level_up_message VARCHAR(500) NOT NULL DEFAULT '{name} reached **Level {level}**!',
 
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

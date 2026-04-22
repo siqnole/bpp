@@ -28,6 +28,8 @@
 #include "../commands/leveling/xp_handler.h"
 #include "../commands/leveling/xpblacklist.h"
 #include "../commands/patch.h"
+#include "../utils/string_utils.h"
+#include "../utils/colors.h"
 #include "../commands/owner.h"
 #include "../commands/owner/log_beta.h"
 #include "../commands/owner/feature_command.h"
@@ -221,8 +223,37 @@ void register_event_handlers(
                     auto cfg = db.get_guild_leveling_config(ev.guild_id);
                     if (!cfg || !cfg->announce_levelup) continue;
                     
-                    std::string announcement = "\xF0\x9F\x8E\x89 <@" + std::to_string(ev.user_id) +
-                        "> leveled up to **Level " + std::to_string(ev.new_level) + "**!";
+                    std::string announcement;
+                    
+                    // Fetch guild data for placeholders
+                    dpp::guild* guild = dpp::find_guild(ev.guild_id);
+                    if (guild) {
+                        std::unordered_map<std::string, std::string> placeholders;
+                        placeholders["name"] = "<@" + std::to_string(ev.user_id) + ">";
+                        placeholders["level"] = std::to_string(ev.new_level);
+                        placeholders["members"] = std::to_string(guild->member_count);
+                        
+                        // Date logic
+                        time_t now = time(0);
+                        struct tm tstruct;
+                        char buf[80];
+                        tstruct = *localtime(&now);
+                        strftime(buf, sizeof(buf), "%Y-%m-%d", &tstruct);
+                        placeholders["date"] = std::string(buf);
+                        
+                        // CreatedAt logic (guild creation date)
+                        double created_at = guild->get_creation_time();
+                        time_t cat_t = (time_t)created_at;
+                        struct tm cat_struct = *localtime(&cat_t);
+                        strftime(buf, sizeof(buf), "%Y-%m-%d", &cat_struct);
+                        placeholders["createdat"] = std::string(buf);
+                        
+                        announcement = bronx::utils::replace_placeholders(cfg->announcement_message, placeholders);
+                    } else {
+                        // Fallback if guild not in cache
+                        announcement = "\xF0\x9F\x8E\x89 <@" + std::to_string(ev.user_id) +
+                            "> reached **Level " + std::to_string(ev.new_level) + "**!";
+                    }
                     
                     // Check for level role rewards
                     auto level_role = db.get_level_role_at_level(ev.guild_id, ev.new_level);

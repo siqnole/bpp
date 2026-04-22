@@ -396,7 +396,7 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
     if (!conn) return {};
     
     const char* query = "SELECT guild_id, enabled, coin_rewards, coins_per_message, min_xp, "
-                        "max_xp, min_message_length, xp_cooldown, level_up_channel "
+                        "max_xp, min_message_length, xp_cooldown, level_up_channel, level_up_message "
                         "FROM guild_leveling_config WHERE guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
@@ -419,7 +419,7 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
         return {};
     }
     
-    MYSQL_BIND resbind[9];
+    MYSQL_BIND resbind[10];
     memset(resbind, 0, sizeof(resbind));
     
     uint64_t gid;
@@ -427,7 +427,11 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
     int coins_per_msg, min_xp, max_xp, min_chars, cooldown;
     uint64_t announce_ch;
     my_bool announce_ch_null;
+    char msg_buf[501];
+    unsigned long msg_len;
+    my_bool msg_error;
     
+
     resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     resbind[0].buffer = &gid;
     resbind[1].buffer_type = MYSQL_TYPE_TINY;
@@ -448,6 +452,12 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
     resbind[8].buffer = &announce_ch;
     resbind[8].is_null = &announce_ch_null;
     
+    resbind[9].buffer_type = MYSQL_TYPE_STRING;
+    resbind[9].buffer = msg_buf;
+    resbind[9].buffer_length = sizeof(msg_buf);
+    resbind[9].length = &msg_len;
+    resbind[9].error = &msg_error;
+    
     mysql_stmt_bind_result(stmt, resbind);
     
     std::optional<GuildLevelingConfig> result;
@@ -463,6 +473,7 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
         cfg.xp_cooldown_seconds = cooldown;
         if (!announce_ch_null) cfg.announcement_channel = announce_ch;
         cfg.announce_levelup = true;  // Default to true since DB doesn't have this column
+        cfg.announcement_message = std::string(msg_buf, msg_len);
         result = cfg;
     }
     
@@ -504,7 +515,7 @@ bool update_guild_config(Database* db, const GuildLevelingConfig& config) {
     
     const char* query = "UPDATE guild_leveling_config SET enabled=?, coin_rewards=?, coins_per_message=?, "
                         "min_xp=?, max_xp=?, min_message_length=?, xp_cooldown=?, "
-                        "level_up_channel=? WHERE guild_id=?";
+                        "level_up_channel=?, level_up_message=? WHERE guild_id=?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
@@ -513,33 +524,44 @@ bool update_guild_config(Database* db, const GuildLevelingConfig& config) {
         return false;
     }
     
-    MYSQL_BIND bind[9];
+    MYSQL_BIND bind[10];
     memset(bind, 0, sizeof(bind));
     
     my_bool enabled = config.enabled;
     my_bool reward_coins = config.reward_coins;
+    uint32_t coins_per_msg = config.coins_per_message;
+    uint32_t min_xp = config.min_xp_per_message;
+    uint32_t max_xp = config.max_xp_per_message;
+    uint32_t min_chars = config.min_message_chars;
+    uint32_t cooldown = config.xp_cooldown_seconds;
     uint64_t announce_ch = config.announcement_channel.value_or(0);
     my_bool announce_ch_null = !config.announcement_channel.has_value();
-    
+    uint64_t guild_id = config.guild_id;
+
     bind[0].buffer_type = MYSQL_TYPE_TINY;
     bind[0].buffer = &enabled;
     bind[1].buffer_type = MYSQL_TYPE_TINY;
     bind[1].buffer = &reward_coins;
     bind[2].buffer_type = MYSQL_TYPE_LONG;
-    bind[2].buffer = (char*)&config.coins_per_message;
+    bind[2].buffer = &coins_per_msg;
     bind[3].buffer_type = MYSQL_TYPE_LONG;
-    bind[3].buffer = (char*)&config.min_xp_per_message;
+    bind[3].buffer = &min_xp;
     bind[4].buffer_type = MYSQL_TYPE_LONG;
-    bind[4].buffer = (char*)&config.max_xp_per_message;
+    bind[4].buffer = &max_xp;
     bind[5].buffer_type = MYSQL_TYPE_LONG;
-    bind[5].buffer = (char*)&config.min_message_chars;
+    bind[5].buffer = &min_chars;
     bind[6].buffer_type = MYSQL_TYPE_LONG;
-    bind[6].buffer = (char*)&config.xp_cooldown_seconds;
+    bind[6].buffer = &cooldown;
     bind[7].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[7].buffer = &announce_ch;
     bind[7].is_null = &announce_ch_null;
-    bind[8].buffer_type = MYSQL_TYPE_LONGLONG;
-    bind[8].buffer = (char*)&config.guild_id;
+    
+    bind[8].buffer_type = MYSQL_TYPE_STRING;
+    bind[8].buffer = (char*)config.announcement_message.c_str();
+    bind[8].buffer_length = config.announcement_message.length();
+    
+    bind[9].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[9].buffer = &guild_id;
     
     mysql_stmt_bind_param(stmt, bind);
     bool success = mysql_stmt_execute(stmt) == 0;

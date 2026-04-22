@@ -49,54 +49,20 @@ static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
     {"hyperpixel", {"Hyperpixel", "Extreme low-res scaling", "scale=iw/20:-1,scale=iw*20:-1:flags=neighbor"}},
     {"datamosh", {"Datamosh", "Pixel bleed glitch", "mpdecimate,lagfun=decay=0.98:range=50,scale=iw/2:-1,scale=iw*2:-1:flags=neighbor", true, /*complex=*/true}},
     {"melt", {"Melt", "Liquification effect", "minterpolate=fps=20:scd=none:me_mode=bidir:mi_mode=mci", true, /*complex=*/true}},
-    {"smear", {"Smear", "Ghostly motion trails", "lagfun=decay=0.95:range=24", true}}
+    {"smear", {"Smear", "Ghostly motion trails", "lagfun=decay=0.95:range=24", true}},
+    {"fisheye", {"Fisheye", "Fisheye lens distortion", "lenscorrection=k1=0.2:k2=0.2"}},
+    {"swirl", {"Swirl", "Twisted swirl effect", "swirl=1.5", false, true}},
+    {"wave", {"Wave", "Aquatic ripples", "format=rgb24,geq=r='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':g='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':b='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))'", true, true}},
+    {"paint", {"Paint", "Oil paint simulation", "oilify=10"}},
+    {"neon", {"Neon", "Neon glow effect", "edgedetect=mode=colormix:high=0.1:low=0.1,curves=all='0/0 0.5/0.8 1/1',hue=h=280:s=2"}},
+    {"grayscale", {"Grayscale", "Black and white", "hue=s=0"}},
+    {"rainbow", {"Rainbow", "Continuous hue cycling", "hue=h=t*360", true}}
 };
 
 // ---------------------------------------------------------------------------
 // Lightweight source descriptor — avoids dpp::attachment's non-default ctor
 // ---------------------------------------------------------------------------
-struct MediaSource {
-    std::string url;
-    std::string filename;
-    std::string content_type;
-    uint64_t    size     = 0;     // 0 means unknown (skip pre-size check)
-    bool        want_gif = false; // Force GIF output even if source is MP4
-
-    // Construct from a real dpp::attachment
-    static MediaSource from_attachment(const dpp::attachment& a) {
-        bool gif = (a.content_type == "image/gif");
-        return {a.url, a.filename, a.content_type, a.size, gif};
-    }
-
-    // Construct from a Discord embed (Tenor / Giphy / URL embeds).
-    // Returns an empty MediaSource if nothing usable is found.
-    // All embed sources default to want_gif=true — the user sees a GIF,
-    // so we should output a GIF regardless of how Discord delivers it.
-    static MediaSource from_embeds(const std::vector<dpp::embed>& embeds) {
-        for (const auto& e : embeds) {
-            // Tenor sends the actual animation as embed.video (mp4 internally)
-            if (e.video.has_value() && !e.video->url.empty() &&
-                e.video->url.substr(0, 4) == "http") {
-                return {e.video->url, "embed.mp4", "video/mp4", 0, /*want_gif=*/true};
-            }
-            if (e.thumbnail.has_value() && !e.thumbnail->url.empty() &&
-                e.thumbnail->url.substr(0, 4) == "http") {
-                return {e.thumbnail->url, "embed.gif", "image/gif", 0, /*want_gif=*/true};
-            }
-            if (e.image.has_value() && !e.image->url.empty() &&
-                e.image->url.substr(0, 4) == "http") {
-                return {e.image->url, "embed.gif", "image/gif", 0, /*want_gif=*/true};
-            }
-        }
-        return {};  // empty — caller checks url.empty()
-    }
-
-    bool empty() const { return url.empty(); }
-    bool is_animated() const {
-        return content_type == "image/gif" ||
-               content_type.find("video/") != std::string::npos;
-    }
-};
+// Moved to media.h
 
 // ---------------------------------------------------------------------------
 // Core processing — now uses MediaSource instead of dpp::attachment
@@ -210,18 +176,89 @@ inline void process_media_edit(
     responder(msg);
 }
 
-// ---------------------------------------------------------------------------
-// Shared helper: resolve a MediaSource from a message (attachment or embed)
-// ---------------------------------------------------------------------------
-inline MediaSource resolve_media_source(const dpp::message& msg) {
-    for (const auto& a : msg.attachments) {
-        if (a.content_type.find("image/") != std::string::npos ||
-            a.content_type.find("video/") != std::string::npos) {
-            return MediaSource::from_attachment(a);
+/**
+ * @brief Processes media using ImageMagick (convert).
+ * Best for complex layouts, text rendering, and templates.
+ */
+inline void process_image_magick(
+    dpp::cluster& bot,
+    const MediaSource& src,
+    const std::string& magick_args,
+    std::function<void(const dpp::message&)> responder)
+{
+    if (src.size > 25 * 1024 * 1024) {
+        responder(dpp::message(bronx::EMOJI_DENY + " File is too large (max 25MB)."));
+        return;
+    }
+
+    auto response = http_get_sync(src.url);
+    if (response.status != 200) {
+        responder(dpp::message(bronx::EMOJI_DENY + " Failed to download attachment."));
+        return;
+    }
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(100000, 999999);
+    std::string id = std::to_string(dis(gen));
+
+    std::string temp_dir = "/tmp/bronx_magick_" + id;
+    std::filesystem::create_directories(temp_dir);
+
+    size_t dot = src.filename.find_last_of(".");
+    std::string in_ext = (dot == std::string::npos) ? ".bin" : src.filename.substr(dot);
+    if (in_ext.find("/") != std::string::npos) in_ext = ".bin";
+    
+    std::string in_path = temp_dir + "/input" + in_ext;
+    std::string out_path = temp_dir + "/output" + (src.is_animated() ? ".gif" : in_ext);
+
+    std::ofstream out_file(in_path, std::ios::binary);
+    out_file.write(response.body.data(), response.body.size());
+    out_file.close();
+
+    // ImageMagick on some systems lacks delegates for MP4/GIF containers or struggles with them.
+    // We normalize all animated media by extracting the first frame with FFmpeg to a static PNG.
+    if (src.is_animated()) {
+        std::string frame_path = temp_dir + "/frame.png";
+        std::string extract_cmd = "ffmpeg -y -i " + in_path + " -frames:v 1 " + frame_path + " > /dev/null 2>&1";
+        if (std::system(extract_cmd.c_str()) == 0) {
+            in_path = frame_path;
+            // From now on, ImageMagick sees a static image.
         }
     }
-    return MediaSource::from_embeds(msg.embeds);
+
+    // ImageMagick 'convert' command. 
+    // If it was animated, in_path now points to a static frame.
+    std::string cmd = "convert " + in_path + " " + magick_args + " " + out_path + " > /dev/null 2>&1";
+    
+    int result = std::system(cmd.c_str());
+    if (result != 0) {
+        std::filesystem::remove_all(temp_dir);
+        responder(dpp::message(bronx::EMOJI_DENY + " ImageMagick was unable to process this image."));
+        return;
+    }
+
+    std::ifstream res_file(out_path, std::ios::binary | std::ios::ate);
+    if (!res_file.is_open()) {
+        std::filesystem::remove_all(temp_dir);
+        responder(dpp::message(bronx::EMOJI_DENY + " Failed to read processed file."));
+        return;
+    }
+
+    std::streamsize res_size = res_file.tellg();
+    res_file.seekg(0, std::ios::beg);
+    std::string res_data(res_size, '\0');
+    res_file.read(&res_data[0], res_size);
+    res_file.close();
+
+    std::filesystem::remove_all(temp_dir);
+
+    dpp::message msg;
+    msg.add_file("magick_output" + (src.is_animated() ? ".gif" : in_ext), res_data);
+    responder(msg);
 }
+
+// Moved to media.h
 
 // ---------------------------------------------------------------------------
 // .speed command
@@ -416,6 +453,207 @@ inline void handle_media_edit_text(dpp::cluster& bot, const dpp::message_create_
 }
 
 // ---------------------------------------------------------------------------
+// .caption command
+// ---------------------------------------------------------------------------
+inline void handle_caption_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+    if (args.empty()) {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please provide text for the caption.").set_reference(event.msg.id));
+        return;
+    }
+
+    std::string text = "";
+    for (const auto& arg : args) text += arg + " ";
+    if (!text.empty()) text.pop_back();
+
+    // Sanitize for shell
+    std::string sanitized_text = text;
+    size_t pos = 0;
+    while ((pos = sanitized_text.find("\"", pos)) != std::string::npos) {
+        sanitized_text.replace(pos, 1, "\\\"");
+        pos += 2;
+    }
+
+    auto do_process = [&bot, event, sanitized_text](const dpp::message& target_msg) {
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No image found.").set_reference(event.msg.id));
+            return;
+        }
+
+        std::string font_path = "/home/siqnole/Documents/code/bpp/site/fonts/blinkmacsystemfont-bold.ttf";
+        // ImageMagick caption logic:
+        // 1. Create a white background with black text wrapped to the image width.
+        // 2. Append it to the top of the image.
+        std::string magick_args = "-colorspace sRGB ( -background white -fill black -font " + font_path + " -size %wx caption:\"" + sanitized_text + "\" ) +swap -append";
+
+        bot.message_create(dpp::message(event.msg.channel_id, "⏳ Generating caption...").set_reference(event.msg.id),
+            [&bot, src, magick_args](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) return;
+                dpp::message status_msg = std::get<dpp::message>(cb.value);
+                ::std::thread([&bot, src, magick_args, status_msg]() {
+                    process_image_magick(bot, src, magick_args, [&bot, status_msg](const dpp::message& m) {
+                        dpp::message reply = m;
+                        reply.id = status_msg.id;
+                        reply.set_channel_id(status_msg.channel_id);
+                        bot.message_edit(reply);
+                    });
+                }).detach();
+            });
+    };
+
+    if (!event.msg.attachments.empty() || !event.msg.embeds.empty()) {
+        do_process(event.msg);
+    } else if (event.msg.message_reference.message_id != 0) {
+        bot.message_get(event.msg.message_reference.message_id, event.msg.channel_id, [do_process, &bot, event](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) return;
+            do_process(std::get<dpp::message>(cb.value));
+        });
+    } else {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please attach an image or reply to one.").set_reference(event.msg.id));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// .meme command
+// ---------------------------------------------------------------------------
+inline void handle_meme_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+    if (args.empty()) {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Use: `.meme \"top text\" \"bottom text\"`").set_reference(event.msg.id));
+        return;
+    }
+
+    std::string top = args[0];
+    std::string bottom = (args.size() > 1) ? args[1] : "";
+
+    auto sanitize = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+        size_t pos = 0;
+        while ((pos = s.find("\"", pos)) != std::string::npos) {
+            s.replace(pos, 1, "\\\"");
+            pos += 2;
+        }
+        return s;
+    };
+
+    top = sanitize(top);
+    bottom = sanitize(bottom);
+
+    auto do_process = [&bot, event, top, bottom](const dpp::message& target_msg) {
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No image found.").set_reference(event.msg.id));
+            return;
+        }
+
+        std::string font_path = "/home/siqnole/Documents/code/bpp/DPP/fonts/segoe-ui-black.ttf";
+        // Impact meme logic:
+        // 1. Draw top text with outline.
+        // 2. Draw bottom text with outline.
+        std::string draw_top = top.empty() ? "" : "-draw \"gravity north text 0,10 '" + top + "'\"";
+        std::string draw_bottom = bottom.empty() ? "" : "-draw \"gravity south text 0,10 '" + bottom + "'\"";
+
+        // We use -annotate for better control over wrapping or just raw -draw for simplicity as found in most bot implementations
+        // Standard Impact meme: white text, black stroke
+        std::string magick_args = "-colorspace sRGB -font " + font_path + " -fill white -stroke black -strokewidth 2 -pointsize 50 " + draw_top + " " + draw_bottom;
+
+        bot.message_create(dpp::message(event.msg.channel_id, "⏳ Generating meme...").set_reference(event.msg.id),
+            [&bot, src, magick_args](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) return;
+                dpp::message status_msg = std::get<dpp::message>(cb.value);
+                ::std::thread([&bot, src, magick_args, status_msg]() {
+                    process_image_magick(bot, src, magick_args, [&bot, status_msg](const dpp::message& m) {
+                        dpp::message reply = m;
+                        reply.id = status_msg.id;
+                        reply.set_channel_id(status_msg.channel_id);
+                        bot.message_edit(reply);
+                    });
+                }).detach();
+            });
+    };
+
+    if (!event.msg.attachments.empty() || !event.msg.embeds.empty()) {
+        do_process(event.msg);
+    } else if (event.msg.message_reference.message_id != 0) {
+        bot.message_get(event.msg.message_reference.message_id, event.msg.channel_id, [do_process, &bot, event](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) return;
+            do_process(std::get<dpp::message>(cb.value));
+        });
+    } else {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please attach an image or reply to one.").set_reference(event.msg.id));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// .motivate command
+// ---------------------------------------------------------------------------
+inline void handle_motivate_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+    if (args.empty()) {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Use: `.motivate \"title\" \"description\"`").set_reference(event.msg.id));
+        return;
+    }
+
+    std::string title = args[0];
+    std::string desc = (args.size() > 1) ? args[1] : "";
+
+    auto sanitize = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+        size_t pos = 0;
+        while ((pos = s.find("\"", pos)) != std::string::npos) {
+            s.replace(pos, 1, "\\\"");
+            pos += 2;
+        }
+        return s;
+    };
+
+    title = sanitize(title);
+    desc = sanitize(desc);
+
+    auto do_process = [&bot, event, title, desc](const dpp::message& target_msg) {
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No image found.").set_reference(event.msg.id));
+            return;
+        }
+
+        std::string font_path = "/home/siqnole/Documents/code/bpp/DPP/fonts/segoe-ui-black.ttf";
+        // Motivational poster logic:
+        // 1. Add black border. 2. Add title. 3. Add description.
+        std::string magick_args = "-colorspace sRGB -bordercolor black -border 10%x10% "
+                                  "-font " + font_path + " -fill white "
+                                  "-draw \"gravity south text 0,60 '" + title + "'\" ";
+        
+        if (!desc.empty()) {
+            magick_args += "-pointsize 20 -draw \"gravity south text 0,30 '" + desc + "'\" ";
+        }
+
+        bot.message_create(dpp::message(event.msg.channel_id, "⏳ Generating motivational poster...").set_reference(event.msg.id),
+            [&bot, src, magick_args](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) return;
+                dpp::message status_msg = std::get<dpp::message>(cb.value);
+                ::std::thread([&bot, src, magick_args, status_msg]() {
+                    process_image_magick(bot, src, magick_args, [&bot, status_msg](const dpp::message& m) {
+                        dpp::message reply = m;
+                        reply.id = status_msg.id;
+                        reply.set_channel_id(status_msg.channel_id);
+                        bot.message_edit(reply);
+                    });
+                }).detach();
+            });
+    };
+
+    if (!event.msg.attachments.empty() || !event.msg.embeds.empty()) {
+        do_process(event.msg);
+    } else if (event.msg.message_reference.message_id != 0) {
+        bot.message_get(event.msg.message_reference.message_id, event.msg.channel_id, [do_process, &bot, event](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) return;
+            do_process(std::get<dpp::message>(cb.value));
+        });
+    } else {
+        bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Please attach an image or reply to one.").set_reference(event.msg.id));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Command exports
 // ---------------------------------------------------------------------------
 inline Command* get_speed_command() {
@@ -439,6 +677,24 @@ inline std::vector<Command*> get_media_edit_commands() {
     }
 
     cmds.push_back(get_speed_command());
+
+    static Command caption_cmd("caption", "Add a top caption to an image", "Media", {"cap"}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            handle_caption_text(bot, event, args);
+        });
+    cmds.push_back(&caption_cmd);
+
+    static Command meme_cmd("meme", "Create an Impact-style meme", "Media", {"impact"}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            handle_meme_text(bot, event, args);
+        });
+    cmds.push_back(&meme_cmd);
+
+    static Command motivate_cmd("motivate", "Create a motivational poster", "Media", {"poster"}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
+            handle_motivate_text(bot, event, args);
+        });
+    cmds.push_back(&motivate_cmd);
 
     static Command random_cmd("random", "Apply 3 random effects to media", "Media", {}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {

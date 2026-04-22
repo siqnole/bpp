@@ -26,6 +26,59 @@ extern "C" {
 namespace commands {
 namespace utility {
 
+// ---------------------------------------------------------------------------
+// Lightweight source descriptor
+// ---------------------------------------------------------------------------
+struct MediaSource {
+    std::string url;
+    std::string filename;
+    std::string content_type;
+    uint64_t    size     = 0;     // 0 means unknown (skip pre-size check)
+    bool        want_gif = false; // Force GIF output (for Tenor/Giphy embeds)
+
+    static MediaSource from_attachment(const dpp::attachment& a) {
+        bool gif = (a.content_type == "image/gif");
+        return {a.url, a.filename, a.content_type, a.size, gif};
+    }
+
+    static MediaSource from_embeds(const std::vector<dpp::embed>& embeds) {
+        for (const auto& e : embeds) {
+            // Tenor sends the actual animation as embed.video (mp4 internally)
+            if (e.video.has_value() && !e.video->url.empty() && 
+                e.video->url.substr(0, 4) == "http") {
+                return {e.video->url, "embed.mp4", "video/mp4", 0, /*want_gif=*/true};
+            }
+            if (e.image.has_value() && !e.image->url.empty() &&
+                e.image->url.substr(0, 4) == "http") {
+                return {e.image->url, "embed.gif", "image/gif", 0, /*want_gif=*/true};
+            }
+            if (e.thumbnail.has_value() && !e.thumbnail->url.empty() &&
+                e.thumbnail->url.substr(0, 4) == "http") {
+                return {e.thumbnail->url, "embed.gif", "image/gif", 0, /*want_gif=*/true};
+            }
+        }
+        return {};
+    }
+
+    bool empty() const { return url.empty(); }
+    bool is_video() const { return content_type.find("video/") != std::string::npos; }
+    bool is_animated() const {
+        return content_type == "image/gif" || is_video();
+    }
+};
+
+inline MediaSource resolve_media_source(const dpp::message& msg) {
+    for (const auto& a : msg.attachments) {
+        if (a.content_type.find("image/") != std::string::npos ||
+            a.content_type.find("video/") != std::string::npos ||
+            a.content_type.find("audio/") != std::string::npos ||
+            a.content_type == "application/ogg") {
+            return MediaSource::from_attachment(a);
+        }
+    }
+    return MediaSource::from_embeds(msg.embeds);
+}
+
 /**
  * libcurl helper for synchronous memory downloads.
  */
@@ -223,19 +276,23 @@ inline ::std::vector<float> decode_audio(const ::std::string& bytes, double& dur
     return samples;
 }
 
-inline void process_ocr_request(dpp::cluster& bot, dpp::attachment attachment, std::function<void(const dpp::message&)> responder) {
-    if (attachment.size > 8 * 1024 * 1024) {
+inline void process_ocr_request(dpp::cluster& bot, const MediaSource& src, std::function<void(const dpp::message&)> responder) {
+    if (src.size > 8 * 1024 * 1024) {
         responder(dpp::message(bronx::EMOJI_DENY + " Image is too large (max 8MB)."));
         return;
     }
 
-    ::std::string mime = attachment.content_type;
-    if (mime != "image/png" && mime != "image/jpeg" && mime != "image/webp") {
-        responder(dpp::message(bronx::EMOJI_DENY + " Unsupported file type. Please use PNG, JPEG, or WebP."));
-        return;
+    if (!src.content_type.empty() && 
+        src.content_type != "image/png" && src.content_type != "image/jpeg" && src.content_type != "image/webp") {
+        // If it's a Tenor/Giphy embed, it might be video/mp4 but we can still try to grab a frame if we want,
+        // but OCR usually expects a static image. For now, keep it restricted or add frame extraction.
+        if (src.content_type.find("image/") == std::string::npos) {
+            responder(dpp::message(bronx::EMOJI_DENY + " OCR only works on static images (PNG, JPEG, WebP)."));
+            return;
+        }
     }
 
-    auto response = http_get_sync(attachment.url);
+    auto response = http_get_sync(src.url);
     if (response.status != 200) {
         responder(dpp::message(bronx::EMOJI_DENY + " Failed to download image."));
         return;
@@ -282,21 +339,21 @@ inline void process_ocr_request(dpp::cluster& bot, dpp::attachment attachment, s
     }
 }
 
-inline void process_transcribe_request(dpp::cluster& bot, dpp::attachment attachment, ::std::string language, std::function<void(const dpp::message&)> responder) {
-    if (attachment.size > 25 * 1024 * 1024) {
+inline void process_transcribe_request(dpp::cluster& bot, const MediaSource& src, ::std::string language, std::function<void(const dpp::message&)> responder) {
+    if (src.size > 25 * 1024 * 1024) {
         responder(dpp::message(bronx::EMOJI_DENY + " Audio file is too large (max 25MB)."));
         return;
     }
 
-    ::std::string mime = attachment.content_type;
+    ::std::string mime = src.content_type;
     if (mime != "audio/ogg" && mime != "audio/mpeg" && mime != "audio/wav" && mime != "audio/flac" && mime != "application/ogg") {
-        if (attachment.filename.find(".ogg") == ::std::string::npos) {
+        if (src.filename.find(".ogg") == ::std::string::npos) {
             responder(dpp::message(bronx::EMOJI_DENY + " Unsupported file type. Please use OGG, MP3, WAV, or FLAC."));
             return;
         }
     }
 
-    auto response = http_get_sync(attachment.url);
+    auto response = http_get_sync(src.url);
     if (response.status != 200) {
         responder(dpp::message(bronx::EMOJI_DENY + " Failed to download audio."));
         return;
@@ -349,13 +406,13 @@ inline void process_transcribe_request(dpp::cluster& bot, dpp::attachment attach
     responder(dpp::message().add_embed(embed));
 }
 
-inline void process_gif_request(dpp::cluster& bot, dpp::attachment attachment, std::function<void(const dpp::message&)> responder) {
-    if (attachment.size > 25 * 1024 * 1024) {
+inline void process_gif_request(dpp::cluster& bot, const MediaSource& src, std::function<void(const dpp::message&)> responder) {
+    if (src.size > 25 * 1024 * 1024) {
         responder(dpp::message(bronx::EMOJI_DENY + " File is too large (max 25MB for conversion)."));
         return;
     }
 
-    auto response = http_get_sync(attachment.url);
+    auto response = http_get_sync(src.url);
     if (response.status != 200) {
         responder(dpp::message(bronx::EMOJI_DENY + " Failed to download attachment."));
         return;
@@ -370,7 +427,7 @@ inline void process_gif_request(dpp::cluster& bot, dpp::attachment attachment, s
     std::string temp_dir = "/tmp/bronx_gif_" + id;
     std::filesystem::create_directories(temp_dir);
     
-    std::string in_ext = attachment.filename.substr(attachment.filename.find_last_of("."));
+    std::string in_ext = src.filename.find(".") != std::string::npos ? src.filename.substr(src.filename.find_last_of(".")) : ".bin";
     std::string in_path = temp_dir + "/input" + in_ext;
     std::string out_path = temp_dir + "/output.gif";
 
@@ -424,7 +481,7 @@ inline void handle_gif(dpp::cluster& bot, const dpp::slashcommand_t& event) {
         }
         auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id_param));
         
-        process_gif_request(bot, attachment, [&event](const dpp::message& m) {
+        process_gif_request(bot, MediaSource::from_attachment(attachment), [&event](const dpp::message& m) {
             event.edit_original_response(m);
         });
     }).detach();
@@ -434,28 +491,21 @@ inline void handle_gif_text(dpp::cluster& bot, const dpp::message_create_t& even
     dpp::message msg = event.msg;
     
     auto process_msg = [&bot, event](const dpp::message& target_msg) {
-        if (target_msg.attachments.empty()) {
-             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No attachment found.").set_reference(event.msg.id));
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No media found. Reply to an attachment or a Tenor/Giphy embed.").set_reference(event.msg.id));
              return;
         }
-        ::std::thread([&bot, event, target_msg]() {
-            for (const auto& attachment : target_msg.attachments) {
-                // Try to find a video or image
-                std::string mime = attachment.content_type;
-                if (mime.find("video/") != std::string::npos || mime.find("image/") != std::string::npos) {
-                    process_gif_request(bot, attachment, [&bot, &event](const dpp::message& m) {
-                        dpp::message reply = m;
-                        reply.set_channel_id(event.msg.channel_id).set_reference(event.msg.id);
-                        bot.message_create(reply);
-                    });
-                    return;
-                }
-            }
-            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No video or image attachment found.").set_reference(event.msg.id));
+        ::std::thread([&bot, event, src]() {
+            process_gif_request(bot, src, [&bot, &event](const dpp::message& m) {
+                dpp::message reply = m;
+                reply.set_channel_id(event.msg.channel_id).set_reference(event.msg.id);
+                bot.message_create(reply);
+            });
         }).detach();
     };
 
-    if (!msg.attachments.empty()) {
+    if (!msg.attachments.empty() || !msg.embeds.empty()) {
         process_msg(msg);
         return;
     }
@@ -493,7 +543,7 @@ inline void handle_ocr(dpp::cluster& bot, const dpp::slashcommand_t& event) {
         auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id_param));
         
         bool sent_first = false;
-        process_ocr_request(bot, attachment, [&event, &sent_first](const dpp::message& m) {
+        process_ocr_request(bot, MediaSource::from_attachment(attachment), [&event, &sent_first](const dpp::message& m) {
             if (!sent_first) {
                 event.edit_original_response(m);
                 sent_first = true;
@@ -509,11 +559,15 @@ inline void handle_ocr(dpp::cluster& bot, const dpp::slashcommand_t& event) {
 inline void handle_ocr_text(dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
     dpp::message msg = event.msg;
     
-    // Check current message first
-    if (!msg.attachments.empty()) {
-        ::std::thread([&bot, event, msg]() {
+    auto process_msg = [&bot, event](const dpp::message& target_msg) {
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No image found.").set_reference(event.msg.id));
+            return;
+        }
+        ::std::thread([&bot, event, src]() {
             bool sent_first = false;
-            process_ocr_request(bot, msg.attachments[0], [&bot, &event, &sent_first](const dpp::message& m) {
+            process_ocr_request(bot, src, [&bot, &event, &sent_first](const dpp::message& m) {
                 dpp::message reply = m;
                 reply.set_channel_id(event.msg.channel_id);
                 if (!sent_first) {
@@ -523,34 +577,20 @@ inline void handle_ocr_text(dpp::cluster& bot, const dpp::message_create_t& even
                 bot.message_create(reply);
             });
         }).detach();
+    };
+
+    if (!msg.attachments.empty() || !msg.embeds.empty()) {
+        process_msg(msg);
         return;
     }
 
-    // Check message reference (reply)
     if (msg.message_reference.message_id != 0) {
-        bot.message_get(msg.message_reference.message_id, msg.channel_id, [&bot, event](const dpp::confirmation_callback_t& cb) {
+        bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
                 bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
                 return;
             }
-            dpp::message ref_msg = ::std::get<dpp::message>(cb.value);
-            if (ref_msg.attachments.empty()) {
-                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Replied message has no attachments.").set_reference(event.msg.id));
-                return;
-            }
-            
-            ::std::thread([&bot, event, ref_msg]() {
-                bool sent_first = false;
-                process_ocr_request(bot, ref_msg.attachments[0], [&bot, &event, &sent_first](const dpp::message& m) {
-                    dpp::message reply = m;
-                    reply.set_channel_id(event.msg.channel_id);
-                    if (!sent_first) {
-                        reply.set_reference(event.msg.id);
-                        sent_first = true;
-                    }
-                    bot.message_create(reply);
-                });
-            }).detach();
+            process_msg(::std::get<dpp::message>(cb.value));
         });
         return;
     }
@@ -571,7 +611,7 @@ inline void handle_transcribe(dpp::cluster& bot, const dpp::slashcommand_t& even
         auto lang_param = event.get_parameter("language");
         auto language = ::std::holds_alternative<::std::string>(lang_param) ? ::std::get<::std::string>(lang_param) : "auto";
 
-        process_transcribe_request(bot, attachment, language, [&event](const dpp::message& m) {
+        process_transcribe_request(bot, MediaSource::from_attachment(attachment), language, [&event](const dpp::message& m) {
             event.edit_original_response(m);
         });
     }).detach();
@@ -582,12 +622,13 @@ inline void handle_transcribe_text(dpp::cluster& bot, const dpp::message_create_
     ::std::string language = (args.size() > 0) ? args[0] : "auto";
     
     auto process_msg = [&bot, event, language](const dpp::message& target_msg) {
-        if (target_msg.attachments.empty()) {
-             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No audio attachment found.").set_reference(event.msg.id));
+        MediaSource src = resolve_media_source(target_msg);
+        if (src.empty()) {
+             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No audio found.").set_reference(event.msg.id));
              return;
         }
-        ::std::thread([&bot, event, target_msg, language]() {
-            process_transcribe_request(bot, target_msg.attachments[0], language, [&bot, &event](const dpp::message& m) {
+        ::std::thread([&bot, event, src, language]() {
+            process_transcribe_request(bot, src, language, [&bot, &event](const dpp::message& m) {
                 dpp::message reply = m;
                 reply.set_channel_id(event.msg.channel_id).set_reference(event.msg.id);
                 bot.message_create(reply);
@@ -595,7 +636,7 @@ inline void handle_transcribe_text(dpp::cluster& bot, const dpp::message_create_
         }).detach();
     };
 
-    if (!msg.attachments.empty()) {
+    if (!msg.attachments.empty() || !msg.embeds.empty()) {
         process_msg(msg);
         return;
     }
