@@ -1,0 +1,19 @@
+FROM debian:bookworm
+
+RUN apt-get update && apt-get install -y \
+    g++ cmake git wget curl pkg-config ccache libcairo2-dev \
+    libmariadb-dev libssl-dev zlib1g-dev \
+    libreadline-dev libsqlite3-dev \
+    libcurl4-openssl-dev libavcodec-dev \
+    libavformat-dev libavutil-dev \
+    libswresample-dev \
+    libfmt-dev libtesseract-dev tesseract-ocr-eng
+
+RUN wget -qO dpp.tar.gz https://github.com/brainboxdotcc/DPP/archive/refs/tags/v10.1.4.tar.gz && \
+    tar -xf dpp.tar.gz && cd DPP-10.1.4 && \
+    cmake -B build -S . && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build && \
+    cd .. && rm -rf DPP-10.1.4 dpp.tar.gz
+
+WORKDIR /workspace

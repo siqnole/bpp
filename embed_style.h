@@ -141,13 +141,13 @@ namespace bronx {
 
         // potential fun facts about the bot
         static const std::vector<std::string> facts = {
-            "i'm powered by C++ and DPP!",
+            "i'm powered by c++ and dpp!",
             "i once counted to infinity... twice!",
             "i respond to both slash and text commands!",
             "use suggest if you have any ideas for new commands or features!",
             "use passive to toggle passive mode and avoid being robbed!",
             "i'm open source! check out the code on github: github.com/siqnole/bpp",
-            "i have a custom database layer built on top of MySQL!",
+            "i have a custom database layer built on top of mysql!",
             "i'm named after the bronx, the best borough!",
             "my creator's name is siqnole, but you can call them siq :)",
             "i'm always learning and improving, so expect new features and commands in the future!",
@@ -239,11 +239,11 @@ namespace bronx {
         std::string desc = EMOJI_DENY + " **i'm missing permissions!**\n\n"
             "i tried to respond in a channel but i don't have the right permissions.\n\n"
             "**please ask a server admin to check that i have:**\n"
-            "• `Send Messages`\n"
-            "• `Embed Links`\n"
-            "• `Use External Emojis`\n"
-            "• `Attach Files`\n"
-            "• `Read Message History`\n\n";
+            "• `send messages`\n"
+            "• `embed links`\n"
+            "• `use external emojis`\n"
+            "• `attach files`\n"
+            "• `read message history`\n\n";
         if (!guild_name.empty()) {
             desc += "*this happened in* **" + guild_name + "**\n";
         }
@@ -272,7 +272,7 @@ namespace bronx {
     // Try to send a plain-text fallback (no embed) when embed permission is missing
     inline void try_plain_text_fallback(dpp::cluster& bot, uint64_t user_id, dpp::snowflake channel_id,
                                          const std::string& guild_name = "") {
-        std::string plain = EMOJI_WARNING + " i'm missing the **Embed Links** permission in this channel! "
+        std::string plain = EMOJI_WARNING + " i'm missing the **embed links** permission in this channel! "
                             "please ask a server admin to grant it so i can respond properly.";
         dpp::message fallback(channel_id, plain);
         bot.message_create(fallback, [&bot, user_id, channel_id, guild_name](const dpp::confirmation_callback_t& cb) {

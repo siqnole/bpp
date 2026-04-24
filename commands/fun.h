@@ -128,7 +128,7 @@ inline ::std::vector<Command*> get_fun_commands() {
     cmds.push_back(&study);
 
     // .fyp command (prefix-only as requested, but easily extensible to slash)
-    static Command fyp("fyp", "Get a random TikTok/Short", "Fun", {"tt"}, false,
+    static Command fyp("fyp", "get a random tiktok/short", "fun", {"tt"}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             std::string query_str = "";
             bool is_pool = false;
@@ -150,7 +150,7 @@ inline ::std::vector<Command*> get_fun_commands() {
             }
             
             // Send initial feedback
-            dpp::message status_msg(event.msg.channel_id, is_pool ? "🔎 Exploring authentic TikTok feed..." : "🔎 Searching for a random TikTok...");
+            dpp::message status_msg(event.msg.channel_id, is_pool ? "🔎 exploring authentic tiktok feed..." : "🔎 searching for a random tiktok...");
             status_msg.set_reference(event.msg.id);
             
             bot.message_create(status_msg, [&bot, event, query_str, is_pool](const dpp::confirmation_callback_t& cb) {
@@ -205,7 +205,7 @@ inline ::std::vector<Command*> get_fun_commands() {
             }
 
             // Send initial feedback
-            dpp::message status_msg(event.msg.channel_id, is_pool ? "🔎 Exploring authentic Instagram feed..." : "🔎 Searching for a random Reel...");
+            dpp::message status_msg(event.msg.channel_id, is_pool ? "🔎 exploring authentic instagram feed..." : "🔎 searching for a random reel...");
             status_msg.set_reference(event.msg.id);
             
             bot.message_create(status_msg, [&bot, event, query_str, is_pool](const dpp::confirmation_callback_t& cb) {
@@ -229,7 +229,7 @@ inline ::std::vector<Command*> get_fun_commands() {
     cmds.push_back(&reel);
 
     // .yt command
-    static Command yt("yt", "Search and get a random YouTube video", "Fun", {}, false,
+    static Command yt("yt", "search and get a random youtube video", "fun", {}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (args.empty()) {
                 bronx::send_message(bot, event, bronx::error("you need to provide keywords to search!"));

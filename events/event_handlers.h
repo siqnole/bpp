@@ -13,9 +13,8 @@
 extern std::atomic<bool> g_initial_load_complete;
 
 namespace commands {
-    struct global_stats {
-        static void record_ping(double ping_ms);
-    };
+    struct BotStats;
+    extern BotStats global_stats;
 }
 
 void register_event_handlers(

@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 #include <cerrno>
 #include <cstring>
 #include "performance/optimized_command_handler.h"
@@ -79,16 +80,21 @@ namespace commands {
     BotStats global_stats;
 }
 
-// Crash signal handler
+// crash signal handler
 static void crash_handler(int signum) {
-    const char* signal_name = "UNKNOWN";
+    const char* signal_name = "unknown";
     switch (signum) {
-        case SIGSEGV: signal_name = "SIGSEGV"; break;
-        case SIGABRT: signal_name = "SIGABRT"; break;
-        case SIGBUS:  signal_name = "SIGBUS"; break;
-        case SIGFPE:  signal_name = "SIGFPE"; break;
+        case SIGSEGV: signal_name = "sigsegv"; break;
+        case SIGABRT: signal_name = "sigabrt"; break;
+        case SIGBUS:  signal_name = "sigbus"; break;
+        case SIGFPE:  signal_name = "sigfpe"; break;
     }
-    std::cerr << clr::BOLD_RED << "*** " << signal_name << " received (signal " << signum << "), stack trace:" << clr::RESET << std::endl;
+    
+    std::string msg = "critical: " + std::string(signal_name) + " received (signal " + std::to_string(signum) + "), stack trace:";
+    bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, msg);
+    
+    // still use cerr for actual stack trace as tui might be frozen
+    std::cerr << "\n*** " << signal_name << " received ***\n";
     void* bt[100];
     int cnt = backtrace(bt, sizeof(bt)/sizeof(bt[0]));
     backtrace_symbols_fd(bt, cnt, STDERR_FILENO);
@@ -96,12 +102,12 @@ static void crash_handler(int signum) {
 }
 
 static void terminate_handler() {
-    std::cerr << clr::BOLD_RED << "*** Uncaught exception" << clr::RESET << std::endl;
+    bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "critical: uncaught exception");
     try {
         auto eptr = std::current_exception();
         if (eptr) std::rethrow_exception(eptr);
     } catch (const std::exception& e) {
-        std::cerr << clr::BOLD_RED << "*** Error: " << e.what() << clr::RESET << std::endl;
+        bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "error details: " + std::string(e.what()));
     }
     void* bt[100];
     int cnt = backtrace(bt, sizeof(bt)/sizeof(bt[0]));
@@ -124,7 +130,7 @@ int main(int argc, char* argv[]) {
     bool use_tui = !force_no_tui && isatty(STDIN_FILENO);
     if (use_tui) {
         bronx::tui::TuiLogger::get().init();
-        bronx::tui::TuiLogger::get().update_stats("Status", "Initializing...");
+        bronx::tui::TuiLogger::get().update_stats("status", "initializing...");
     }
 
     signal(SIGSEGV, crash_handler);
@@ -169,7 +175,7 @@ int main(int argc, char* argv[]) {
 
     std::signal(SIGINT, [](int) {
         g_running = false;
-        std::cerr << "\nShutting down...\n";
+        bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "system: shutting down...");
         if (s_snipe) s_snipe->stop();
         if (s_msg) s_msg->stop();
         if (s_batch) s_batch->stop();
@@ -182,14 +188,14 @@ int main(int argc, char* argv[]) {
     // Start background initialization thread
     std::thread init_thread([&, use_tui, BOT_TOKEN, verbose_events]() {
         try {
-            if (use_tui) bronx::tui::TuiLogger::get().update_stats("Status", "Loading Models...");
+            if (use_tui) bronx::tui::TuiLogger::get().update_stats("status", "loading models...");
             if (!bronx::get_media_manager().init("data/ggml-base.en.bin")) {
-                std::cerr << "Warning: Media services failed to initialize\n";
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "system: media services failed to initialize");
             }
 
-            if (use_tui) bronx::tui::TuiLogger::get().update_stats("Status", "Connecting DBs...");
+            if (use_tui) bronx::tui::TuiLogger::get().update_stats("status", "connecting dbs...");
             if (!db.connect()) {
-                std::cerr << "Fatal: Remote database connection failed\n";
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "system: fatal - remote database connection failed");
                 return;
             }
             local_db.initialize();
@@ -202,30 +208,43 @@ int main(int argc, char* argv[]) {
             xp_batch_writer.start();
             leveling::set_xp_batch_writer(&xp_batch_writer);
 
-            if (use_tui) bronx::tui::TuiLogger::get().update_stats("Status", "Preloading Cache...");
+            if (use_tui) bronx::tui::TuiLogger::get().update_stats("status", "preloading cache...");
             hybrid_db.refresh_all_settings();
 
-            if (use_tui) bronx::tui::TuiLogger::get().update_stats("Status", "Starting Bot...");
+            if (use_tui) bronx::tui::TuiLogger::get().update_stats("status", "starting bot...");
             
-            dpp::cluster bot(BOT_TOKEN, dpp::i_default_intents | dpp::i_message_content | dpp::i_guild_members);
+            uint32_t num_shards = 0;
+            const char* shard_env = std::getenv("SHARD_COUNT");
+            if (shard_env) {
+                try { 
+                    num_shards = std::stoul(shard_env); 
+                    bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "init: overriding shard count to " + std::to_string(num_shards) + " from env");
+                } catch (...) {
+                    bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "init: failed to parse shard_count from env, using default");
+                }
+            }
+
+            dpp::cluster bot(BOT_TOKEN, dpp::i_default_intents | dpp::i_message_content | dpp::i_guild_members, num_shards, 0, 1);
             
             bot.on_log([use_tui](const dpp::log_t& event) {
                 if (event.severity == dpp::ll_trace) return;
+                
+                bronx::tui::LogLevel l = bronx::tui::LogLevel::INFO;
+                if (event.severity == dpp::ll_error) l = bronx::tui::LogLevel::ERROR;
+                if (event.severity == dpp::ll_debug) l = bronx::tui::LogLevel::DEBUG;
+
                 if (use_tui) {
-                    bronx::tui::LogLevel l = bronx::tui::LogLevel::INFO;
-                    if (event.severity == dpp::ll_error) l = bronx::tui::LogLevel::ERROR;
-                    if (event.severity == dpp::ll_debug) l = bronx::tui::LogLevel::DEBUG;
-                    bronx::tui::TuiLogger::get().add_log(l, "[" + std::to_string(event.severity) + "] " + event.message);
+                    bronx::tui::TuiLogger::get().add_log(l, "[" + std::to_string(static_cast<int>(event.severity)) + "] " + event.message);
                 } else {
-                    std::cerr << event.message << "\n";
+                    std::cout << "[dpp] " << event.message << "\n";
                 }
             });
 
             bot.on_ready([&bot, use_tui](const dpp::ready_t& event) {
                 if (use_tui) {
-                     bronx::tui::TuiLogger::get().update_stats("Status", "Online");
-                     bronx::tui::TuiLogger::get().update_stats("Bot", bot.me.username);
-                     bronx::tui::TuiLogger::get().update_stats("Shards", std::to_string(bot.numshards));
+                     bronx::tui::TuiLogger::get().update_stats("status", "online");
+                     bronx::tui::TuiLogger::get().update_stats("bot", bot.me.username);
+                     bronx::tui::TuiLogger::get().update_stats("shards", std::to_string(bot.numshards));
                 }
             });
 
@@ -274,11 +293,33 @@ int main(int argc, char* argv[]) {
 
             register_event_handlers(bot, cmd_handler, db, async_stat_writer, message_cache, snipe_cache, xp_batch_writer, verbose_events);
 
+            // ── Heartbeat Monitoring Task ───────────────────────────────────
+            // Track uptime, memory usage, and guild counts in MariaDB every 60s
+            auto start_time = std::chrono::steady_clock::now();
+            bot.start_timer([&bot, &db, start_time](dpp::timer t) {
+                auto now = std::chrono::steady_clock::now();
+                uint64_t uptime_seconds = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+                
+                // Get RAM usage (Resident Set Size) in MB
+                uint64_t memory_mb = 0;
+                struct rusage usage;
+                if (getrusage(RUSAGE_SELF, &usage) == 0) {
+                    memory_mb = usage.ru_maxrss / 1024; // KB to MB
+                }
+
+                int guild_count = dpp::get_guild_cache()->count();
+                
+                // Update heartbeat for all shards managed by this process
+                auto shards = bot.get_shards();
+                for (auto const& [shard_id, shard_ptr] : shards) {
+                    db.update_heartbeat(shard_id, uptime_seconds, memory_mb, guild_count, "online");
+                }
+            }, 60);
+
             bot.start(dpp::st_wait);
 
         } catch (const std::exception& e) {
-            if (use_tui) bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "ASYNC INIT ERROR: " + std::string(e.what()));
-            else std::cerr << "Async init error: " << e.what() << "\n";
+            bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "system: async init error - " + std::string(e.what()));
         }
     });
 

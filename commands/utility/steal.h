@@ -32,6 +32,37 @@ static bool download_url(const ::std::string& url, ::std::string& out, long time
     return (res == CURLE_OK);
 }
 
+static ::std::string url_decode(const ::std::string& str) {
+    ::std::string res;
+    for (size_t i = 0; i < str.length(); ++i) {
+        if (str[i] == '%') {
+            if (i + 2 < str.length()) {
+                char hex[3] = { str[i+1], str[i+2], 0 };
+                res += static_cast<char>(::std::strtol(hex, nullptr, 16));
+                i += 2;
+            }
+        } else if (str[i] == '+') {
+            res += ' ';
+        } else {
+            res += str[i];
+        }
+    }
+    return res;
+}
+
+static ::std::string sanitize_emoji_name(const ::std::string& name) {
+    ::std::string res;
+    for (char c : name) {
+        if (::std::isalnum(static_cast<unsigned char>(c)) || c == '_') res += c;
+        else res += '_';
+    }
+    while (!res.empty() && res.front() == '_') res.erase(0, 1);
+    while (!res.empty() && res.back() == '_') res.pop_back();
+    if (res.size() < 2) res = "emoji_" + res;
+    if (res.size() > 32) res = res.substr(0, 32);
+    return res;
+}
+
 inline Command* get_steal_command() {
     static Command steal("steal", "steal custom emojis into this server (manage emojis required)", "utility", {"clone"}, false,
         [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
@@ -69,23 +100,33 @@ inline Command* get_steal_command() {
                 return tok.substr(p, end - p);
             };
 
-            // parser: accepts <a:name:id>, Discord CDN emoji URLs, or markdown links containing a CDN URL
+            // parser: accepts <a:name:id>, Discord CDN emoji URLs, or markdown links [name](url)
             auto parse_token = [&](const ::std::string &tok, ::std::string &name_out, ::std::string &id_out, ::std::string &ext_out, bool &animated_out) -> bool {
                 ::std::smatch m;
+                // 1. Check for standard emoji mention <a:name:id>
                 ::std::regex mention_re(R"(<a?:([A-Za-z0-9_]+):([0-9]+)>)");
                 if (::std::regex_search(tok, m, mention_re)) {
-                    animated_out = (tok.rfind("<a:", 0) == 0);
+                    animated_out = (tok.find("<a:") != ::std::string::npos);
                     name_out = m[1];
                     id_out = m[2];
                     ext_out = animated_out ? "gif" : "png";
                     return true;
                 }
 
-                ::std::string url = extract_url(tok);
+                // 2. Check for markdown link [name](url)
+                ::std::regex markdown_re(R"(\[([^\]]+)\]\((https?://[^\)]+)\))");
+                ::std::string url;
+                if (::std::regex_search(tok, m, markdown_re)) {
+                    name_out = url_decode(m[1]);
+                    url = m[2];
+                } else {
+                    url = extract_url(tok);
+                }
+
                 if (url.empty()) return false;
                 auto pos = url.find("/emojis/");
                 if (pos == ::std::string::npos) return false;
-                size_t id_start = pos + 8; // after /emojis/
+                size_t id_start = pos + 8;
                 size_t dot = url.find('.', id_start);
                 if (dot == ::std::string::npos) return false;
                 id_out = url.substr(id_start, dot - id_start);
@@ -94,20 +135,21 @@ inline Command* get_steal_command() {
                 if (ext_end == ::std::string::npos) ext_end = url.size();
                 ext_out = url.substr(ext_start, ext_end - ext_start);
                 ::std::transform(ext_out.begin(), ext_out.end(), ext_out.begin(), [](unsigned char c){ return ::std::tolower(c); });
-                animated_out = (ext_out == "gif");
+                animated_out = (ext_out == "gif" || url.find("animated=true") != ::std::string::npos);
 
-                // try to extract name=... from query string, otherwise fallback
-                ::std::string name_found;
-                size_t name_pos = url.find("name=");
-                if (name_pos != ::std::string::npos) {
-                    size_t name_start = name_pos + 5;
-                    size_t name_end = url.find('&', name_start);
-                    if (name_end == ::std::string::npos) name_end = url.size();
-                    name_found = url.substr(name_start, name_end - name_start);
-                    // optional: percent-decode name_found (skip for now)
+                // 3. Extraction name from URL if not already found in markdown
+                if (name_out.empty()) {
+                    size_t name_pos = url.find("name=");
+                    if (name_pos != ::std::string::npos) {
+                        size_t name_start = name_pos + 5;
+                        size_t name_end = url.find('&', name_start);
+                        if (name_end == ::std::string::npos) name_end = url.size();
+                        name_out = url_decode(url.substr(name_start, name_end - name_start));
+                    }
                 }
-                if (!name_found.empty()) name_out = name_found;
-                else name_out = ::std::string("emoji_") + id_out;
+
+                if (name_out.empty()) name_out = "emoji_" + id_out;
+                name_out = sanitize_emoji_name(name_out);
                 return true;
             };
 
@@ -133,16 +175,16 @@ inline Command* get_steal_command() {
             };
 
             // send single status message then edit it as we progress
-            bot.message_create(dpp::message(event.msg.channel_id, build_embed(parsed)), [&, items_ptr = ::std::make_shared<::std::vector<ParsedEmoji>>(parsed)](const dpp::confirmation_callback_t& cb) mutable {
+            bot.message_create(dpp::message(event.msg.channel_id, build_embed(parsed)), [&bot, author = event.msg.author, chan_id = event.msg.channel_id, items_ptr = ::std::make_shared<::std::vector<ParsedEmoji>>(parsed)](const dpp::confirmation_callback_t& cb) mutable {
                 if (cb.is_error()) return;
                 auto status_msg = ::std::get<dpp::message>(cb.value);
-                auto update_status_message = [&](void) {
+                auto update_status_message = [&bot, author, items_ptr, status_id = status_msg.id, chan_id](void) {
                     ::std::string desc = "Importing " + ::std::to_string(items_ptr->size()) + " emoji(s)...\n\n";
                     for (const auto &it : *items_ptr) desc += "• " + it.name + " — " + it.status + "\n";
                     auto embed = bronx::create_embed(desc);
-                    bronx::add_invoker_footer(embed, event.msg.author);
-                    dpp::message edit_msg = status_msg;
-                    edit_msg.embeds.clear();
+                    bronx::add_invoker_footer(embed, author);
+                    dpp::message edit_msg(chan_id, "");
+                    edit_msg.id = status_id;
                     edit_msg.add_embed(embed);
                     bronx::safe_message_edit(bot, edit_msg);
                 };
@@ -183,7 +225,8 @@ inline Command* get_steal_command() {
                     update_status_message();
 
                     // keep items_ptr and status_msg alive for the async callback
-                    bot.guild_emoji_create(event.msg.guild_id, newemoji, [items_ptr, status_msg, i, author = event.msg.author, b = &bot](const dpp::confirmation_callback_t& cb2) mutable {
+                    uint64_t gid = status_msg.guild_id; // need for capture
+                    bot.guild_emoji_create(gid, newemoji, [items_ptr, status_id = status_msg.id, chan_id, i, author, &bot](const dpp::confirmation_callback_t& cb2) mutable {
                         if (cb2.is_error()) (*items_ptr)[i].status = bronx::EMOJI_DENY + " failed to create";
                         else (*items_ptr)[i].status = bronx::EMOJI_CHECK + " imported";
 
@@ -191,10 +234,10 @@ inline Command* get_steal_command() {
                         for (const auto &it2 : *items_ptr) desc += "• " + it2.name + " — " + it2.status + "\n";
                         auto embed2 = bronx::create_embed(desc);
                         bronx::add_invoker_footer(embed2, author);
-                        dpp::message edit_msg2 = status_msg;
-                        edit_msg2.embeds.clear();
+                        dpp::message edit_msg2(chan_id, "");
+                        edit_msg2.id = status_id;
                         edit_msg2.add_embed(embed2);
-                        b->message_edit(edit_msg2);
+                        bot.message_edit(edit_msg2);
                     });
                 }
             });
@@ -221,19 +264,30 @@ inline Command* get_steal_command() {
 
                 auto parse_token = [&](const ::std::string &tok, ::std::string &name_out, ::std::string &id_out, ::std::string &ext_out, bool &animated_out) -> bool {
                     ::std::smatch m;
+                    // 1. Check for standard emoji mention <a:name:id>
                     ::std::regex mention_re(R"(<a?:([A-Za-z0-9_]+):([0-9]+)>)");
                     if (::std::regex_search(tok, m, mention_re)) {
-                        animated_out = (tok.rfind("<a:", 0) == 0);
+                        animated_out = (tok.find("<a:") != ::std::string::npos);
                         name_out = m[1];
                         id_out = m[2];
                         ext_out = animated_out ? "gif" : "png";
                         return true;
                     }
-                    ::std::string url = extract_url(tok);
+
+                    // 2. Check for markdown link [name](url)
+                    ::std::regex markdown_re(R"(\[([^\]]+)\]\((https?://[^\)]+)\))");
+                    ::std::string url;
+                    if (::std::regex_search(tok, m, markdown_re)) {
+                        name_out = url_decode(m[1]);
+                        url = m[2];
+                    } else {
+                        url = extract_url(tok);
+                    }
+
                     if (url.empty()) return false;
                     auto pos = url.find("/emojis/");
                     if (pos == ::std::string::npos) return false;
-                    size_t id_start = pos + 8; // after /emojis/
+                    size_t id_start = pos + 8;
                     size_t dot = url.find('.', id_start);
                     if (dot == ::std::string::npos) return false;
                     id_out = url.substr(id_start, dot - id_start);
@@ -242,17 +296,21 @@ inline Command* get_steal_command() {
                     if (ext_end == ::std::string::npos) ext_end = url.size();
                     ext_out = url.substr(ext_start, ext_end - ext_start);
                     ::std::transform(ext_out.begin(), ext_out.end(), ext_out.begin(), [](unsigned char c){ return ::std::tolower(c); });
-                    animated_out = (ext_out == "gif");
-                    ::std::string name_found;
-                    size_t name_pos = url.find("name=");
-                    if (name_pos != ::std::string::npos) {
-                        size_t name_start = name_pos + 5;
-                        size_t name_end = url.find('&', name_start);
-                        if (name_end == ::std::string::npos) name_end = url.size();
-                        name_found = url.substr(name_start, name_end - name_start);
+                    animated_out = (ext_out == "gif" || url.find("animated=true") != ::std::string::npos);
+
+                    // 3. Extraction name from URL if not already found in markdown
+                    if (name_out.empty()) {
+                        size_t name_pos = url.find("name=");
+                        if (name_pos != ::std::string::npos) {
+                            size_t name_start = name_pos + 5;
+                            size_t name_end = url.find('&', name_start);
+                            if (name_end == ::std::string::npos) name_end = url.size();
+                            name_out = url_decode(url.substr(name_start, name_end - name_start));
+                        }
                     }
-                    if (!name_found.empty()) name_out = name_found;
-                    else name_out = ::std::string("emoji_") + id_out;
+
+                    if (name_out.empty()) name_out = "emoji_" + id_out;
+                    name_out = sanitize_emoji_name(name_out);
                     return true;
                 };
 
@@ -279,17 +337,17 @@ inline Command* get_steal_command() {
                     return e;
                 };
 
-                event.reply(dpp::message().add_embed(build_embed(parsed)), [&, items_ptr = ::std::make_shared<::std::vector<ParsedEmoji>>(parsed)](const dpp::confirmation_callback_t& cb) mutable {
+                event.reply(dpp::message().add_embed(build_embed(parsed)), [&bot, author = event.command.get_issuing_user(), chan_id = event.command.channel_id, gid = event.command.guild_id, items_ptr = ::std::make_shared<::std::vector<ParsedEmoji>>(parsed)](const dpp::confirmation_callback_t& cb) mutable {
                     if (cb.is_error()) return;
                     if (!std::holds_alternative<dpp::message>(cb.value)) return;
                     auto status_msg = ::std::get<dpp::message>(cb.value);
-                    auto update_status_message = [&](void) {
+                    auto update_status_message = [&bot, author, items_ptr, status_id = status_msg.id, chan_id](void) {
                         ::std::string desc = "Importing " + ::std::to_string(items_ptr->size()) + " emoji(s)...\n\n";
                         for (const auto &it : *items_ptr) desc += "• " + it.name + " — " + it.status + "\n";
                         auto embed = bronx::create_embed(desc);
-                        bronx::add_invoker_footer(embed, event.command.get_issuing_user());
-                        dpp::message edit_msg = status_msg;
-                        edit_msg.embeds.clear();
+                        bronx::add_invoker_footer(embed, author);
+                        dpp::message edit_msg(chan_id, "");
+                        edit_msg.id = status_id;
                         edit_msg.add_embed(embed);
                         bronx::safe_message_edit(bot, edit_msg);
                     };
@@ -329,18 +387,18 @@ inline Command* get_steal_command() {
                         it.status = "⏳ creating";
                         update_status_message();
 
-                        bot.guild_emoji_create(event.command.guild_id, newemoji, [items_ptr, status_msg, i, user = event.command.get_issuing_user(), b = &bot](const dpp::confirmation_callback_t& cb2) mutable {
+                        bot.guild_emoji_create(gid, newemoji, [items_ptr, status_id = status_msg.id, chan_id, i, author, &bot](const dpp::confirmation_callback_t& cb2) mutable {
                             if (cb2.is_error()) (*items_ptr)[i].status = bronx::EMOJI_DENY + " failed to create";
                             else (*items_ptr)[i].status = bronx::EMOJI_CHECK + " imported";
 
                             ::std::string desc = "Importing " + ::std::to_string(items_ptr->size()) + " emoji(s)...\n\n";
                             for (const auto &it2 : *items_ptr) desc += "• " + it2.name + " — " + it2.status + "\n";
                             auto embed2 = bronx::create_embed(desc);
-                            bronx::add_invoker_footer(embed2, user);
-                            dpp::message edit_msg2 = status_msg;
-                            edit_msg2.embeds.clear();
+                            bronx::add_invoker_footer(embed2, author);
+                            dpp::message edit_msg2(chan_id, "");
+                            edit_msg2.id = status_id;
                             edit_msg2.add_embed(embed2);
-                            b->message_edit(edit_msg2);
+                            bot.message_edit(edit_msg2);
                         });
                     }
                 });

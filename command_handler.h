@@ -17,6 +17,7 @@
 #include "database/operations/economy/server_economy_operations.h"
 #include "database/operations/user/privacy_operations.h"
 #include "commands/daily_challenges/daily_stat_tracker.h"
+#include "tui_logger.h"
 // forward declare owner helper to avoid circular dependency
 namespace commands { bool is_owner(uint64_t user_id); }
 
@@ -153,14 +154,14 @@ public:
         if (it == bac_records_.end() || !it->second.captcha_pending) return;
         auto& rec = it->second;
         if (event.custom_id != rec.captcha_custom_id) return;
-        // They clicked the correct button — captcha passed
+        // they clicked the correct button — captcha passed
         rec.captcha_pending = false;
         rec.consecutive_captcha_fails = 0;
         rec.timestamps.clear();
         event.reply(dpp::message()
-            .add_embed(bronx::create_embed(bronx::EMOJI_CHECK + " **BAC** — captcha passed! you're clear.", bronx::COLOR_SUCCESS))
+            .add_embed(bronx::create_embed(bronx::EMOJI_CHECK + " **bac** — captcha passed! you're clear.", bronx::COLOR_SUCCESS))
             .set_flags(dpp::m_ephemeral));
-        std::cerr << "\033[32m\u2714 BAC: user " << user_id << " passed captcha\033[0m\n";
+        bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: user " + std::to_string(user_id) + " passed captcha");
     }
 
     void handle_message(dpp::cluster& bot, const dpp::message_create_t& event) {
@@ -171,7 +172,7 @@ public:
         uint64_t user_id = event.msg.author.id;
         if (db_) {
             if (!db_->is_global_whitelisted(user_id) && db_->is_global_blacklisted(user_id)) {
-                std::cerr << "\033[33m\u26a0 \033[0mBAC: ignoring message from banned user " << user_id << "\n";
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: ignoring message from banned user " + std::to_string(user_id));
                 return;
             }
             // Privacy opt-out check — completely ignore opted-out users
@@ -316,10 +317,10 @@ public:
                 
                 it->second->text_handler(bot, event, args);
             } catch (const std::exception& e) {
-                // Record error
+                // record error
                 commands::global_stats.record_error(std::string("command_error: ") + it->second->name);
                 
-                std::cerr << "\033[1;31m\u2718 Command handler exception for " << it->second->name << ": " << e.what() << "\033[0m" << std::endl;
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "command handler exception for " + it->second->name + ": " + e.what());
                 
                 try {
                     dpp::embed error_embed = dpp::embed()
@@ -329,12 +330,12 @@ public:
                     
                     bronx::send_message(bot, event, error_embed);
                 } catch (...) {
-                    std::cerr << "\033[31mFailed to send error message\033[0m" << std::endl;
+                    bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "failed to send error message");
                 }
             } catch (...) {
-                // Record unknown error
+                // record unknown error
                 commands::global_stats.record_error(std::string("unknown_error: ") + it->second->name);
-                std::cerr << "\033[1;31m\u2718 Unknown exception in command handler for " << it->second->name << "\033[0m" << std::endl;
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "unknown exception in command handler for " + it->second->name);
             }
         }
     }
@@ -343,7 +344,7 @@ public:
         uint64_t user_id = event.command.get_issuing_user().id;
         if (db_) {
             if (!db_->is_global_whitelisted(user_id) && db_->is_global_blacklisted(user_id)) {
-                std::cerr << "\033[33m\u26a0 \033[0mBAC: ignoring slash command from banned user " << user_id << "\n";
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: ignoring slash command from banned user " + std::to_string(user_id));
                 return;
             }
             // Privacy opt-out check — allow only /privacy command
@@ -420,10 +421,10 @@ public:
                 
                 it->second->slash_handler(bot, event);
             } catch (const std::exception& e) {
-                // Record error
+                // record error
                 commands::global_stats.record_error(std::string("slash_error: ") + it->second->name);
                 
-                std::cerr << "\033[1;31m\u2718 Slash command handler exception for " << it->second->name << ": " << e.what() << "\033[0m" << std::endl;
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "slash command handler exception for " + it->second->name + ": " + e.what());
                 
                 try {
                     dpp::embed error_embed = dpp::embed()
@@ -433,12 +434,12 @@ public:
                     
                     bronx::safe_slash_reply(bot, event, error_embed);
                 } catch (...) {
-                    std::cerr << "\033[31mFailed to send slash command error reply\033[0m" << std::endl;
+                    bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "failed to send slash command error reply");
                 }
             } catch (...) {
-                // Record unknown error
+                // record unknown error
                 commands::global_stats.record_error(std::string("unknown_slash_error: ") + it->second->name);
-                std::cerr << "\033[1;31m\u2718 Unknown exception in slash command handler for " << it->second->name << "\033[0m" << std::endl;
+                bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, "unknown exception in slash command handler for " + it->second->name);
             }
         }
     }
@@ -523,9 +524,9 @@ protected:
         if (now < rec.timeout_until) {
             auto remaining = std::chrono::duration_cast<std::chrono::seconds>(rec.timeout_until - now).count();
             auto embed = bronx::create_embed(
-                bronx::EMOJI_DENY + " **BAC** — you are timed out for suspicious activity\n"
+                bronx::EMOJI_DENY + " **bac** — you are timed out for suspicious activity\n"
                 "try again in **" + std::to_string(remaining) + "s**", bronx::COLOR_ERROR);
-            embed.set_footer(dpp::embed_footer().set_text("Bronx AntiCheat • strike " + std::to_string(rec.strike) + "/3"));
+            embed.set_footer(dpp::embed_footer().set_text("bronx anticheat • strike " + std::to_string(rec.strike) + "/3"));
             if (msg_evt) {
                 bronx::send_message(bot, *msg_evt, embed);
             } else if (slash_evt) {
@@ -546,9 +547,9 @@ protected:
             }
             // still waiting
             auto embed = bronx::create_embed(
-                bronx::EMOJI_WARNING + " **BAC** — please solve the captcha sent to your DMs before using commands",
+                bronx::EMOJI_WARNING + " **bac** — please solve the captcha sent to your dms before using commands",
                 bronx::COLOR_WARNING);
-            embed.set_footer(dpp::embed_footer().set_text("Bronx AntiCheat"));
+            embed.set_footer(dpp::embed_footer().set_text("bronx anticheat"));
             if (msg_evt) {
                 bronx::send_message(bot, *msg_evt, embed);
             } else if (slash_evt) {
@@ -632,13 +633,13 @@ protected:
 
         // build captcha DM
         auto captcha_embed = bronx::create_embed(
-            "🛡️ **Bronx AntiCheat (BAC)**\n\n"
+            "🛡️ **bronx anticheat (bac)**\n\n"
             "suspicious activity detected on your account.\n"
             "please solve this to prove you're human:\n\n"
-            "**What is `" + std::to_string(a) + " + " + std::to_string(b) + "`?**\n\n"
+            "**what is `" + std::to_string(a) + " + " + std::to_string(b) + "`?**\n\n"
             "click the button with the correct answer within **60 seconds**.",
             bronx::COLOR_WARNING);
-        captcha_embed.set_footer(dpp::embed_footer().set_text("BAC • strike " + std::to_string(rec.strike) + "/3"));
+        captcha_embed.set_footer(dpp::embed_footer().set_text("bac • strike " + std::to_string(rec.strike) + "/3"));
 
         // generate 3 wrong answers + 1 correct, shuffle
         std::vector<int> options;
@@ -675,16 +676,16 @@ protected:
 
         // notify in-channel
         auto notify = bronx::create_embed(
-            bronx::EMOJI_WARNING + " **BAC** — suspicious activity detected\n"
-            "a captcha has been sent to your DMs. solve it to continue using commands.",
+            bronx::EMOJI_WARNING + " **bac** — suspicious activity detected\n"
+            "a captcha has been sent to your dms. solve it to continue using commands.",
             bronx::COLOR_WARNING);
-        notify.set_footer(dpp::embed_footer().set_text("Bronx AntiCheat"));
+        notify.set_footer(dpp::embed_footer().set_text("bronx anticheat"));
         if (msg_evt) {
             bronx::send_message(bot, *msg_evt, notify);
         } else if (slash_evt) {
             slash_evt->reply(dpp::message().add_embed(notify).set_flags(dpp::m_ephemeral));
         }
-        std::cerr << "\033[33m\u26a0 BAC: captcha sent to user " << user_id << "\033[0m\n";
+        bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: captcha sent to user " + std::to_string(user_id));
     }
 
     // Handle a wrong captcha button click
@@ -696,10 +697,10 @@ protected:
         auto& rec = it->second;
         rec.captcha_pending = false;
         rec.consecutive_captcha_fails++;
-        std::cerr << "\033[33m\u26a0 BAC: user " << user_id << " failed captcha (wrong answer)\033[0m\n";
+        bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: user " + std::to_string(user_id) + " failed captcha (wrong answer)");
         bac_escalate(user_id, rec, bot, nullptr, nullptr, "failed captcha");
         event.reply(dpp::message()
-            .add_embed(bronx::create_embed(bronx::EMOJI_DENY + " **BAC** — wrong answer. strike issued.", bronx::COLOR_ERROR))
+            .add_embed(bronx::create_embed(bronx::EMOJI_DENY + " **bac** — wrong answer. strike issued.", bronx::COLOR_ERROR))
             .set_flags(dpp::m_ephemeral));
     }
 
@@ -729,14 +730,14 @@ private:
             // ---- STRIKE 3: permanent ban ----
             if (db_) {
                 db_->remove_global_whitelist(user_id);  // ensure ban is not bypassed
-                db_->add_global_blacklist(user_id, "(BAC) " + reason + " — strike 3");
+                db_->add_global_blacklist(user_id, "(bac) " + reason + " — strike 3");
             }
             auto ban_embed = bronx::create_embed(
-                "🛡️ **Bronx AntiCheat (BAC)**\n\n"
+                "🛡️ **bronx anticheat (bac)**\n\n"
                 "you have been **permanently banned** from using this bot for repeated suspicious activity.\n\n"
                 "if you believe this was a mistake, please appeal in our support server.",
                 bronx::COLOR_ERROR);
-            ban_embed.set_title("BAC — Permanently Banned");
+            ban_embed.set_title("bac — permanently banned");
             dpp::message dm_msg;
             dm_msg.add_embed(ban_embed);
             dm_msg.add_component(
@@ -753,26 +754,26 @@ private:
             bot.direct_message_create(user_id, dm_msg);
 
             auto notify = bronx::create_embed(
-                bronx::EMOJI_DENY + " **BAC** — you have been permanently banned for repeated suspicious activity.\n"
-                "check your DMs for appeal information.",
+                bronx::EMOJI_DENY + " **bac** — you have been permanently banned for repeated suspicious activity.\n"
+                "check your dms for appeal information.",
                 bronx::COLOR_ERROR);
-            notify.set_footer(dpp::embed_footer().set_text("Bronx AntiCheat • strike 3/3"));
+            notify.set_footer(dpp::embed_footer().set_text("bronx anticheat • strike 3/3"));
             if (msg_evt) {
                 bronx::send_message(bot, *msg_evt, notify);
             } else if (slash_evt) {
                 slash_evt->reply(dpp::message().add_embed(notify).set_flags(dpp::m_ephemeral));
             }
-            std::cerr << "\033[1;31m\u26a0 BAC: user " << user_id << " permanently banned — " << reason << "\033[0m\n";
+            bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: user " + std::to_string(user_id) + " permanently banned — " + reason);
             bac_records_.erase(user_id);
         } else if (rec.strike == 2) {
             // ---- STRIKE 2: 10-minute timeout ----
             rec.timeout_until = now + BAC_TIMEOUT_STRIKE2;
             auto embed = bronx::create_embed(
-                bronx::EMOJI_DENY + " **BAC** — strike **2/3**\n"
+                bronx::EMOJI_DENY + " **bac** — strike **2/3**\n"
                 "you have been timed out from commands for **10 minutes** for suspicious activity.\n"
                 "next offence will result in a **permanent ban**.",
                 bronx::COLOR_ERROR);
-            embed.set_footer(dpp::embed_footer().set_text("Bronx AntiCheat • " + reason));
+            embed.set_footer(dpp::embed_footer().set_text("bronx anticheat • " + reason));
             if (msg_evt) {
                 bronx::send_message(bot, *msg_evt, embed);
             } else if (slash_evt) {
@@ -780,36 +781,36 @@ private:
             }
             // DM warning
             auto dm_embed = bronx::create_embed(
-                "🛡️ **Bronx AntiCheat (BAC)**\n\n"
+                "🛡️ **bronx anticheat (bac)**\n\n"
                 "**strike 2/3** — you've been timed out from commands for **10 minutes**.\n"
                 "reason: " + reason + "\n\n"
                 + bronx::EMOJI_WARNING + " one more strike and you will be **permanently banned**.",
                 bronx::COLOR_WARNING);
             bot.direct_message_create(user_id, dpp::message().add_embed(dm_embed));
-            std::cerr << "\033[1;33m\u26a0 BAC: user " << user_id << " strike 2 (10min timeout) — " << reason << "\033[0m\n";
+            bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: user " + std::to_string(user_id) + " strike 2 (10min timeout) — " + reason);
         } else {
             // ---- STRIKE 1: 5-minute timeout + captcha on return ----
             rec.timeout_until = now + BAC_TIMEOUT_STRIKE1;
             auto embed = bronx::create_embed(
-                bronx::EMOJI_WARNING + " **BAC** — strike **1/3**\n"
+                bronx::EMOJI_WARNING + " **bac** — strike **1/3**\n"
                 "you have been timed out from commands for **5 minutes** for suspicious activity.\n"
                 "continued abuse will escalate to longer timeouts and eventually a ban.",
                 bronx::COLOR_WARNING);
-            embed.set_footer(dpp::embed_footer().set_text("Bronx AntiCheat • " + reason));
+            embed.set_footer(dpp::embed_footer().set_text("bronx anticheat • " + reason));
             if (msg_evt) {
                 bronx::send_message(bot, *msg_evt, embed);
             } else if (slash_evt) {
                 slash_evt->reply(dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
             }
-            // DM notice
+            // dm notice
             auto dm_embed = bronx::create_embed(
-                "🛡️ **Bronx AntiCheat (BAC)**\n\n"
+                "🛡️ **bronx anticheat (bac)**\n\n"
                 "**strike 1/3** — you've been timed out from commands for **5 minutes**.\n"
                 "reason: " + reason + "\n\n"
                 "this is your first warning. please stop using macros or automated tools.",
                 bronx::COLOR_WARNING);
             bot.direct_message_create(user_id, dpp::message().add_embed(dm_embed));
-            std::cerr << "\033[33m\u26a0 BAC: user " << user_id << " strike 1 (5min timeout) — " << reason << "\033[0m\n";
+            bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::INFO, "bac: user " + std::to_string(user_id) + " strike 1 (5min timeout) — " + reason);
         }
     }
 };

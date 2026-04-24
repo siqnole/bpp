@@ -1,49 +1,53 @@
+# Build & Cache
 build/
-*.o
-*.a
-*.so
-*.md
-*.log
-discord-bot
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-cmakefiles/
-.vscode/
-.idea/
-.env
-cmake-build-*/
-site/
-DPP/
-DPP.worktrees/
-aspiration.md
-docs/aspiration.md
-README_Leaderboards.md
-docs/README_Leaderboards.md
-database/QUICK_REFERENCE.md
-site/node_modules/
-scripts/
-sql/
-docs/
-data/
-database/*.md
-database/migrations/
-tools/
-/site/
-fish_emojis/
-.github/prompts/
-
-# Build artifacts (in-source — to be removed)
+build_debian/
+.cache/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
 *.cmake
-
-# Precompiled header artifacts
 cmake_pch*
+*.o
+*.a
+*.so*
+discord-bot
 
-# Backup files
+# Environment & Dependencies
+.env
+site/node_modules/
+DPP/
+DPP.worktrees/
+third_party/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs & Temporary
+*.log
+logs/
+data/
+scratch_all_docs.txt
+events_forward_decls.txt
 *.backup
-*.py
+
+# VPS & Deployment (Exclude from public repo)
+*.service
+*.conf
+deploy_*.sh
+
+# Redundant Docs & Temporary Scripts
+COMMAND_*.md
+GAMBLING_*.md
+OPTIMIZATION_ACTION_PLAN.md
+aspiration.md
+accurate_split.py
+events_extract.py
+extract.py
+split_events*.py
+/site/
+fish_emojis/
+.github/prompts/

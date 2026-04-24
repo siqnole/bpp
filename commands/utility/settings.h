@@ -36,7 +36,7 @@ inline Command* get_settings_command(bronx::db::Database* db) {
                     "Manage your server's configuration.\n\n"
                     "**Available Settings:**\n"
                     "> `b.settings public_stats <on/off>` — Toggle public visibility of your server statistics on the dashboard.\n\n"
-                    "Configure via dashboard: **bronxbot.xyz/dashboard**",
+                    "Configure via dashboard: **https://dashboard.bronxbot.xyz/" + std::to_string(guild_id) + "**",
                     bronx::COLOR_DEFAULT);
                 bronx::send_message(bot, event, embed);
                 return;

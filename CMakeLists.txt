@@ -14,6 +14,8 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
     GIT_TAG v5.0.0
 )
+# Force FTXUI to be static so it is embedded in the binary
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries" FORCE)
 FetchContent_MakeAvailable(ftxui)
 
 # ============================================================================
@@ -41,7 +43,20 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # -g for debug symbols (flamegraph), -fno-omit-frame-pointer for proper stack traces
-set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG -g -fno-omit-frame-pointer")
+# -march=x86-64-v2 ensures compatibility with older VPS CPUs (SSE4.2, but not AVX2/FMA)
+set(CMAKE_CXX_FLAGS "-g -fno-omit-frame-pointer -march=x86-64-v2 -mno-avx -mno-avx2 -mno-fma -mno-f16c -mno-bmi2")
+set(CMAKE_C_FLAGS "-g -fno-omit-frame-pointer -march=x86-64-v2 -mno-avx -mno-avx2 -mno-fma -mno-f16c -mno-bmi2")
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
+
+# Force GGML to not use instructions above SSE4.2
+set(GGML_AVX OFF CACHE BOOL "Disable AVX" FORCE)
+set(GGML_AVX2 OFF CACHE BOOL "Disable AVX2" FORCE)
+set(GGML_FMA OFF CACHE BOOL "Disable FMA" FORCE)
+set(GGML_F16C OFF CACHE BOOL "Disable F16C" FORCE)
+set(GGML_BMI2 OFF CACHE BOOL "Disable BMI2" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "Disable native optimization" FORCE)
+set(GGML_SSE42 ON CACHE BOOL "Enable SSE4.2" FORCE)
 
 # Add command source files (matches commands/*.cpp AND commands/**/*.cpp)
 file(GLOB_RECURSE COMMAND_SOURCES
@@ -124,17 +139,20 @@ pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 
 # whisper.cpp (Using local build from third_party/whisper.cpp)
+option(WHISPER_BUILD_EXAMPLES OFF)
+option(WHISPER_BUILD_TESTS OFF)
+option(WHISPER_BUILD_SERVER OFF)
+add_subdirectory(third_party/whisper.cpp EXCLUDE_FROM_ALL)
+
 set(WHISPER_INCLUDE_DIRS 
     "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/include"
     "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/ggml/include"
 )
-set(WHISPER_LIBS "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/src/libwhisper.so")
-set(GGML_LIBS "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/ggml/src/libggml.so")
-set(GGML_CPU_LIBS "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/ggml/src/libggml-cpu.so")
-set(WHISPER_LIBRARIES ${WHISPER_LIBS} ${GGML_LIBS} ${GGML_CPU_LIBS})
+set(WHISPER_LIBRARIES whisper ggml ggml-cpu)
 
 # Add RPATH so the bot finds these shared libraries at runtime
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/src;${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/build/ggml/src")
+# (When installing, we might want to change this, but for now it's fine)
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH};/opt/bpp/build")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 
 if(NOT MARIADB_LIBRARIES)
@@ -146,6 +164,7 @@ file(GLOB_RECURSE DATABASE_SOURCES
     ${CMAKE_SOURCE_DIR}/database/core/*.cpp
     ${CMAKE_SOURCE_DIR}/database/operations/**/*.cpp
     ${CMAKE_SOURCE_DIR}/database/utils/*.cpp
+    ${CMAKE_SOURCE_DIR}/database/operations/maintenance_operations.cpp
 )
 
 # Add performance optimization source files

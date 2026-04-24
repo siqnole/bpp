@@ -5,6 +5,7 @@
 #include "../operations/user/cooldown_operations.h"
 #include "../operations/economy/inventory_operations.h"
 #include "../operations/leveling/leaderboard_operations.h"
+#include "../operations/moderation/guild_settings_operations.h"
 #include "../utils/database_utility.h"
 #include <iostream>
 #include <cstring>
@@ -230,6 +231,10 @@ bool Database::connect() {
             migrations.push_back("CALL _add_col_if_missing('shop_items','level','INT NOT NULL DEFAULT 1')");
             migrations.push_back("CALL _add_col_if_missing('shop_items','usable','BOOLEAN NOT NULL DEFAULT FALSE')");
             migrations.push_back("CALL _add_col_if_missing('shop_items','metadata','TEXT')");
+            migrations.push_back("CALL _add_col_if_missing('guild_settings','server_bio','TEXT NULL')");
+            migrations.push_back("CALL _add_col_if_missing('guild_settings','server_website','VARCHAR(255) NULL')");
+            migrations.push_back("CALL _add_col_if_missing('guild_settings','server_banner_url','VARCHAR(512) NULL')");
+            migrations.push_back("CALL _add_col_if_missing('guild_settings','server_avatar_url','VARCHAR(512) NULL')");
 
             // --- data migrations ---
             // Fix zero-datetime rows that block ALTER under strict mode
@@ -540,14 +545,14 @@ CREATE TABLE IF NOT EXISTS guild_boost_events (
 
             // ─── SNIPE: DELETED MESSAGES TABLE ──────────────────────────────
             migrations.push_back(R"SQL(
-CREATE TABLE IF NOT EXISTS deleted_messages (
+CREATE TABLE IF NOT EXISTS guild_deleted_messages (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     message_id BIGINT UNSIGNED NOT NULL,
     guild_id BIGINT UNSIGNED NOT NULL,
     channel_id BIGINT UNSIGNED NOT NULL,
     author_id BIGINT UNSIGNED NOT NULL,
-    author_tag VARCHAR(128) NOT NULL DEFAULT '',
-    author_avatar VARCHAR(512) NOT NULL DEFAULT '',
+    author_tag VARCHAR(256) NOT NULL DEFAULT '',
+    author_avatar VARCHAR(1024) NOT NULL DEFAULT '',
     content TEXT,
     attachment_urls TEXT,
     embeds_summary TEXT,
@@ -557,6 +562,13 @@ CREATE TABLE IF NOT EXISTS deleted_messages (
     INDEX idx_author_deleted (author_id, deleted_at),
     INDEX idx_message_id (message_id)
 ) ENGINE=InnoDB
+)SQL");
+
+            // Migration: Ensure author_tag and author_avatar are large enough for existing tables
+            migrations.push_back(R"SQL(
+ALTER TABLE guild_deleted_messages 
+MODIFY COLUMN author_tag VARCHAR(256) NOT NULL DEFAULT '',
+MODIFY COLUMN author_avatar VARCHAR(1024) NOT NULL DEFAULT '';
 )SQL");
 
             // Run all migrations on a single connection for speed
@@ -2298,6 +2310,58 @@ bool Database::end_giveaway(uint64_t giveaway_id, const std::vector<uint64_t>& w
     mysql_stmt_close(stmt);
     pool_->release(conn);
     return ok;
+}
+
+// ============================================================================
+// GUILD PROFILE MANAGEMENT
+// ============================================================================
+
+std::optional<GuildProfile> Database::get_guild_profile(uint64_t guild_id) {
+    return get_guild_profile_internal(*this, guild_id);
+}
+
+bool Database::set_guild_profile(const GuildProfile& profile) {
+    bool ok = true;
+    ok &= update_guild_profile_field_internal(*this, profile.guild_id, "server_bio", profile.bio);
+    ok &= update_guild_profile_field_internal(*this, profile.guild_id, "server_website", profile.website);
+    ok &= update_guild_profile_field_internal(*this, profile.guild_id, "server_banner_url", profile.banner_url);
+    ok &= update_guild_profile_field_internal(*this, profile.guild_id, "server_avatar_url", profile.avatar_url);
+    return ok;
+}
+
+bool Database::update_guild_bio(uint64_t guild_id, const std::string& bio) {
+    return update_guild_profile_field_internal(*this, guild_id, "server_bio", bio);
+}
+
+bool Database::update_guild_website(uint64_t guild_id, const std::string& website) {
+    return update_guild_profile_field_internal(*this, guild_id, "server_website", website);
+}
+
+bool Database::update_guild_banner(uint64_t guild_id, const std::string& banner_url) {
+    return update_guild_profile_field_internal(*this, guild_id, "server_banner_url", banner_url);
+}
+
+bool Database::update_guild_avatar(uint64_t guild_id, const std::string& avatar_url) {
+    return update_guild_profile_field_internal(*this, guild_id, "server_avatar_url", avatar_url);
+}
+
+bool Database::clear_guild_profile_field(uint64_t guild_id, const std::string& field_name) {
+    std::string internal_field;
+    if (field_name == "bio") internal_field = "server_bio";
+    else if (field_name == "website") internal_field = "server_website";
+    else if (field_name == "banner") internal_field = "server_banner_url";
+    else if (field_name == "avatar") internal_field = "server_avatar_url";
+    else if (field_name == "all") {
+        bool ok = true;
+        ok &= clear_guild_profile_field_internal(*this, guild_id, "server_bio");
+        ok &= clear_guild_profile_field_internal(*this, guild_id, "server_website");
+        ok &= clear_guild_profile_field_internal(*this, guild_id, "server_banner_url");
+        ok &= clear_guild_profile_field_internal(*this, guild_id, "server_avatar_url");
+        return ok;
+    }
+    else return false;
+
+    return clear_guild_profile_field_internal(*this, guild_id, internal_field);
 }
 
 } // namespace db

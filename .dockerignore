@@ -1,0 +1,11 @@
+build/
+build_debian/
+.git/
+node_modules/
+.cache/
+discord-bot
+DPP/
+DPP.worktrees/
+bin/
+logs/
+data/

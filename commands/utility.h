@@ -14,6 +14,7 @@
 #include "utility/bugreport.h"
 #include "utility/status.h"
 #include "utility/autorole.h"
+#include "utility/serverconfig.h"
 #include "utility/role.h"
 #include "utility/giveaways.h"
 #include "utility/privacy.h"
@@ -41,7 +42,9 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
         cmds.push_back(utility::get_invite_command());           // OPTIMIZATION Note: Text-only (slash removed)
         cmds.push_back(utility::get_serveravatar_command());     // OPTIMIZATION Note: Text-only (slash removed)
         cmds.push_back(utility::get_serverbanner_command());     // OPTIMIZATION Note: Text-only (slash removed)
-        cmds.push_back(utility::get_serverinfo_command());
+        cmds.push_back(utility::get_dcme_command());             // OPTIMIZATION Note: Text-only (slash removed)
+        cmds.push_back(utility::get_say_command());
+        cmds.push_back(utility::get_serverinfo_command(db));
         cmds.push_back(utility::get_poll_command());
         cmds.push_back(utility::get_cleanup_command());
         cmds.push_back(utility::get_reactionrole_command());
@@ -54,6 +57,7 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
         if (db) {
             cmds.push_back(utility::get_suggestion_command(db));
             cmds.push_back(utility::get_settings_command(db));
+            cmds.push_back(utility::get_serverconfig_command(db));
         }
         cmds.push_back(utility::get_bugreport_command());
         cmds.push_back(utility::get_autorole_command());

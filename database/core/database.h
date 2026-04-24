@@ -448,6 +448,18 @@ public:
     uint64_t calculate_xp_for_level(uint32_t level);
     uint64_t calculate_xp_for_next_level(uint32_t current_level);
     
+    // ========================================
+    // GUILD PROFILE MANAGEMENT
+    // ========================================
+    
+    std::optional<GuildProfile> get_guild_profile(uint64_t guild_id);
+    bool set_guild_profile(const GuildProfile& profile);
+    bool update_guild_bio(uint64_t guild_id, const std::string& bio);
+    bool update_guild_website(uint64_t guild_id, const std::string& website);
+    bool update_guild_banner(uint64_t guild_id, const std::string& banner_url);
+    bool update_guild_avatar(uint64_t guild_id, const std::string& avatar_url);
+    bool clear_guild_profile_field(uint64_t guild_id, const std::string& field_name);
+    
     // Leveling leaderboards
     std::vector<LeaderboardEntry> get_global_xp_leaderboard(int limit = 10);
     std::vector<LeaderboardEntry> get_server_xp_leaderboard(uint64_t guild_id, int limit = 10);
@@ -709,6 +721,11 @@ public:
     bool add_feature_flag_whitelist(const std::string& feature, uint64_t guild_id);
     bool remove_feature_flag_whitelist(const std::string& feature, uint64_t guild_id);
     std::vector<std::pair<std::string, uint64_t>> get_all_feature_flag_whitelists();
+
+    // ========================================
+    // MAINTENANCE & MONITORING
+    // ========================================
+    bool update_heartbeat(int shard_id, uint64_t uptime_seconds, uint64_t memory_usage_mb, int guild_count, const std::string& status = "Online");
 
     // Execute raw query (use sparingly)
     bool execute(const std::string& query);

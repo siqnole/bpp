@@ -61,6 +61,22 @@ static ::std::string sanitize_emoji_for_db(const ::std::string& input) {
     return result;
 }
 
+// Normalize emoji: strip VS-16 (U+FE0F) variation selectors for robust matching
+static std::string strip_vs16(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (static_cast<unsigned char>(s[i]) == 0xEF && i + 2 < s.size() &&
+            static_cast<unsigned char>(s[i+1]) == 0xB8 &&
+            static_cast<unsigned char>(s[i+2]) == 0x8F) {
+            i += 2;
+            continue;
+        }
+        out += s[i];
+    }
+    return out;
+}
+
 // Validate emoji string for database safety.
 // Uses a sequence-aware UTF-8 walk so multi-byte emoji (e.g. 🧮, 🏋️‍♂️) are
 // accepted instead of being falsely rejected by a byte-level range check.
@@ -244,7 +260,7 @@ void load_persistent_reaction_roles(dpp::cluster& bot) {
     // remove any duplicates that might result from the normalization above
     rr_db->execute(R"SQL(
         DELETE r1 FROM guild_reaction_roles r1
-        INNER JOIN reaction_roles r2
+        INNER JOIN guild_reaction_roles r2
           ON r1.message_id = r2.message_id
          AND r1.emoji_raw = r2.emoji_raw
          AND r1.created_at > r2.created_at
@@ -498,6 +514,13 @@ struct PendingRREmoji {
     std::string emoji_str;   // name or unicode codepoint
     std::string emoji_raw;   // raw reaction string for storage / matching
     uint64_t assigned_role;  // 0 until the user picks a role
+    bool bot_has_reacted;    // true if the bot has already reacted
+};
+
+struct MappedRREmoji {
+    uint64_t emoji_id;
+    std::string emoji_str;
+    uint64_t role_id;
 };
 
 // A full check session containing all unmapped emojis, current page, etc.
@@ -505,13 +528,13 @@ struct RRCheckSession {
     uint64_t message_id;
     uint64_t channel_id;
     uint64_t guild_id;
-    uint64_t user_id;        // who initiated
-    std::vector<PendingRREmoji> emojis;          // all unmapped emojis
-    std::vector<std::pair<uint64_t, std::string>> guild_roles; // cached (id, name)
-    size_t page;             // current page of emojis (0-indexed, 4 items per page)
-    size_t role_page;        // current page of roles (0-indexed, 25 items per page)
-    size_t answered_on_page; // how many dropdowns on the current page have been answered
-    std::chrono::steady_clock::time_point created_at; // for session expiry
+    uint64_t user_id;
+    std::vector<PendingRREmoji> emojis;
+    std::vector<std::pair<uint64_t, std::string>> guild_roles;
+    size_t page;
+    size_t role_page;
+    size_t answered_on_page;
+    std::chrono::steady_clock::time_point created_at;
 };
 
 // session_key -> session   (key = "rrcs_<message_id>_<user_id>")
@@ -612,7 +635,8 @@ static dpp::message build_check_page(const RRCheckSession& s) {
     std::string status = "assigned " + std::to_string(total_done) + "/" + std::to_string(s.emojis.size());
     if (total_pages > 1) status += "  •  emoji page " + std::to_string(s.page + 1) + "/" + std::to_string(total_pages);
 
-    resp.add_embed(bronx::info("please remind me, what role is each emoji for?\n" + status));
+    std::string desc = "please remind me, what role is each emoji for?\n" + status;
+    resp.add_embed(bronx::info(desc));
     return resp;
 }
 
@@ -631,6 +655,7 @@ static dpp::message build_check_confirm(const RRCheckSession& s) {
         std::string role_name = r ? r->name : std::to_string(em.assigned_role);
         summary += emoji_display + " → <@&" + std::to_string(em.assigned_role) + "> (**" + role_name + "**)\n";
     }
+
     resp.add_embed(bronx::success("all reaction roles assigned!\n\n" + summary));
 
     dpp::component btn;
@@ -645,6 +670,8 @@ static dpp::message build_check_confirm(const RRCheckSession& s) {
 
 // Scan message content for role mentions/names and emoji names/markup to pre-fill assignments.
 static void attempt_auto_map(RRCheckSession& s, const std::string& content) {
+    std::cerr << "[reaction-role] Auto-mapping attempt for message " << s.message_id << " in channel " << s.channel_id << std::endl;
+    std::cerr << "[reaction-role] Raw Content: [" << content << "]" << std::endl;
     if (content.empty()) return;
 
     std::stringstream ss(content);
@@ -684,21 +711,25 @@ static void attempt_auto_map(RRCheckSession& s, const std::string& content) {
         }
 
         // 4. Match with unassigned emojis in the session
+        std::string line_stripped = strip_vs16(line);
         for (auto& em : s.emojis) {
-            if (em.assigned_role != 0) continue;
+            // Priority: prefer current message content over stale DB mappings
 
             bool match = false;
             if (found_emoji_id != 0 && em.emoji_id == found_emoji_id) {
                 match = true;
             } else if (!em.emoji_str.empty()) {
-                // Simple check for unicode emoji or shortname presence
-                if (line.find(em.emoji_str) != std::string::npos) {
+                std::string em_stripped = strip_vs16(em.emoji_str);
+                // check for exact match or substring in both original and stripped versions
+                if (line.find(em.emoji_str) != std::string::npos || 
+                    line_stripped.find(em_stripped) != std::string::npos) {
                     match = true;
                 }
             }
 
             if (match) {
                 em.assigned_role = found_role;
+                std::cerr << "[reaction-role] Match! Line [" << line << "] linked " << em.emoji_str << " to Role ID " << found_role << std::endl;
                 break;
             }
         }
@@ -717,53 +748,43 @@ void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t message_id
             return;
         }
         auto msg = std::get<dpp::message>(cb.value);
+        std::cerr << "[reaction-role] Checking message " << message_id << " - found " << msg.reactions.size() << " reactions total." << std::endl;
 
-        // collect bot reactions not already tracked
+        // collect reactions not already tracked
         std::vector<PendingRREmoji> unmapped;
+        std::vector<MappedRREmoji> already_mapped;
+        auto it = reaction_roles.find(message_id);
+
+        std::vector<PendingRREmoji> all_emojis;
         for (const auto& r : msg.reactions) {
-            if (!r.me) continue;
-            auto it = reaction_roles.find(message_id);
-            bool already = false;
-            if (it != reaction_roles.end()) {
-                for (const auto& e : it->second.entries) {
-                    if (r.emoji_id != 0 && e.emoji_id == static_cast<uint64_t>(r.emoji_id)) { already = true; break; }
-                    if (r.emoji_id == 0 && (e.emoji_str == r.emoji_name || e.raw == r.emoji_name)) { already = true; break; }
-                }
-            }
-            if (already) continue;
             PendingRREmoji pe;
             pe.emoji_id = static_cast<uint64_t>(r.emoji_id);
             pe.emoji_str = r.emoji_name;
-            if (pe.emoji_id != 0)
-                pe.emoji_raw = r.emoji_name + ":" + std::to_string(pe.emoji_id);
-            else
-                pe.emoji_raw = r.emoji_name;
+            if (pe.emoji_id != 0) pe.emoji_raw = r.emoji_name + ":" + std::to_string(pe.emoji_id);
+            else pe.emoji_raw = r.emoji_name;
             pe.assigned_role = 0;
-            unmapped.push_back(pe);
+            pe.bot_has_reacted = r.me;
+
+            // Check if already in DB
+            if (it != reaction_roles.end()) {
+                for (const auto& e : it->second.entries) {
+                    if ((pe.emoji_id != 0 && e.emoji_id == pe.emoji_id) ||
+                        (pe.emoji_id == 0 && (e.emoji_str == pe.emoji_str || strip_vs16(e.emoji_str) == strip_vs16(pe.emoji_str)))) {
+                        pe.assigned_role = e.role_id;
+                        break;
+                    }
+                }
+            }
+            all_emojis.push_back(pe);
+            std::cerr << "[reaction-role] Identified: " << pe.emoji_str << " (Role: " << pe.assigned_role << ", Me: " << (pe.bot_has_reacted?"true":"false") << ")" << std::endl;
         }
 
-        if (unmapped.empty()) {
-            // Show existing mapped reactions instead of just "nothing found"
-            auto it = reaction_roles.find(message_id);
-            if (it != reaction_roles.end() && !it->second.entries.empty()) {
-                std::string desc = "all reactions on this message are already mapped:\n\n";
-                for (const auto& e : it->second.entries) {
-                    std::string emoji_display;
-                    if (e.emoji_id != 0)
-                        emoji_display = "<:" + e.emoji_str + ":" + std::to_string(e.emoji_id) + ">";
-                    else
-                        emoji_display = e.emoji_str;
-                    dpp::role* r = dpp::find_role(e.role_id);
-                    std::string role_name = r ? r->name : std::to_string(e.role_id);
-                    desc += emoji_display + " → <@&" + std::to_string(e.role_id) + "> (**" + role_name + "**)\n";
-                }
-                desc += "\nuse `rr remove <messageid> <emoji>` to remove a mapping";
-                reply_embed(bronx::info(desc));
-            } else {
-                reply_embed(bronx::info("no unmapped bot reactions found on that message"));
-            }
+        if (all_emojis.empty()) {
+            reply_msg(bronx::error("no reactions found on that message to sync."));
             return;
         }
+
+        unmapped = all_emojis;
 
         // cache guild roles
         dpp::guild* g = dpp::find_guild(guild_id);
@@ -797,6 +818,7 @@ void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t message_id
         session.created_at = std::chrono::steady_clock::now();
 
         // [AUTO-PARSING]
+        std::cerr << "[reaction-role] Calling auto-map for message " << message_id << std::endl;
         attempt_auto_map(session, msg.content);
 
         // check if all emojis total are already done via auto-mapping
@@ -1537,12 +1559,7 @@ Command* get_reactionrole_command() {
                     try {
                     bot.message_add_reaction(message_id, channel_id, norm,
                         [&bot, event, store](const dpp::confirmation_callback_t& cb) {
-                            if (cb.is_error()) {
-                                std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
-                                bronx::send_message(bot, event, bronx::error("could not add reaction: " + cb.get_error().message));
-                            } else {
-                                store(true);
-                            }
+                            store(true);
                         });
                     } catch (const std::exception& ex) {
                         std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
@@ -1679,12 +1696,7 @@ Command* get_reactionrole_command() {
                         try {
                         bot.message_add_reaction(target_message_id, channel_id, emoji_raw_local,
                             [event](const dpp::confirmation_callback_t& cb) {
-                                if (cb.is_error()) {
-                                    std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
-                                    event.reply(dpp::message().add_embed(bronx::error("could not add reaction: " + cb.get_error().message)));
-                                } else {
-                                    event.reply(dpp::message().add_embed(bronx::success("reaction role added to recent message")));
-                                }
+                                event.reply(dpp::message().add_embed(bronx::success("reaction role added to recent message")));
                             });
                         } catch (const std::exception& ex) {
                             std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
@@ -1768,12 +1780,7 @@ Command* get_reactionrole_command() {
                         try {
                         bot.message_add_reaction(message_id, channel_id, norm,
                             [event, store](const dpp::confirmation_callback_t& cb) {
-                                if (cb.is_error()) {
-                                    std::cerr << "[reaction-roles] reaction add failed: " << cb.get_error().message << std::endl;
-                                    event.reply(dpp::message().add_embed(bronx::error("could not add reaction: " + cb.get_error().message)));
-                                } else {
-                                    store(true);
-                                }
+                                store(true);
                             });
                         } catch (const std::exception& ex) {
                             std::cerr << "[reaction-roles] exception in message_add_reaction: " << ex.what() << std::endl;
@@ -2117,6 +2124,16 @@ void register_reactionrole_interactions(dpp::cluster& bot) {
             // persist all assigned reaction roles, prepare sync tasks
             auto sync_queue = std::make_shared<std::vector<SyncTask>>();
             int saved = 0;
+            
+            // Ensure bot reactions for all mapped emojis
+            for (const auto& em : s.emojis) {
+                if (em.assigned_role == 0) continue;
+                try {
+                    std::string norm = normalize_emoji_for_reaction(em.emoji_raw);
+                    bot.message_add_reaction(s.message_id, s.channel_id, norm, [](const dpp::confirmation_callback_t&){});
+                } catch(...) {}
+            }
+            
             for (const auto& em : s.emojis) {
                 if (em.assigned_role == 0) continue;
 
@@ -2140,6 +2157,15 @@ void register_reactionrole_interactions(dpp::cluster& bot) {
                 }
 
                 sync_queue->push_back({s.message_id, s.channel_id, em.emoji_raw, em.assigned_role, s.guild_id});
+                
+                // Force attempt to add bot reaction to ensure sync
+                try {
+                    std::string norm = normalize_emoji_for_reaction(em.emoji_raw);
+                    bot.message_add_reaction(s.message_id, s.channel_id, norm, [norm, mid = s.message_id](const dpp::confirmation_callback_t& cb) {
+                        // ignore error
+                    });
+                } catch (...) {}
+
                 ++saved;
             }
 

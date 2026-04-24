@@ -41,6 +41,17 @@ inline bool save_deleted_messages_batch(
 {
     if (!db || messages.empty()) return false;
     try {
+        auto pool = db->get_pool();
+        auto conn = pool->acquire();
+        if (!conn) return false;
+
+        auto escape = [&](const std::string& s) -> std::string {
+            if (s.empty()) return "";
+            std::vector<char> buffer(s.size() * 2 + 1);
+            unsigned long len = mysql_real_escape_string(conn->get(), buffer.data(), s.c_str(), s.size());
+            return std::string(buffer.data(), len);
+        };
+
         // Build multi-row INSERT
         std::ostringstream sql;
         sql << "INSERT INTO guild_deleted_messages "
@@ -50,21 +61,6 @@ inline bool save_deleted_messages_batch(
         for (size_t i = 0; i < messages.size(); ++i) {
             const auto& m = messages[i];
             if (i > 0) sql << ", ";
-
-            // Escape strings for SQL safety
-            auto escape = [](const std::string& s) -> std::string {
-                std::string out;
-                out.reserve(s.size() + 10);
-                for (char c : s) {
-                    switch (c) {
-                        case '\'': out += "\\'"; break;
-                        case '\\': out += "\\\\"; break;
-                        case '\0': out += "\\0"; break;
-                        default: out += c;
-                    }
-                }
-                return out;
-            };
 
             sql << "('" << m.message_id << "', "
                 << "'" << m.guild_id << "', "
@@ -77,7 +73,12 @@ inline bool save_deleted_messages_batch(
                 << "'" << escape(m.embeds_summary) << "')";
         }
 
-        return db->execute(sql.str());
+        bool ok = db->execute(sql.str());
+        if (!ok) {
+            db->log_error("save_deleted_messages_batch");
+        }
+        pool->release(conn);
+        return ok;
     } catch (const std::exception& e) {
         std::cerr << "[snipe_ops] save_deleted_messages_batch failed: " << e.what() << "\n";
         return false;

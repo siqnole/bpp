@@ -90,7 +90,7 @@ inline Command* get_privacy_command(bronx::db::Database* db) {
                     "> `b.privacy optout` — opt out and delete all your data\n"
                     "> `b.privacy optin` — opt back in and start using the bot again\n"
                     "> `b.privacy info` — see what data we collect\n\n"
-                    "read our full privacy policy at **bronxbot.xyz/privacy**",
+                    "read our full privacy policy at **https://docs.bronxbot.xyz/privacy**",
                     bronx::COLOR_DEFAULT);
                 embed.set_footer(dpp::embed_footer().set_text("your privacy matters"));
                 bronx::send_message(bot, event, embed);
@@ -198,9 +198,9 @@ inline Command* get_privacy_command(bronx::db::Database* db) {
                     "> • discord OAuth2 session (username, avatar) stored server-side for 24h\n"
                     "> • guild member lists fetched live from discord API, cached 30s\n"
                     "> • aggregated server stats (message counts, command usage)\n\n"
-                    "full privacy policy: **bronxbot.xyz/privacy**",
+                    "full privacy policy: **https://docs.bronxbot.xyz/privacy**",
                     bronx::COLOR_INFO);
-                embed.set_footer(dpp::embed_footer().set_text("your privacy matters • bronxbot.xyz/privacy"));
+                embed.set_footer(dpp::embed_footer().set_text("your privacy matters • docs.bronxbot.xyz/privacy"));
                 bronx::send_message(bot, event, embed);
                 return;
             }
@@ -226,7 +226,7 @@ inline Command* get_privacy_command(bronx::db::Database* db) {
                     "use `/privacy optout` to opt out and delete your data\n"
                     "use `/privacy optin` to re-enable your account\n"
                     "use `/privacy info` to see what we collect\n\n"
-                    "full privacy policy: **bronxbot.xyz/privacy**",
+                    "full privacy policy: **https://docs.bronxbot.xyz/privacy**",
                     bronx::COLOR_DEFAULT);
                 embed.set_footer(dpp::embed_footer().set_text("your privacy matters"));
                 event.reply(dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
@@ -296,7 +296,7 @@ inline Command* get_privacy_command(bronx::db::Database* db) {
                     "command usage, moderation flags, preferences, submissions\n\n"
                     "**NOT stored:** usernames, avatars, emails, IPs, message content, DMs\n\n"
                     "**identity data:** encrypted with AES-256 if cached, 30-day expiry\n\n"
-                    "full details: **bronxbot.xyz/privacy**",
+                    "full details: **https://docs.bronxbot.xyz/privacy**",
                     bronx::COLOR_INFO);
                 event.reply(dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
             }

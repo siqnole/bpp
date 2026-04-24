@@ -21,7 +21,7 @@ uint64_t Database::add_autopurge(uint64_t user_id, uint64_t guild_id, uint64_t c
         return 0;
     }
 
-    MYSQL_BIND bind[5];
+    MYSQL_BIND bind[7];
     memset(bind, 0, sizeof(bind));
 
     bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -333,9 +333,6 @@ std::vector<AutopurgeRow> Database::get_autopurges_for_user(uint64_t user_id_arg
     result_bind[5].buffer = (char*)&message_limit;
     result_bind[5].is_unsigned = 0;
 
-    mysql_stmt_bind_result(stmt, result_bind);
-
-    // include target columns in binding
     result_bind[6].buffer_type = MYSQL_TYPE_LONGLONG;
     result_bind[6].buffer = (char*)&target_user_id;
     result_bind[6].is_unsigned = 1;
@@ -343,6 +340,8 @@ std::vector<AutopurgeRow> Database::get_autopurges_for_user(uint64_t user_id_arg
     result_bind[7].buffer_type = MYSQL_TYPE_LONGLONG;
     result_bind[7].buffer = (char*)&target_role_id;
     result_bind[7].is_unsigned = 1;
+
+    mysql_stmt_bind_result(stmt, result_bind);
     while (mysql_stmt_fetch(stmt) == 0) {
         AutopurgeRow r;
         r.target_user_id = target_user_id;

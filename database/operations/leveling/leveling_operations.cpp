@@ -425,11 +425,13 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
     uint64_t gid;
     my_bool enabled, reward_coins;
     int coins_per_msg, min_xp, max_xp, min_chars, cooldown;
-    uint64_t announce_ch;
-    my_bool announce_ch_null;
+    uint64_t announce_ch = 0;
+    my_bool announce_ch_null = 1;
     char msg_buf[501];
-    unsigned long msg_len;
-    my_bool msg_error;
+    memset(msg_buf, 0, sizeof(msg_buf));
+    unsigned long msg_len = 0;
+    my_bool msg_null = 0;
+    my_bool msg_error = 0;
     
 
     resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -454,8 +456,9 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
     
     resbind[9].buffer_type = MYSQL_TYPE_STRING;
     resbind[9].buffer = msg_buf;
-    resbind[9].buffer_length = sizeof(msg_buf);
+    resbind[9].buffer_length = sizeof(msg_buf) - 1;
     resbind[9].length = &msg_len;
+    resbind[9].is_null = &msg_null;
     resbind[9].error = &msg_error;
     
     mysql_stmt_bind_result(stmt, resbind);
@@ -473,7 +476,13 @@ std::optional<GuildLevelingConfig> get_guild_config(Database* db, uint64_t guild
         cfg.xp_cooldown_seconds = cooldown;
         if (!announce_ch_null) cfg.announcement_channel = announce_ch;
         cfg.announce_levelup = true;  // Default to true since DB doesn't have this column
-        cfg.announcement_message = std::string(msg_buf, msg_len);
+        // Guard against uninitialised/truncated msg_len causing bad_alloc
+        if (!msg_null && msg_len <= sizeof(msg_buf) - 1) {
+            cfg.announcement_message = std::string(msg_buf, msg_len);
+        } else if (!msg_null) {
+            // Truncated — use whatever fitted in the buffer (null-terminated)
+            cfg.announcement_message = std::string(msg_buf);
+        }
         result = cfg;
     }
     
@@ -603,8 +612,11 @@ std::vector<LevelRole> get_level_roles(Database* db, uint64_t guild_id) {
     uint64_t id, gid, role_id;
     uint32_t level;
     char role_name_buf[256], desc_buf[1024];
-    unsigned long role_name_len, desc_len;
-    my_bool desc_null, remove_prev;
+    // Zero-init lengths to prevent garbage reads if columns are NULL or never populated
+    unsigned long role_name_len = 0, desc_len = 0;
+    my_bool role_name_null = 0, role_name_error = 0;
+    my_bool desc_null = 0, desc_error = 0;
+    my_bool remove_prev = 0;
     
     resbind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     resbind[0].buffer = &id;
@@ -618,11 +630,14 @@ std::vector<LevelRole> get_level_roles(Database* db, uint64_t guild_id) {
     resbind[4].buffer = role_name_buf;
     resbind[4].buffer_length = sizeof(role_name_buf);
     resbind[4].length = &role_name_len;
+    resbind[4].is_null = &role_name_null;
+    resbind[4].error = &role_name_error;
     resbind[5].buffer_type = MYSQL_TYPE_STRING;
     resbind[5].buffer = desc_buf;
     resbind[5].buffer_length = sizeof(desc_buf);
     resbind[5].length = &desc_len;
     resbind[5].is_null = &desc_null;
+    resbind[5].error = &desc_error;
     resbind[6].buffer_type = MYSQL_TYPE_TINY;
     resbind[6].buffer = &remove_prev;
     
@@ -635,8 +650,15 @@ std::vector<LevelRole> get_level_roles(Database* db, uint64_t guild_id) {
         lr.guild_id = gid;
         lr.level = level;
         lr.role_id = role_id;
-        lr.role_name = std::string(role_name_buf, role_name_len);
-        if (!desc_null) lr.description = std::string(desc_buf, desc_len);
+        // Clamp lengths to buffer bounds to guard against MYSQL_DATA_TRUNCATED
+        if (!role_name_null) {
+            unsigned long safe_len = std::min(role_name_len, (unsigned long)(sizeof(role_name_buf) - 1));
+            lr.role_name = std::string(role_name_buf, safe_len);
+        }
+        if (!desc_null) {
+            unsigned long safe_len = std::min(desc_len, (unsigned long)(sizeof(desc_buf) - 1));
+            lr.description = std::string(desc_buf, safe_len);
+        }
         lr.remove_previous = remove_prev;
         results.push_back(lr);
     }

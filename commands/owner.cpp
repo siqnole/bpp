@@ -130,14 +130,14 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
     int page = state.current_page;
 
     static const std::vector<std::string> page_titles = {
-        "Bot Overview",         // 0
-        "Cache & Infrastructure", // 1
-        "Command Stats",        // 2
-        "Economy Overview",     // 3
-        "Fishing & Inventory",  // 4
-        "Leveling & Community", // 5
-        "System & Process",     // 6
-        "Render Previews",      // 7
+        "bot overview",         // 0
+        "cache & infrastructure", // 1
+        "command stats",        // 2
+        "economy overview",     // 3
+        "fishing & inventory",  // 4
+        "leveling & community", // 5
+        "system & process",     // 6
+        "render previews",      // 7
     };
 
     std::string desc;
@@ -608,7 +608,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
     nav_row.add_component(first_btn);
 
     dpp::component prev_btn;
-    prev_btn.set_type(dpp::cot_button).set_label("◀ Prev").set_style(dpp::cos_primary)
+    prev_btn.set_type(dpp::cot_button).set_label("◀ previous").set_style(dpp::cos_primary)
         .set_id("ostats_prev").set_disabled(page == 0);
     nav_row.add_component(prev_btn);
 
@@ -620,7 +620,7 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
     nav_row.add_component(page_btn);
 
     dpp::component next_btn;
-    next_btn.set_type(dpp::cot_button).set_label("Next ▶").set_style(dpp::cos_primary)
+    next_btn.set_type(dpp::cot_button).set_label("next ▶").set_style(dpp::cos_primary)
         .set_id("ostats_next").set_disabled(page >= OSTATS_TOTAL_PAGES - 1);
     nav_row.add_component(next_btn);
 
@@ -702,7 +702,7 @@ static dpp::message build_cmdhistory_message(bronx::db::Database* db, uint64_t o
     CmdHistoryState& state = cmdhistory_states[owner_id];
     
     if (state.target_user == 0) {
-        auto embed = bronx::create_embed("No user selected. Use `.cmdh <user>` to view history.");
+        auto embed = bronx::create_embed("no user selected. use `.cmdh <user>` to view history.");
         dpp::message msg;
         msg.add_embed(embed);
         return msg;
@@ -729,7 +729,7 @@ static dpp::message build_cmdhistory_message(bronx::db::Database* db, uint64_t o
     desc += " • _" + std::to_string(total) + " total entries_";
     
     auto embed = bronx::create_embed(desc)
-        .set_title("Command History for <@" + std::to_string(state.target_user) + ">")
+        .set_title("command history for <@" + std::to_string(state.target_user) + ">")
         .set_color(0x7289DA);
     
     dpp::message msg;
@@ -741,7 +741,7 @@ static dpp::message build_cmdhistory_message(bronx::db::Database* db, uint64_t o
     
     dpp::component prev_btn;
     prev_btn.set_type(dpp::cot_button)
-        .set_label("◀ Previous")
+        .set_label("◀ previous")
         .set_style(dpp::cos_secondary)
         .set_id("cmdh_nav_prev")
         .set_disabled(pages <= 1);
@@ -749,7 +749,7 @@ static dpp::message build_cmdhistory_message(bronx::db::Database* db, uint64_t o
     
     dpp::component next_btn;
     next_btn.set_type(dpp::cot_button)
-        .set_label("Next ▶")
+        .set_label("next ▶")
         .set_style(dpp::cos_secondary)
         .set_id("cmdh_nav_next")
         .set_disabled(pages <= 1);
@@ -757,14 +757,14 @@ static dpp::message build_cmdhistory_message(bronx::db::Database* db, uint64_t o
     
     dpp::component refresh_btn;
     refresh_btn.set_type(dpp::cot_button)
-        .set_label("🔄 Refresh")
+        .set_label("🔄 refresh")
         .set_style(dpp::cos_primary)
         .set_id("cmdh_refresh");
     nav_row.add_component(refresh_btn);
     
     dpp::component clear_btn;
     clear_btn.set_type(dpp::cot_button)
-        .set_label("🗑 Clear All")
+        .set_label("🗑 clear all")
         .set_style(dpp::cos_danger)
         .set_id("cmdh_clear")
         .set_disabled(total == 0);
@@ -810,7 +810,7 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
     }
     desc += "\n\n_page " + std::to_string(state.current_page + 1) + " of " + std::to_string(std::max(1, pages)) + "_";
 
-    auto embed = bronx::create_embed(desc).set_title("User Suggestions");
+    auto embed = bronx::create_embed(desc).set_title("user suggestions");
     // footer omitted; owner knows context
 
     dpp::message msg;
@@ -824,7 +824,7 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
         // mark read button
         dpp::component read_btn;
         read_btn.set_type(dpp::cot_button)
-            .set_label("Mark Read")
+            .set_label("mark read")
             .set_style(dpp::cos_primary)
             .set_id("suggest_read_" + std::to_string(s.id))
             .set_disabled(s.read);
@@ -832,7 +832,7 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
         // delete button
         dpp::component del_btn;
         del_btn.set_type(dpp::cot_button)
-            .set_label("Delete")
+            .set_label("delete")
             .set_style(dpp::cos_danger)
             .set_id("suggest_del_" + std::to_string(s.id));
         row.add_component(del_btn);
@@ -844,14 +844,14 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
     nav_row1.set_type(dpp::cot_action_row);
     dpp::component prev_btn;
     prev_btn.set_type(dpp::cot_button)
-        .set_label("◀ Previous")
+        .set_label("◀ previous")
         .set_style(dpp::cos_secondary)
         .set_id("suggest_nav_prev");
         // wrapping means button is always enabled
     nav_row1.add_component(prev_btn);
     dpp::component next_btn;
     next_btn.set_type(dpp::cot_button)
-        .set_label("Next ▶")
+        .set_label("next ▶")
         .set_style(dpp::cos_secondary)
         .set_id("suggest_nav_next");
         // always enabled to allow wraparound
@@ -860,7 +860,7 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
     // goto button (shows a modal to jump to a specific page)
     dpp::component goto_btn;
     goto_btn.set_type(dpp::cot_button)
-        .set_label("Goto")
+        .set_label("goto")
         .set_style(dpp::cos_secondary)
         .set_id("suggest_goto")
         .set_disabled(total == 0);
@@ -869,7 +869,7 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
     // delete-page button (remove all suggestions on current page)
     dpp::component delete_page_btn;
     delete_page_btn.set_type(dpp::cot_button)
-        .set_label("Delete Page")
+        .set_label("delete page")
         .set_style(dpp::cos_danger)
         .set_id("suggest_delete_page")
         .set_disabled(total == 0);
@@ -878,9 +878,9 @@ static dpp::message build_suggestions_message(bronx::db::Database* db, uint64_t 
     msg.add_component(nav_row1);
 
     // sort row
-    std::string date_label = "Date" + std::string(state.order_by == "submitted_at" ? (state.asc ? " ▲" : " ▼") : "");
-    std::string net_label = "Balance" + std::string(state.order_by == "networth" ? (state.asc ? " ▲" : " ▼") : "");
-    std::string alpha_label = "Alphabetical" + std::string(state.order_by == "suggestion" ? (state.asc ? " ▲" : " ▼") : "");
+    std::string date_label = "date" + std::string(state.order_by == "submitted_at" ? (state.asc ? " ▲" : " ▼") : "");
+    std::string net_label = "balance" + std::string(state.order_by == "networth" ? (state.asc ? " ▲" : " ▼") : "");
+    std::string alpha_label = "alphabetical" + std::string(state.order_by == "suggestion" ? (state.asc ? " ▲" : " ▼") : "");
 
     dpp::component nav_row2;
     nav_row2.set_type(dpp::cot_action_row);
@@ -962,16 +962,16 @@ static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) 
         for (int i = start; i < end; ++i) {
             auto* g = guilds[i];
             desc += "**" + g->name + "**\n";
-            desc += "• ID: `" + std::to_string(g->id) + "`\n";
-            desc += "• Members: " + std::to_string(g->member_count) + "\n";
-            desc += "• Owner: <@" + std::to_string(g->owner_id) + ">\n";
+            desc += "• id: `" + std::to_string(g->id) + "`\n";
+            desc += "• members: " + std::to_string(g->member_count) + "\n";
+            desc += "• owner: <@" + std::to_string(g->owner_id) + ">\n";
             if (i < end - 1) desc += "\n";
         }
     }
     desc += "\n_page " + std::to_string(state.current_page + 1) + " of " + std::to_string(pages) + "_";
     desc += " • _" + std::to_string(total) + " total servers_";
     
-    auto embed = bronx::create_embed(desc).set_title("Server List");
+    auto embed = bronx::create_embed(desc).set_title("server list");
     embed.set_color(0x5865F2);
     
     dpp::message msg;
@@ -985,7 +985,7 @@ static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) 
         
         dpp::component leave_btn;
         leave_btn.set_type(dpp::cot_button)
-            .set_label("Leave " + g->name.substr(0, std::min(40, (int)g->name.length())))
+            .set_label("leave " + g->name.substr(0, std::min(40, (int)g->name.length())))
             .set_style(dpp::cos_danger)
             .set_id("serverlist_leave_" + std::to_string(g->id));
         row.add_component(leave_btn);
@@ -999,7 +999,7 @@ static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) 
     
     dpp::component prev_btn;
     prev_btn.set_type(dpp::cot_button)
-        .set_label("◀ Previous")
+        .set_label("◀ previous")
         .set_style(dpp::cos_secondary)
         .set_id("serverlist_nav_prev")
         .set_disabled(pages <= 1);
@@ -1007,7 +1007,7 @@ static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) 
     
     dpp::component next_btn;
     next_btn.set_type(dpp::cot_button)
-        .set_label("Next ▶")
+        .set_label("next ▶")
         .set_style(dpp::cos_secondary)
         .set_id("serverlist_nav_next")
         .set_disabled(pages <= 1);
@@ -1015,7 +1015,7 @@ static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) 
     
     dpp::component refresh_btn;
     refresh_btn.set_type(dpp::cot_button)
-        .set_label("🔄 Refresh")
+        .set_label("🔄 refresh")
         .set_style(dpp::cos_primary)
         .set_id("serverlist_refresh");
     nav_row.add_component(refresh_btn);
@@ -1023,9 +1023,9 @@ static dpp::message build_servers_message(dpp::cluster& bot, uint64_t owner_id) 
     msg.add_component(nav_row);
     
     // Sort row
-    std::string name_label = "Name" + std::string(state.sort_by == "name" ? (state.asc ? " ▲" : " ▼") : "");
-    std::string members_label = "Members" + std::string(state.sort_by == "members" ? (state.asc ? " ▲" : " ▼") : "");
-    std::string id_label = "ID" + std::string(state.sort_by == "id" ? (state.asc ? " ▲" : " ▼") : "");
+    std::string name_label = "name" + std::string(state.sort_by == "name" ? (state.asc ? " ▲" : " ▼") : "");
+    std::string members_label = "members" + std::string(state.sort_by == "members" ? (state.asc ? " ▲" : " ▼") : "");
+    std::string id_label = "id" + std::string(state.sort_by == "id" ? (state.asc ? " ▲" : " ▼") : "");
     
     dpp::component sort_row;
     sort_row.set_type(dpp::cot_action_row);
@@ -1072,7 +1072,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (!is_owner(event.msg.author.id)) {
                 bot.message_create(dpp::message(event.msg.channel_id, 
-                    bronx::error("This command is restricted to the bot owner only.")));
+                    bronx::error("this command is restricted to the bot owner only.")));
                 return;
             }
 
@@ -1279,7 +1279,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
         [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (!is_owner(event.msg.author.id)) {
                 bot.message_create(dpp::message(event.msg.channel_id, 
-                    bronx::error("This command is restricted to the bot owner only.")));
+                    bronx::error("this command is restricted to the bot owner only.")));
                 return;
             }
             
@@ -1305,7 +1305,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (!is_owner(event.msg.author.id)) {
                 bot.message_create(dpp::message(event.msg.channel_id,
-                    bronx::error("This command is restricted to the bot owner.")));
+                    bronx::error("this command is restricted to the bot owner.")));
                 return;
             }
 
@@ -1313,7 +1313,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
 
             if (result) {
                 bot.message_create(dpp::message(event.msg.channel_id,
-                    bronx::success("🌍 **World Event Triggered!**\nStarted: **" + result->event_name + "** (" + result->emoji + ")")));
+                    bronx::success("🌍 **world event triggered!**\nstarted: **" + result->event_name + "** (" + result->emoji + ")")));
                 
                 // Optional: trigger the announcement broadcast normally sent by the bot
                 // For now, let's assume the user wants to see the announcement 
@@ -1323,7 +1323,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
                 bot.message_create(dpp::message(event.msg.channel_id, "").add_embed(embed));
             } else {
                 bot.message_create(dpp::message(event.msg.channel_id,
-                    bronx::error("Failed to spawn world event. Check console for details.")));
+                    bronx::error("failed to spawn world event. check console for details.")));
             }
         });
     cmds.push_back(&spawnevent);
@@ -1333,7 +1333,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             if (!is_owner(event.msg.author.id)) {
                 bot.message_create(dpp::message(event.msg.channel_id,
-                    bronx::error("command is restricted to the bot owner only.")));
+                    bronx::error("this command is restricted to the bot owner only.")));
                 return;
             }
             if (args.empty()) {
@@ -1393,10 +1393,10 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
                     } else {
                         // Non-SELECT statement (INSERT/UPDATE/DELETE/ALTER/etc.)
                         uint64_t affected = mysql_affected_rows(conn->get());
-                        result = "OK, " + std::to_string(affected) + " rows affected";
+                        result = "ok, " + std::to_string(affected) + " rows affected";
                     }
                 } else {
-                    result = "MySQL error: ";
+                    result = "mysql error: ";
                     result += mysql_error(conn->get());
                 }
                 db->get_pool()->release(conn);

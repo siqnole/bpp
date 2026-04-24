@@ -34,12 +34,12 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
             dpp::user* target_user = dpp::find_user(target_id);
             std::string username = target_user ? target_user->username : std::to_string(target_id);
             
-            std::string desc = "📊 **Rank Summary**\n\n"
-                               "✨ **Level**: " + std::to_string(xp_data->level) + "\n"
-                               "📈 **XP**: " + std::to_string(xp_data->total_xp) + " / " + std::to_string(db->calculate_xp_for_next_level(xp_data->level));
+            std::string desc = "📊 **rank summary**\n\n"
+                               "✨ **level**: " + std::to_string(xp_data->level) + "\n"
+                               "📈 **xp**: " + std::to_string(xp_data->total_xp) + " / " + std::to_string(db->calculate_xp_for_next_level(xp_data->level));
             
             auto embed = bronx::create_embed(desc);
-            embed.set_title(username + "'s Leveling Progress");
+            embed.set_title(username + "'s leveling progress");
             embed.set_color(bronx::COLOR_INFO);
             if (target_user) embed.set_thumbnail(target_user->get_avatar_url());
             
@@ -62,12 +62,12 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
             dpp::user* target_user = dpp::find_user(target_id);
             std::string username = target_user ? target_user->username : std::to_string(target_id);
             
-            std::string desc = "📊 **Rank Summary**\n\n"
-                               "✨ **Level**: " + std::to_string(xp_data->level) + "\n"
-                               "📈 **XP**: " + std::to_string(xp_data->total_xp) + " / " + std::to_string(db->calculate_xp_for_next_level(xp_data->level));
+            std::string desc = "📊 **rank summary**\n\n"
+                               "✨ **level**: " + std::to_string(xp_data->level) + "\n"
+                               "📈 **xp**: " + std::to_string(xp_data->total_xp) + " / " + std::to_string(db->calculate_xp_for_next_level(xp_data->level));
             
             auto embed = bronx::create_embed(desc);
-            embed.set_title(username + "'s Leveling Progress");
+            embed.set_title(username + "'s leveling progress");
             embed.set_color(bronx::COLOR_INFO);
             if (target_user) embed.set_thumbnail(target_user->get_avatar_url());
             
@@ -101,13 +101,13 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
             }
 
             if (args.empty()) {
-                std::string desc = "**Leveling System Management**\n\n"
-                                   "Use the subcommands below to manage settings and rewards.\n\n"
+                std::string desc = "**leveling system management**\n\n"
+                                   "use the subcommands below to manage settings and rewards.\n\n"
                                    "🛠️ `level config` — view and edit system settings\n"
                                    "🏆 `level roles` — manage role rewards\n\n"
-                                   "💡 *Tip: try `level config message` to customize level-up announcements!*";
+                                   "💡 *tip: try `level config message` to customize level-up announcements!*";
                 auto embed = bronx::create_embed(desc);
-                embed.set_title("⚙️ Leveling Group");
+                embed.set_title("⚙️ leveling group");
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
                 return;
@@ -123,31 +123,35 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
                     db->create_guild_leveling_config(guild_id);
                     config = db->get_guild_leveling_config(guild_id);
                 }
+                if (!config) {
+                    bronx::send_message(bot, event, bronx::error("failed to load leveling config — database error"));
+                    return;
+                }
 
                 if (args.size() == 1) { // Show dashboard
-                    std::string desc = "**Leveling Configuration Dashboard**\n\n";
-                    desc += "✨ **Status**: " + std::string(config->enabled ? "✅ Enabled" : "❌ Disabled") + "\n";
-                    desc += "💰 **Coin Rewards**: " + std::string(config->reward_coins ? "Enabled ($" + std::to_string(config->coins_per_message) + "/msg)" : "Disabled") + "\n";
-                    desc += "📈 **XP Gain**: " + std::to_string(config->min_xp_per_message) + "–" + std::to_string(config->max_xp_per_message) + " XP per message\n";
-                    desc += "⏱️ **Cooldown**: " + std::to_string(config->xp_cooldown_seconds) + " seconds\n";
-                    desc += "📏 **Min Chars**: " + std::to_string(config->min_message_chars) + " characters\n\n";
+                    std::string desc = "**leveling configuration dashboard**\n\n";
+                    desc += "✨ **status**: " + std::string(config->enabled ? "✅ enabled" : "❌ disabled") + "\n";
+                    desc += "💰 **coin rewards**: " + std::string(config->reward_coins ? "enabled ($" + std::to_string(config->coins_per_message) + "/msg)" : "disabled") + "\n";
+                    desc += "📈 **xp gain**: " + std::to_string(config->min_xp_per_message) + "–" + std::to_string(config->max_xp_per_message) + " xp per message\n";
+                    desc += "⏱️ **cooldown**: " + std::to_string(config->xp_cooldown_seconds) + " seconds\n";
+                    desc += "📏 **min chars**: " + std::to_string(config->min_message_chars) + " characters\n\n";
                     
-                    desc += "**Announcements**\n";
-                    desc += "📣 **Enabled**: " + std::string(config->announce_levelup ? "Yes" : "No") + "\n";
-                    desc += "📍 **Channel**: " + (config->announcement_channel.has_value() ? "<#" + std::to_string(*config->announcement_channel) + ">" : "*Not set (uses current channel)*") + "\n";
-                    desc += "✉️ **Message**: `" + config->announcement_message + "`\n\n";
+                    desc += "**announcements**\n";
+                    desc += "📣 **enabled**: " + std::string(config->announce_levelup ? "yes" : "no") + "\n";
+                    desc += "📍 **channel**: " + (config->announcement_channel.has_value() ? "<#" + std::to_string(*config->announcement_channel) + ">" : "*not set (uses current channel)*") + "\n";
+                    desc += "✉️ **message**: `" + config->announcement_message + "`\n\n";
                     
-                    desc += "**Commands**\n";
+                    desc += "**commands**\n";
                     desc += "• `level config enable/disable`\n";
                     desc += "• `level config xp <min> <max>`\n";
                     desc += "• `level config cooldown <seconds>`\n";
                     desc += "• `level config channel <#channel>`\n";
                     desc += "• `level config message <template>`\n";
                     desc += "• `level config preview` — preview announcement\n";
-                    desc += "• `level config reset` — resets all server XP\n";
+                    desc += "• `level config reset` — resets all server xp\n";
                     
                     auto embed = bronx::create_embed(desc);
-                    embed.set_title("⚙️ Server Leveling Dashboard");
+                    embed.set_title("⚙️ server leveling dashboard");
                     embed.set_color(bronx::COLOR_INFO);
                     bronx::add_invoker_footer(embed, event.msg.author);
                     bronx::send_message(bot, event, embed);
@@ -167,7 +171,7 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
                     bronx::send_message(bot, event, bronx::success("leveling system disabled"));
                 } else if (sub2 == "message") {
                     if (args.size() < 3) {
-                        bronx::send_message(bot, event, bronx::error("usage: `level config message <text>`\n\n**Placeholders:**\n`{name}` — user mention\n`{level}` — new level\n`{members}` — server members\n`{date}` — current date\n`{createdat}` — server creation date"));
+                        bronx::send_message(bot, event, bronx::error("usage: `level config message <text>`\n\n**placeholders:**\n`{name}` — user mention\n`{level}` — new level\n`{members}` — server members\n`{date}` — current date\n`{createdat}` — server creation date"));
                         return;
                     }
                     std::string new_msg;
@@ -192,9 +196,9 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
 
                     std::string preview = bronx::utils::replace_placeholders(config->announcement_message, placeholders);
                     
-                    auto embed = bronx::create_embed("### 📣 Announcement Preview\n\n" + preview);
-                    embed.set_title("✨ Level Up Preview");
-                    embed.set_footer(dpp::embed_footer().set_text("Tip: placeholders are {name}, {level}, {members}, {date}, {createdat}"));
+                    auto embed = bronx::create_embed("### 📣 announcement preview\n\n" + preview);
+                    embed.set_title("✨ level up preview");
+                    embed.set_footer(dpp::embed_footer().set_text("tip: placeholders are {name}, {level}, {members}, {date}, {createdat}"));
                     bronx::send_message(bot, event, embed);
                 } else if (sub2 == "channel") {
                     if (args.size() < 3) {
@@ -225,7 +229,7 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
                         config->min_xp_per_message = min_xp;
                         config->max_xp_per_message = max_xp;
                         db->update_guild_leveling_config(*config);
-                        bronx::send_message(bot, event, bronx::success("XP range set to **" + std::to_string(min_xp) + "–" + std::to_string(max_xp) + "**"));
+                        bronx::send_message(bot, event, bronx::success("xp range set to **" + std::to_string(min_xp) + "–" + std::to_string(max_xp) + "**"));
                     } catch (...) { bronx::send_message(bot, event, bronx::error("invalid numbers")); }
                 } else if (sub2 == "cooldown") {
                     if (args.size() < 3) {
@@ -236,7 +240,7 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
                         int seconds = std::stoi(args[2]);
                         config->xp_cooldown_seconds = std::max(0, seconds);
                         db->update_guild_leveling_config(*config);
-                        bronx::send_message(bot, event, bronx::success("XP cooldown set to **" + std::to_string(config->xp_cooldown_seconds) + " seconds**"));
+                        bronx::send_message(bot, event, bronx::success("xp cooldown set to **" + std::to_string(config->xp_cooldown_seconds) + " seconds**"));
                     } catch (...) { bronx::send_message(bot, event, bronx::error("invalid number")); }
                 } else if (sub2 == "reset") {
                     if (db->reset_guild_xp(guild_id)) {
@@ -245,28 +249,28 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
                         bronx::send_message(bot, event, bronx::error("failed to reset server XP"));
                     }
                 } else {
-                    bronx::send_message(bot, event, bronx::error("unknown config option. Use `level config` to see all settings."));
+                    bronx::send_message(bot, event, bronx::error("unknown config option. use `level config` to see all settings."));
                 }
             } 
             // --- Level Roles Subcommand ---
             else if (sub == "roles" || sub == "reward") {
                 if (args.size() == 1) { // List roles
                     auto level_roles = db->get_level_roles(guild_id);
-                    std::string desc = "**Level Role Rewards**\n\n";
+                    std::string desc = "**level role rewards**\n\n";
                     if (level_roles.empty()) {
-                        desc += "*No role rewards configured yet.*\n\n";
+                        desc += "*no role rewards configured yet.*\n\n";
                     } else {
                         for (const auto& lr : level_roles) {
-                            desc += "🏅 **Level " + std::to_string(lr.level) + "**: <@&" + std::to_string(lr.role_id) + ">\n";
+                            desc += "🏅 **level " + std::to_string(lr.level) + "**: <@&" + std::to_string(lr.role_id) + ">\n";
                         }
                         desc += "\n";
                     }
-                    desc += "**Commands**\n";
+                    desc += "**commands**\n";
                     desc += "• `level roles add <level> <@role>`\n";
                     desc += "• `level roles remove <level>`\n";
                     
                     auto embed = bronx::create_embed(desc);
-                    embed.set_title("🏆 Level Rewards");
+                    embed.set_title("🏆 level rewards");
                     bronx::add_invoker_footer(embed, event.msg.author);
                     bronx::send_message(bot, event, embed);
                     return;
@@ -289,7 +293,7 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
                         lr.guild_id = guild_id;
                         lr.level = level;
                         lr.role_id = role_id;
-                        lr.role_name = role_ptr ? role_ptr->name : "Unknown Role";
+                        lr.role_name = role_ptr ? role_ptr->name : "unknown role";
                         lr.remove_previous = false;
                         
                         if (db->create_level_role(lr)) {
@@ -312,10 +316,10 @@ inline std::vector<Command*> get_leveling_commands(Database* db) {
                         }
                     } catch (...) { bronx::send_message(bot, event, bronx::error("invalid level number")); }
                 } else {
-                    bronx::send_message(bot, event, bronx::error("unknown role command. Use `level roles` to see help."));
+                    bronx::send_message(bot, event, bronx::error("unknown role command. use `level roles` to see help."));
                 }
             } else {
-                bronx::send_message(bot, event, bronx::error("unknown subcommand. Use `level config` or `level roles`."));
+                bronx::send_message(bot, event, bronx::error("unknown subcommand. use `level config` or `level roles`."));
             }
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {

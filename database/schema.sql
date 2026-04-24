@@ -803,6 +803,12 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     logging_channel BIGINT UNSIGNED NULL,
     public_stats BOOLEAN NOT NULL DEFAULT FALSE,
     
+    -- Custom Server Metadata
+    server_bio TEXT NULL,
+    server_website VARCHAR(255) NULL,
+    server_banner_url VARCHAR(512) NULL,
+    server_avatar_url VARCHAR(512) NULL,
+    
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;

@@ -1,7 +1,7 @@
 #pragma once
 #include "../../command.h"
 #include "../../embed_style.h"
-#include "../media_manager.h"
+#include "../../media_manager.h"
 #include "utility_helpers.h"
 #include <thread>
 #include <vector>
@@ -12,6 +12,9 @@
 #include <filesystem>
 #include <random>
 #include <dpp/dpp.h>
+#include "../../utils/string_utils.h"
+#include "../../utils/file_guards.h"
+#include "../../tui_logger.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -102,10 +105,11 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
 struct HttpResponse {
     long status;
     ::std::string body;
+    ::std::string content_type;
 };
 
 inline HttpResponse http_get_sync(const ::std::string& url) {
-    HttpResponse res = {0, ""};
+    HttpResponse res = {0, "", ""};
     CURL *curl = curl_easy_init();
     if (!curl) return res;
 
@@ -122,6 +126,10 @@ inline HttpResponse http_get_sync(const ::std::string& url) {
     if (curl_easy_perform(curl) == CURLE_OK) {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res.status);
         res.body.assign(chunk.memory, chunk.size);
+        
+        char* ct = nullptr;
+        curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
+        if (ct) res.content_type = ct;
     }
 
     free(chunk.memory);
@@ -135,7 +143,9 @@ inline HttpResponse http_get_sync(const ::std::string& url) {
  */
 inline ::std::string upload_to_catbox(const ::std::string& file_path) {
     std::string temp_res = "/tmp/catbox_res_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count()) + ".txt";
-    std::string cmd = "curl -s -F \"reqtype=fileupload\" -F \"fileToUpload=@" + file_path + "\" https://catbox.moe/user/api.php > " + temp_res + " 2>&1";
+    std::string escaped_file = bronx::utils::shell_escape(file_path);
+    std::string escaped_res = bronx::utils::shell_escape(temp_res);
+    std::string cmd = "curl -s -F \"reqtype=fileupload\" -F \"fileToUpload=@" + escaped_file + "\" https://catbox.moe/user/api.php > " + escaped_res + " 2>&1";
     
     int status = std::system(cmd.c_str());
     std::string url = "";
@@ -278,7 +288,7 @@ inline ::std::vector<float> decode_audio(const ::std::string& bytes, double& dur
 
 inline void process_ocr_request(dpp::cluster& bot, const MediaSource& src, std::function<void(const dpp::message&)> responder) {
     if (src.size > 8 * 1024 * 1024) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Image is too large (max 8MB)."));
+        responder(dpp::message(bronx::EMOJI_DENY + " image is too large (max 8mb)."));
         return;
     }
 
@@ -287,23 +297,22 @@ inline void process_ocr_request(dpp::cluster& bot, const MediaSource& src, std::
         // If it's a Tenor/Giphy embed, it might be video/mp4 but we can still try to grab a frame if we want,
         // but OCR usually expects a static image. For now, keep it restricted or add frame extraction.
         if (src.content_type.find("image/") == std::string::npos) {
-            responder(dpp::message(bronx::EMOJI_DENY + " OCR only works on static images (PNG, JPEG, WebP)."));
+            responder(dpp::message(bronx::EMOJI_DENY + " ocr only works on static images (png, jpeg, webp)."));
             return;
         }
     }
 
     auto response = http_get_sync(src.url);
     if (response.status != 200) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Failed to download image."));
+        responder(dpp::message(bronx::EMOJI_DENY + " failed to download image."));
         return;
     }
 
     auto& manager = bronx::get_media_manager();
     if (!manager.ocr_api) {
-        responder(dpp::message(bronx::EMOJI_DENY + " OCR service is not initialized."));
+        responder(dpp::message(bronx::EMOJI_DENY + " ocr service is not initialized."));
         return;
     }
-
     Pix* pix = pixReadMem((const unsigned char*)response.body.data(), response.body.size());
     if (!pix) {
         responder(dpp::message(bronx::EMOJI_DENY + " Failed to process image memory."));
@@ -321,7 +330,7 @@ inline void process_ocr_request(dpp::cluster& bot, const MediaSource& src, std::
     text.erase(text.find_last_not_of(" \n\r\t") + 1);
 
     if (text.empty()) {
-        responder(dpp::message(bronx::EMOJI_DENY + " No text detected."));
+        responder(dpp::message(bronx::EMOJI_DENY + " no text detected."));
         return;
     }
 
@@ -332,8 +341,8 @@ inline void process_ocr_request(dpp::cluster& bot, const MediaSource& src, std::
 
     for (size_t i = 0; i < pages.size(); ++i) {
         auto embed = bronx::create_embed("```\n" + pages[i] + "\n```")
-            .set_title("OCR Result")
-            .set_footer(dpp::embed_footer().set_text("Page " + ::std::to_string(i + 1) + "/" + ::std::to_string(pages.size())));
+            .set_title("ocr result")
+            .set_footer(dpp::embed_footer().set_text("page " + ::std::to_string(i + 1) + "/" + ::std::to_string(pages.size())));
         
         responder(dpp::message().add_embed(embed));
     }
@@ -341,21 +350,21 @@ inline void process_ocr_request(dpp::cluster& bot, const MediaSource& src, std::
 
 inline void process_transcribe_request(dpp::cluster& bot, const MediaSource& src, ::std::string language, std::function<void(const dpp::message&)> responder) {
     if (src.size > 25 * 1024 * 1024) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Audio file is too large (max 25MB)."));
+        responder(dpp::message(bronx::EMOJI_DENY + " audio file is too large (max 25mb)."));
         return;
     }
 
     ::std::string mime = src.content_type;
     if (mime != "audio/ogg" && mime != "audio/mpeg" && mime != "audio/wav" && mime != "audio/flac" && mime != "application/ogg") {
         if (src.filename.find(".ogg") == ::std::string::npos) {
-            responder(dpp::message(bronx::EMOJI_DENY + " Unsupported file type. Please use OGG, MP3, WAV, or FLAC."));
+            responder(dpp::message(bronx::EMOJI_DENY + " unsupported file type. please use ogg, mp3, wav, or flac."));
             return;
         }
     }
 
     auto response = http_get_sync(src.url);
     if (response.status != 200) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Failed to download audio."));
+        responder(dpp::message(bronx::EMOJI_DENY + " failed to download audio."));
         return;
     }
 
@@ -363,13 +372,13 @@ inline void process_transcribe_request(dpp::cluster& bot, const MediaSource& src
     ::std::vector<float> pcm = decode_audio(response.body, duration);
 
     if (pcm.empty()) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Failed to decode audio or file is empty."));
+        responder(dpp::message(bronx::EMOJI_DENY + " failed to decode audio or file is empty."));
         return;
     }
 
     auto& manager = bronx::get_media_manager();
     if (!manager.whisper_ctx) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Transcription service is not initialized."));
+        responder(dpp::message(bronx::EMOJI_DENY + " transcription service is not initialized."));
         return;
     }
 
@@ -382,7 +391,7 @@ inline void process_transcribe_request(dpp::cluster& bot, const MediaSource& src
     params.print_timestamps = false;
 
     if (whisper_full(manager.whisper_ctx, params, pcm.data(), pcm.size()) != 0) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Transcription failed."));
+        responder(dpp::message(bronx::EMOJI_DENY + " transcription failed."));
         return;
     }
 
@@ -393,28 +402,28 @@ inline void process_transcribe_request(dpp::cluster& bot, const MediaSource& src
     }
 
     if (transcript.empty()) {
-        responder(dpp::message(bronx::EMOJI_DENY + " No speech detected in audio."));
+        responder(dpp::message(bronx::EMOJI_DENY + " no speech detected in audio."));
         return;
     }
 
     const char* detected_lang = whisper_lang_str(whisper_full_lang_id(manager.whisper_ctx));
     auto embed = bronx::create_embed("```\n" + transcript + "\n```")
-        .set_title("Audio Transcription")
-        .add_field("Detected Language", detected_lang ? detected_lang : "Unknown", true)
-        .add_field("Duration", ::std::to_string(duration) + "s", true);
+        .set_title("audio transcription")
+        .add_field("detected language", detected_lang ? detected_lang : "unknown", true)
+        .add_field("duration", ::std::to_string(duration) + "s", true);
 
     responder(dpp::message().add_embed(embed));
 }
 
 inline void process_gif_request(dpp::cluster& bot, const MediaSource& src, std::function<void(const dpp::message&)> responder) {
     if (src.size > 25 * 1024 * 1024) {
-        responder(dpp::message(bronx::EMOJI_DENY + " File is too large (max 25MB for conversion)."));
+        responder(dpp::message(bronx::EMOJI_DENY + " file is too large (max 25mb for conversion)."));
         return;
     }
 
     auto response = http_get_sync(src.url);
     if (response.status != 200) {
-        responder(dpp::message(bronx::EMOJI_DENY + " Failed to download attachment."));
+        responder(dpp::message(bronx::EMOJI_DENY + " failed to download attachment."));
         return;
     }
 
@@ -435,27 +444,28 @@ inline void process_gif_request(dpp::cluster& bot, const MediaSource& src, std::
     out_file.write(response.body.data(), response.body.size());
     out_file.close();
 
+    bronx::utility::TempDirGuard guard(temp_dir);
+    std::string escaped_in = bronx::utils::shell_escape(in_path);
+    std::string escaped_out = bronx::utils::shell_escape(out_path);
+
     // Optimized GIF settings: 10 second limit, 320p width, 12fps, and bayer dithering for smaller file size.
-    std::string cmd = "ffmpeg -y -i " + in_path + " -t 10 -vf \"fps=12,scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1\" " + out_path + " > /dev/null 2>&1";
+    std::string cmd = "ffmpeg -y -i " + escaped_in + " -t 10 -vf \"fps=12,scale=320:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1\" " + escaped_out + " > /dev/null 2>&1";
     
     int result = std::system(cmd.c_str());
     if (result != 0) {
-        std::filesystem::remove_all(temp_dir);
-        responder(dpp::message(bronx::EMOJI_DENY + " Failed to convert media to GIF. Check if the file is a valid video/image."));
+        responder(dpp::message(bronx::EMOJI_DENY + " failed to convert media to gif. check if the file is a valid video/image."));
         return;
     }
 
     std::ifstream gif_file(out_path, std::ios::binary | std::ios::ate);
     if (!gif_file.is_open()) {
-        std::filesystem::remove_all(temp_dir);
-        responder(dpp::message(bronx::EMOJI_DENY + " Failed to read converted GIF."));
+        responder(dpp::message(bronx::EMOJI_DENY + " failed to read converted gif."));
         return;
     }
 
     std::streamsize gif_size = gif_file.tellg();
     if (gif_size > 25 * 1024 * 1024) {
-         std::filesystem::remove_all(temp_dir);
-         responder(dpp::message(bronx::EMOJI_DENY + " Converted GIF is too large for Discord (max 25MB)."));
+         responder(dpp::message(bronx::EMOJI_DENY + " converted gif is too large for discord (max 25mb)."));
          return;
     }
 
@@ -463,8 +473,6 @@ inline void process_gif_request(dpp::cluster& bot, const MediaSource& src, std::
     std::string gif_data(gif_size, '\0');
     gif_file.read(&gif_data[0], gif_size);
     gif_file.close();
-
-    std::filesystem::remove_all(temp_dir);
 
     dpp::message msg;
     msg.add_file("converted.gif", gif_data);
@@ -476,7 +484,7 @@ inline void handle_gif(dpp::cluster& bot, const dpp::slashcommand_t& event) {
     ::std::thread([&bot, event]() {
         auto attachment_id_param = event.get_parameter("attachment");
         if (!::std::holds_alternative<dpp::snowflake>(attachment_id_param)) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Attachment not provided."));
+            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " attachment not provided."));
             return;
         }
         auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id_param));
@@ -493,7 +501,7 @@ inline void handle_gif_text(dpp::cluster& bot, const dpp::message_create_t& even
     auto process_msg = [&bot, event](const dpp::message& target_msg) {
         MediaSource src = resolve_media_source(target_msg);
         if (src.empty()) {
-             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No media found. Reply to an attachment or a Tenor/Giphy embed.").set_reference(event.msg.id));
+             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " no media found. reply to an attachment or a tenor/giphy embed.").set_reference(event.msg.id));
              return;
         }
         ::std::thread([&bot, event, src]() {
@@ -513,7 +521,7 @@ inline void handle_gif_text(dpp::cluster& bot, const dpp::message_create_t& even
     if (msg.message_reference.message_id != 0) {
         bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
-                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " failed to fetch replied message.").set_reference(event.msg.id));
                 return;
             }
             process_msg(::std::get<dpp::message>(cb.value));
@@ -521,7 +529,7 @@ inline void handle_gif_text(dpp::cluster& bot, const dpp::message_create_t& even
         return;
     }
 
-    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No media found. Please attach a file or reply to one.").set_reference(event.msg.id));
+    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " no media found. please attach a file or reply to one.").set_reference(event.msg.id));
 }
 
 inline Command* get_gif_command() {
@@ -537,7 +545,7 @@ inline void handle_ocr(dpp::cluster& bot, const dpp::slashcommand_t& event) {
     ::std::thread([&bot, event]() {
         auto attachment_id_param = event.get_parameter("attachment");
         if (!::std::holds_alternative<dpp::snowflake>(attachment_id_param)) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Attachment not provided."));
+            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " attachment not provided."));
             return;
         }
         auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id_param));
@@ -562,7 +570,7 @@ inline void handle_ocr_text(dpp::cluster& bot, const dpp::message_create_t& even
     auto process_msg = [&bot, event](const dpp::message& target_msg) {
         MediaSource src = resolve_media_source(target_msg);
         if (src.empty()) {
-            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No image found.").set_reference(event.msg.id));
+            bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " no image found.").set_reference(event.msg.id));
             return;
         }
         ::std::thread([&bot, event, src]() {
@@ -587,7 +595,7 @@ inline void handle_ocr_text(dpp::cluster& bot, const dpp::message_create_t& even
     if (msg.message_reference.message_id != 0) {
         bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
-                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " failed to fetch replied message.").set_reference(event.msg.id));
                 return;
             }
             process_msg(::std::get<dpp::message>(cb.value));
@@ -595,7 +603,7 @@ inline void handle_ocr_text(dpp::cluster& bot, const dpp::message_create_t& even
         return;
     }
 
-    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No attachment found. Please attach an image or reply to one.").set_reference(event.msg.id));
+    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " no attachment found. please attach an image or reply to one.").set_reference(event.msg.id));
 }
 
 inline void handle_transcribe(dpp::cluster& bot, const dpp::slashcommand_t& event) {
@@ -603,7 +611,7 @@ inline void handle_transcribe(dpp::cluster& bot, const dpp::slashcommand_t& even
     ::std::thread([&bot, event]() {
         auto attachment_id_param = event.get_parameter("attachment");
         if (!::std::holds_alternative<dpp::snowflake>(attachment_id_param)) {
-            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " Attachment not provided."));
+            event.edit_original_response(dpp::message(bronx::EMOJI_DENY + " attachment not provided."));
             return;
         }
         auto attachment = event.command.get_resolved_attachment(::std::get<dpp::snowflake>(attachment_id_param));
@@ -624,7 +632,7 @@ inline void handle_transcribe_text(dpp::cluster& bot, const dpp::message_create_
     auto process_msg = [&bot, event, language](const dpp::message& target_msg) {
         MediaSource src = resolve_media_source(target_msg);
         if (src.empty()) {
-             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No audio found.").set_reference(event.msg.id));
+             bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " no audio found.").set_reference(event.msg.id));
              return;
         }
         ::std::thread([&bot, event, src, language]() {
@@ -644,7 +652,7 @@ inline void handle_transcribe_text(dpp::cluster& bot, const dpp::message_create_
     if (msg.message_reference.message_id != 0) {
         bot.message_get(msg.message_reference.message_id, msg.channel_id, [process_msg, &bot, event](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
-                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " Failed to fetch replied message.").set_reference(event.msg.id));
+                bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " failed to fetch replied message.").set_reference(event.msg.id));
                 return;
             }
             process_msg(::std::get<dpp::message>(cb.value));
@@ -652,7 +660,7 @@ inline void handle_transcribe_text(dpp::cluster& bot, const dpp::message_create_
         return;
     }
 
-    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " No audio found. Please attach a file or reply to one.").set_reference(event.msg.id));
+    bot.message_create(dpp::message(event.msg.channel_id, bronx::EMOJI_DENY + " no audio found. please attach a file or reply to one.").set_reference(event.msg.id));
 }
 
 inline Command* get_ocr_command() {
@@ -685,19 +693,28 @@ struct MediaMetadata {
 
 inline MediaMetadata fetch_metadata(const std::string& url, const std::string& cookie_path) {
     MediaMetadata meta;
-    std::string ytdlp_path = "/home/siqnole/Documents/code/bpp/bin/yt-dlp";
-    std::string base_path = "/home/siqnole/Documents/code/bpp/";
+    std::string ytdlp_path = "./bin/yt-dlp";
+    std::string base_path = "./";
+    
+    // Check if we are in development or production
+    if (!std::filesystem::exists(ytdlp_path)) {
+        // Fallback for local dev if CWD is not project root
+        ytdlp_path = "/home/siqnole/Documents/code/bpp/bin/yt-dlp";
+        base_path = "/home/siqnole/Documents/code/bpp/";
+    }
+
     std::string cookie_flag = "";
     if (std::filesystem::exists(base_path + "data/cookies.txt")) {
-        cookie_flag = "--cookies " + base_path + "data/cookies.txt";
+        cookie_flag = "--cookies " + bronx::utils::shell_escape(base_path + "data/cookies.txt");
     } else if (std::filesystem::exists(base_path + "data/ytcookies.txt")) {
-        cookie_flag = "--cookies " + base_path + "data/ytcookies.txt";
+        cookie_flag = "--cookies " + bronx::utils::shell_escape(base_path + "data/ytcookies.txt");
     }
     
     // We use a specific print format to get all metadata in one go
     // title|view_count|like_count|comment_count|thumbnail|uploader|description
-    std::string print_format = "%(title)s|%(view_count)s|%(like_count)s|%(comment_count)s|%(thumbnail)s|%(uploader)s|%(description).1000s";
-    std::string cmd = ytdlp_path + " " + cookie_flag + " --cache-dir /tmp/yt-dlp-cache --no-check-certificates --js-runtimes \"node:/usr/bin/node\" --print \"" + print_format + "\" \"" + url + "\"";
+    std::string format_esc = bronx::utils::shell_escape("%(title)s|%(view_count)s|%(like_count)s|%(comment_count)s|%(thumbnail)s|%(uploader)s|%(description).1000s");
+    std::string url_esc = bronx::utils::shell_escape(url);
+    std::string cmd = bronx::utils::shell_escape(ytdlp_path) + " " + cookie_flag + " --cache-dir /tmp/yt-dlp-cache --no-check-certificates --js-runtimes \"node:/usr/bin/node\" --print " + format_esc + " " + url_esc;
     
     FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) return meta;
@@ -719,12 +736,12 @@ inline MediaMetadata fetch_metadata(const std::string& url, const std::string& c
     }
     
     if (parts.size() >= 6) {
-        meta.title = parts[0];
+        meta.title = bronx::utils::to_lower(parts[0]);
         meta.views = (parts[1] == "NA" || parts[1].empty()) ? "0" : parts[1];
         meta.likes = (parts[2] == "NA" || parts[2].empty()) ? "0" : parts[2];
         meta.comments = (parts[3] == "NA" || parts[3].empty()) ? "0" : parts[3];
         meta.thumbnail = parts[4];
-        meta.uploader = parts[5];
+        meta.uploader = bronx::utils::to_lower(parts[5]);
         if (parts.size() >= 7) meta.description = parts[6];
         meta.success = true;
     }
@@ -743,16 +760,20 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
     
     std::string temp_dir = "/tmp/bronx_dl_" + id;
     std::filesystem::create_directories(temp_dir);
+    bronx::utility::TempDirGuard guard(temp_dir);
     
     // We target mp4/m4a for best compatibility across Discord clients
     std::string out_path = temp_dir + "/video.mp4";
     
     // Path to the latest yt-dlp binary downloaded to the project's bin folder
-    std::string ytdlp_path = "/home/siqnole/Documents/code/bpp/bin/yt-dlp";
+    std::string ytdlp_path = "./bin/yt-dlp";
+    std::string base_path = "./";
     
-    // Cookie support: Determine which cookie file to use based on the platform
-    // Using absolute paths to ensure reliability regardless of CWD
-    std::string base_path = "/home/siqnole/Documents/code/bpp/";
+    if (!std::filesystem::exists(ytdlp_path)) {
+        ytdlp_path = "/home/siqnole/Documents/code/bpp/bin/yt-dlp";
+        base_path = "/home/siqnole/Documents/code/bpp/";
+    }
+
     std::string cookie_path = "";
     bool is_youtube = (url.find("youtube.com") != std::string::npos || url.find("youtu.be") != std::string::npos);
     
@@ -766,7 +787,7 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
     
     std::string cookie_flag = "";
     if (!cookie_path.empty()) {
-        cookie_flag = "--cookies " + cookie_path;
+        cookie_flag = "--cookies " + bronx::utils::shell_escape(cookie_path);
     }
 
     // 1. Fetch metadata first to build a rich embed
@@ -828,7 +849,7 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
 
         // Redirect stderr to file for diagnostics
         // Use /tmp for cache to avoid read-only filesystem issues
-        std::string full_cmd = binary + " " + cookie_flag + " " + sort_pref + " --cache-dir /tmp/yt-dlp-cache " + args + " -f " + formats + " --no-playlist --merge-output-format mp4 -o " + out_path + " " + url + " 2> " + error_log_path;
+        std::string full_cmd = bronx::utils::shell_escape(binary) + " " + cookie_flag + " " + sort_pref + " --cache-dir /tmp/yt-dlp-cache " + args + " -f " + formats + " --no-playlist --merge-output-format mp4 -o " + bronx::utils::shell_escape(out_path) + " " + bronx::utils::shell_escape(url) + " 2> " + bronx::utils::shell_escape(error_log_path);
         int status = std::system(full_cmd.c_str());
         
         done = true;
@@ -900,7 +921,7 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
             if (log_callback) log_callback("[Cobalt] Success! Downloading direct stream...");
             
             // Use curl to download the direct stream to out_path
-            std::string curl_cmd = "curl -L -s -o " + out_path + " \"" + cobalt_url + "\"";
+            std::string curl_cmd = "curl -L -s -o " + bronx::utils::shell_escape(out_path) + " " + bronx::utils::shell_escape(cobalt_url);
             int curl_status = std::system(curl_cmd.c_str());
             
             if (curl_status == 0 && std::filesystem::exists(out_path) && std::filesystem::file_size(out_path) > 0) {
@@ -956,7 +977,6 @@ inline void process_download_request(dpp::cluster& bot, const ::std::string& url
     }
     
     if (result != 0) {
-        std::filesystem::remove_all(temp_dir);
         std::string error_msg = bronx::EMOJI_DENY + " Failed to download media.";
         
         if (url.find("instagram.com") != std::string::npos) {
@@ -987,7 +1007,6 @@ cobalt_finalize:
 
     std::ifstream vid_file(out_path, std::ios::binary | std::ios::ate);
     if (!vid_file.is_open()) {
-        std::filesystem::remove_all(temp_dir);
         responder(dpp::message(bronx::EMOJI_DENY + " Failed to locate the downloaded file."));
         return;
     }
@@ -998,7 +1017,6 @@ cobalt_finalize:
         if (log_callback) log_callback("[CDN] File > 23MB. Uploading to Catbox.moe...");
         std::string hosted_url = upload_to_catbox(out_path);
         vid_file.close();
-        std::filesystem::remove_all(temp_dir);
 
         if (hosted_url.empty() || hosted_url.find("http") == std::string::npos) {
             responder(dpp::message(bronx::EMOJI_DENY + " File is too large for Discord (max 25MB) and CDN upload failed."));
@@ -1115,17 +1133,21 @@ inline void process_search_request(dpp::cluster& bot, const std::string& query, 
     // Construct search command. We distinguish between Pool Mode (direct profile URL)
     // and Search Mode (keyword lookup via ytsearch).
     std::string search_cmd;
+    bronx::utility::TempDirGuard log_guard(search_log);
+    std::string url_esc = bronx::utils::shell_escape(sanitized_query);
+    
     if (sanitized_query.find("tiktok.com") != std::string::npos || sanitized_query.find("instagram.com") != std::string::npos) {
         // Pool Mode: Randomized extraction from a playlist/profile
-        if (log_callback) log_callback("[Pool] Exploring authentic platform feed...");
-        search_cmd = ytdlp_path + " " + cookie_flag + " --cache-dir /tmp/yt-dlp-cache --print webpage_url --playlist-items 1 --playlist-random --no-check-certificates --js-runtimes \"node:/usr/bin/node\" \"" + sanitized_query + "\" > " + search_log + " 2>&1";
+        if (log_callback) log_callback("[pool] exploring authentic platform feed...");
+        search_cmd = bronx::utils::shell_escape(ytdlp_path) + " " + cookie_flag + " --cache-dir /tmp/yt-dlp-cache --print webpage_url --playlist-items 1 --playlist-random --no-check-certificates --js-runtimes \"node:/usr/bin/node\" " + url_esc + " > " + bronx::utils::shell_escape(search_log) + " 2>&1";
     } else {
         // Search Mode: Keyword-based lookup
         std::string count = randomize ? "25" : "1";
-        search_cmd = ytdlp_path + " " + cookie_flag + " --cache-dir /tmp/yt-dlp-cache --print webpage_url --flat-playlist --no-playlist --no-check-certificates --js-runtimes \"node:/usr/bin/node\" \"ytsearch" + count + ":" + sanitized_query + "\" > " + search_log + " 2>&1";
+        std::string search_target = "ytsearch" + count + ":" + sanitized_query;
+        search_cmd = bronx::utils::shell_escape(ytdlp_path) + " " + cookie_flag + " --cache-dir /tmp/yt-dlp-cache --print webpage_url --flat-playlist --no-playlist --no-check-certificates --js-runtimes \"node:/usr/bin/node\" " + bronx::utils::shell_escape(search_target) + " > " + bronx::utils::shell_escape(search_log) + " 2>&1";
     }
     
-    if (log_callback) log_callback("[Search] Querying " + platform + " for results...");
+    if (log_callback) log_callback("[search] querying " + platform + " for results...");
     int status = std::system(search_cmd.c_str());
     
     if (status == 0) {
@@ -1148,15 +1170,15 @@ inline void process_search_request(dpp::cluster& bot, const std::string& query, 
                 final_url = ids[0];
             }
             
-            if (log_callback) log_callback("[Search] Found video: " + final_url + ". Starting download...");
+            if (log_callback) log_callback("[search] found video: " + final_url + ". starting download...");
             process_download_request(bot, final_url, responder, log_callback);
         } else {
-            if (log_callback) log_callback("[Search] No " + platform + " results found.");
-            responder(dpp::message(bronx::EMOJI_DENY + " No " + platform + " results found for: `" + query + "`"));
+            if (log_callback) log_callback("[search] no " + platform + " results found.");
+            responder(dpp::message(bronx::EMOJI_DENY + " no " + platform + " results found for: `" + query + "`"));
         }
     } else {
-        if (log_callback) log_callback("[Search] Failed to query platform.");
-        responder(dpp::message(bronx::EMOJI_DENY + " Failed to search " + platform + "."));
+        if (log_callback) log_callback("[search] failed to query platform.");
+        responder(dpp::message(bronx::EMOJI_DENY + " failed to search " + platform + "."));
     }
     
     if (std::filesystem::exists(search_log)) std::filesystem::remove(search_log);

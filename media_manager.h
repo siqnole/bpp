@@ -33,6 +33,9 @@ struct MediaManager {
 
         // Initialize Whisper
         whisper_context_params params = whisper_context_default_params();
+        params.use_gpu = false;
+        params.flash_attn = false;
+        std::cerr << "[MediaManager] Initializing whisper with use_gpu=" << params.use_gpu << " flash_attn=" << params.flash_attn << "\n";
         whisper_ctx = whisper_init_from_file_with_params(whisper_model_path.c_str(), params);
         if (!whisper_ctx) {
             std::cerr << "\033[1;31m[MediaManager]\033[0m Could not initialize whisper.cpp from file: " << whisper_model_path << "!\n";

@@ -223,5 +223,95 @@ inline Command* get_serverbanner_command() {
     return &serverbanner;
 }
 
+// Disconnect-Me command (text only) — quickly kicks the author out of their voice channel
+inline Command* get_dcme_command() {
+    static Command dcme("dcme", "disconnect yourself from your current voice channel", "utility", {}, false,
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+            if (!event.msg.guild_id) {
+                bronx::send_message(bot, event, bronx::error("this command only works in a server."));
+                return;
+            }
+
+            dpp::snowflake guild_id   = event.msg.guild_id;
+            dpp::snowflake author_id  = event.msg.author.id;
+            dpp::snowflake channel_id = event.msg.channel_id;
+            dpp::user author          = event.msg.author;
+
+            // Quick local cache check: if the guild is cached we can verify VC membership
+            // without an extra REST call. If not cached, just attempt and let Discord reject.
+            dpp::guild* g = dpp::find_guild(guild_id);
+            if (g) {
+                auto vs_it = g->voice_members.find(author_id);
+                if (vs_it == g->voice_members.end() || vs_it->second.channel_id == 0) {
+                    auto err = bronx::error("you're not in a voice channel.");
+                    bronx::add_invoker_footer(err, author);
+                    bot.message_create(dpp::message(channel_id, err));
+                    return;
+                }
+            }
+
+            // guild_member_move with channel_id = 0 disconnects the user from voice
+            bot.guild_member_move(0, guild_id, author_id,
+                [&bot, channel_id, author](const dpp::confirmation_callback_t& cb) {
+                    if (cb.is_error()) {
+                        auto err = bronx::error("failed to disconnect you — do i have the `Move Members` permission?");
+                        bronx::add_invoker_footer(err, author);
+                        bot.message_create(dpp::message(channel_id, err));
+                    } else {
+                        auto ok = bronx::success("disconnected you from voice. 👋");
+                        bronx::add_invoker_footer(ok, author);
+                        bot.message_create(dpp::message(channel_id, ok));
+                    }
+                });
+        });
+
+    return &dcme;
+}
+
+// Say (echo) command - allow users to echo messages as the bot
+inline Command* get_say_command() {
+    static Command say("say", "echo a message as the bot", "utility", {"echo"}, true,
+        // TEXT HANDLER
+        [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+            if (args.empty()) {
+                bronx::send_message(bot, event, bronx::error("please provide a message to echo."));
+                return;
+            }
+            
+            ::std::string text;
+            for (const auto& arg : args) text += arg + " ";
+            if (!text.empty()) text.pop_back();
+            
+            // Delete the original message if possible to make it look like the bot is speaking
+            bot.message_delete(event.msg.id, event.msg.channel_id);
+            
+            bot.message_create(dpp::message(event.msg.channel_id, text));
+        },
+        // SLASH HANDLER
+        [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            ::std::string message = ::std::get<::std::string>(event.get_parameter("message"));
+            dpp::snowflake channel_id = event.command.channel_id;
+            
+            auto channel_param = event.get_parameter("channel");
+            if (::std::holds_alternative<dpp::snowflake>(channel_param)) {
+                channel_id = ::std::get<dpp::snowflake>(channel_param);
+            }
+            
+            bot.message_create(dpp::message(channel_id, message), [&bot, event, channel_id](const dpp::confirmation_callback_t& cb) {
+                if (cb.is_error()) {
+                    event.reply(dpp::message().set_content(bronx::EMOJI_DENY + " failed to send message — do i have permissions in <#" + ::std::to_string(channel_id) + ">?").set_flags(dpp::m_ephemeral));
+                } else {
+                    event.reply(dpp::message().set_content(bronx::EMOJI_CHECK + " message sent!").set_flags(dpp::m_ephemeral));
+                }
+            });
+        },
+        {
+            dpp::command_option(dpp::co_string, "message", "the message to echo", true),
+            dpp::command_option(dpp::co_channel, "channel", "optional channel to send to", false)
+        }
+    );
+    return &say;
+}
+
 } // namespace utility
 } // namespace commands

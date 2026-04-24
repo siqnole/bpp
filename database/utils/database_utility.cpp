@@ -13,6 +13,7 @@ bool Database::execute(const std::string& query) {
     bool success = mysql_query(conn->get(), query.c_str()) == 0;
     if (!success) {
         last_error_ = mysql_error(conn->get());
+        log_error("execute");
     }
     // Drain any result set(s) before returning to pool.
     // Required because connections use CLIENT_MULTI_STATEMENTS: unconsumed

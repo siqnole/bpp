@@ -1,14 +1,30 @@
 #pragma once
 #include "../../command.h"
 #include "../../embed_style.h"
+#include "../../database/core/database.h"
 #include <dpp/dpp.h>
 
 namespace commands {
 namespace utility {
 
 // Helper function to build server info embed
-inline dpp::embed build_serverinfo_embed(const dpp::guild& guild, dpp::cluster& bot) {
-    ::std::string description = "**name:** " + guild.name + "\n";
+inline dpp::embed build_serverinfo_embed(const dpp::guild& guild, dpp::cluster& bot, bronx::db::Database* db = nullptr) {
+    auto profile = db ? db->get_guild_profile(guild.id) : std::nullopt;
+    
+    ::std::string description = "";
+    
+    // Display custom bio and website at the top
+    if (profile.has_value()) {
+        if (!profile->bio.empty()) {
+            description += "**bio:** " + profile->bio + "\n";
+        }
+        if (!profile->website.empty()) {
+            description += "**link:** [" + profile->website + "](" + profile->website + ")\n";
+        }
+        if (!description.empty()) description += "\n";
+    }
+
+    description += "**name:** " + guild.name + "\n";
     description += "**id:** " + ::std::to_string(guild.id) + "\n";
     description += "**owner:** <@" + ::std::to_string(guild.owner_id) + ">\n";
     description += "**created:** <t:" + ::std::to_string((int64_t)guild.id.get_creation_time()) + ":R>\n";
@@ -46,7 +62,7 @@ inline dpp::embed build_serverinfo_embed(const dpp::guild& guild, dpp::cluster& 
     description += "**verification:** " + verification + "\n\n";
     
     // Add banner, splash and discovery splash links
-    ::std::string banner_url = guild.get_banner_url(512, dpp::i_webp);
+    ::std::string banner_url = (profile.has_value() && !profile->banner_url.empty()) ? profile->banner_url : guild.get_banner_url(512, dpp::i_webp);
     ::std::string splash_url = guild.get_splash_url(512, dpp::i_webp);
     ::std::string discovery_url = guild.get_discovery_splash_url(512, dpp::i_webp);
     if (!banner_url.empty() || !splash_url.empty() || !discovery_url.empty()) {
@@ -68,17 +84,23 @@ inline dpp::embed build_serverinfo_embed(const dpp::guild& guild, dpp::cluster& 
 
     auto embed = bronx::create_embed(description);
     
-    ::std::string icon_url = guild.get_icon_url();
+    // Set thumbnail to custom avatar if present, otherwise guild icon
+    ::std::string icon_url = (profile.has_value() && !profile->avatar_url.empty()) ? profile->avatar_url : guild.get_icon_url();
     if (!icon_url.empty()) {
         embed.set_thumbnail(icon_url);
+    }
+    
+    // If we have a custom banner and it's not the Discord one, show it as image
+    if (profile.has_value() && !profile->banner_url.empty()) {
+        embed.set_image(profile->banner_url);
     }
     
     return embed;
 }
 
-inline Command* get_serverinfo_command() {
+inline Command* get_serverinfo_command(bronx::db::Database* db = nullptr) {
     static Command serverinfo("serverinfo", "display information about the server", "utility", {"si", "guildinfo"}, true,
-        [](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+        [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             // Use cached guild data for accurate member count (requires Guild Members Intent)
             dpp::guild* guild_ptr = dpp::find_guild(event.msg.guild_id);
             if (!guild_ptr) {
@@ -86,11 +108,11 @@ inline Command* get_serverinfo_command() {
                 return;
             }
             
-            auto embed = build_serverinfo_embed(*guild_ptr, bot);
+            auto embed = build_serverinfo_embed(*guild_ptr, bot, db);
             bronx::add_invoker_footer(embed, event.msg.author);
             bronx::send_message(bot, event, embed);
         },
-        [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+        [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
             // Use cached guild data for accurate member count (requires Guild Members Intent)
             dpp::guild* guild_ptr = dpp::find_guild(event.command.guild_id);
             if (!guild_ptr) {
@@ -99,7 +121,7 @@ inline Command* get_serverinfo_command() {
                 return;
             }
             
-            auto embed = build_serverinfo_embed(*guild_ptr, bot);
+            auto embed = build_serverinfo_embed(*guild_ptr, bot, db);
             bronx::add_invoker_footer(embed, event.command.get_issuing_user());
             event.reply(dpp::message().add_embed(embed));
         });

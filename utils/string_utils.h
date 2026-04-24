@@ -34,5 +34,34 @@ inline std::string replace_placeholders(std::string text, const std::unordered_m
     return text;
 }
 
+/**
+ * @brief Escapes a string for use in a bash shell command.
+ * 
+ * Simple but effective single-quote escaping. 
+ * ' becomes '\'' and the entire string is wrapped in single quotes.
+ */
+inline std::string shell_escape(const std::string& text) {
+    if (text.empty()) return "''";
+    
+    std::string res = "'";
+    for (char c : text) {
+        if (c == '\'') {
+            res += "'\\''";
+        } else {
+            res += c;
+        }
+    }
+    res += "'";
+    return res;
+}
+
+/**
+ * @brief Returns a lowercase version of a string.
+ */
+inline std::string to_lower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), ::tolower);
+    return text;
+}
+
 } // namespace utils
 } // namespace bronx

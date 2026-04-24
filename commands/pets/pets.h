@@ -56,29 +56,29 @@ struct PetSpecies {
 
 static const std::vector<PetSpecies> PET_SPECIES = {
     // Common pets
-    {"cat",       "Cat",        "\xF0\x9F\x90\xB1", "common",    "luck_bonus",         3.0, 0.5, 50000,       "a curious cat that brings you luck",                 20, 5},
-    {"dog",       "Dog",        "\xF0\x9F\x90\xB6", "common",    "xp_bonus",           3.0, 0.5, 50000,       "a loyal dog that helps you learn faster",            20, 5},
-    {"hamster",   "Hamster",    "\xF0\x9F\x90\xB9", "common",    "work_bonus",         5.0, 1.0, 50000,       "a hardworking hamster that boosts work earnings",    20, 5},
+    {"cat",       "cat",        "\xF0\x9F\x90\xB1", "common",    "luck_bonus",         3.0, 0.5, 50000,       "a curious cat that brings you luck",                 20, 5},
+    {"dog",       "dog",        "\xF0\x9F\x90\xB6", "common",    "xp_bonus",           3.0, 0.5, 50000,       "a loyal dog that helps you learn faster",            20, 5},
+    {"hamster",   "hamster",    "\xF0\x9F\x90\xB9", "common",    "work_bonus",         5.0, 1.0, 50000,       "a hardworking hamster that boosts work earnings",    20, 5},
     
     // Uncommon pets
-    {"parrot",    "Parrot",     "\xF0\x9F\xA6\x9C", "uncommon",  "fish_value_bonus",   5.0, 0.8, 200000,      "a colorful parrot that appraises fish for more",     25, 8},
-    {"rabbit",    "Rabbit",     "\xF0\x9F\x90\x87", "uncommon",  "daily_bonus",        5.0, 1.0, 200000,      "a lucky rabbit that boosts daily rewards",           25, 8},
-    {"fox",       "Fox",        "\xF0\x9F\xA6\x8A", "uncommon",  "rob_protection",     5.0, 0.8, 200000,      "a cunning fox that protects your coins from thieves", 25, 8},
+    {"parrot",    "parrot",     "\xF0\x9F\xA6\x9C", "uncommon",  "fish_value_bonus",   5.0, 0.8, 200000,      "a colorful parrot that appraises fish for more",     25, 8},
+    {"rabbit",    "rabbit",     "\xF0\x9F\x90\x87", "uncommon",  "daily_bonus",        5.0, 1.0, 200000,      "a lucky rabbit that boosts daily rewards",           25, 8},
+    {"fox",       "fox",        "\xF0\x9F\xA6\x8A", "uncommon",  "rob_protection",     5.0, 0.8, 200000,      "a cunning fox that protects your coins from thieves", 25, 8},
     
     // Rare pets
-    {"owl",       "Owl",        "\xF0\x9F\xA6\x89", "rare",      "ore_value_bonus",    8.0, 1.0, 1000000,     "a wise owl that finds valuable ore deposits",        30, 10},
-    {"dolphin",   "Dolphin",    "\xF0\x9F\xAC",     "rare",      "rare_fish_bonus",    5.0, 0.8, 1000000,     "a playful dolphin that attracts rare fish",          30, 10},
-    {"wolf",      "Wolf",       "\xF0\x9F\x90\xBA", "rare",      "gambling_luck_bonus",3.0, 0.5, 1000000,     "a fierce wolf that brings gambling luck",            30, 10},
+    {"owl",       "owl",        "\xF0\x9F\xA6\x89", "rare",      "ore_value_bonus",    8.0, 1.0, 1000000,     "a wise owl that finds valuable ore deposits",        30, 10},
+    {"dolphin",   "dolphin",    "\xF0\x9F\xAC",     "rare",      "rare_fish_bonus",    5.0, 0.8, 1000000,     "a playful dolphin that attracts rare fish",          30, 10},
+    {"wolf",      "wolf",       "\xF0\x9F\x90\xBA", "rare",      "gambling_luck_bonus",3.0, 0.5, 1000000,     "a fierce wolf that brings gambling luck",            30, 10},
     
     // Epic pets
-    {"phoenix",   "Phoenix",    "\xF0\x9F\x94\xA5", "epic",      "all_value_bonus",    5.0, 0.8, 10000000,    "a mythical phoenix that boosts all item values",     40, 15},
-    {"unicorn",   "Unicorn",    "\xF0\x9F\xA6\x84", "epic",      "legendary_fish_bonus",3.0, 0.5, 10000000,   "a magical unicorn that attracts legendary fish",     40, 15},
+    {"phoenix",   "phoenix",    "\xF0\x9F\x94\xA5", "epic",      "all_value_bonus",    5.0, 0.8, 10000000,    "a mythical phoenix that boosts all item values",     40, 15},
+    {"unicorn",   "unicorn",    "\xF0\x9F\xA6\x84", "epic",      "legendary_fish_bonus",3.0, 0.5, 10000000,   "a magical unicorn that attracts legendary fish",     40, 15},
     
     // Legendary pets
-    {"dragon",    "Dragon",     "\xF0\x9F\x90\x89", "legendary", "all_earnings_bonus", 8.0, 1.0, 100000000,   "an ancient dragon that boosts all earnings",         50, 20},
+    {"dragon",    "dragon",     "\xF0\x9F\x90\x89", "legendary", "all_earnings_bonus", 8.0, 1.0, 100000000,   "an ancient dragon that boosts all earnings",         50, 20},
     
     // Prestige-only pets
-    {"void_cat",  "Void Cat",   "\xF0\x9F\x90\x88\xE2\x80\x8D\xE2\xAC\x9B", "prestige", "prestige_bonus", 10.0, 1.5, 500000000, "a mysterious void cat from another dimension", 50, 25},
+    {"void_cat",  "void cat",   "\xF0\x9F\x90\x88\xE2\x80\x8D\xE2\xAC\x9B", "prestige", "prestige_bonus", 10.0, 1.5, 500000000, "a mysterious void cat from another dimension", 50, 25},
 };
 
 static const PetSpecies* find_species(const std::string& id) {
@@ -98,29 +98,15 @@ static std::string rarity_color(const std::string& rarity) {
     return "\xE2\xAC\x9C";
 }
 
-static std::string uppercase_first(const std::string& s) {
-    if (s.empty()) return s;
-    std::string result = s;
-    result[0] = toupper(result[0]);
-    return result;
-}
-
-// Format bonus type to human-readable:
-// "fish_value_bonus" -> "Fish Value Bonus", "xp_bonus" -> "XP Bonus"
+// format bonus type to human-readable:
+// "fish_value_bonus" -> "fish value bonus", "xp_bonus" -> "xp bonus"
 static std::string format_bonus_name(const std::string& bonus) {
     std::string result;
     std::string word;
     for (size_t i = 0; i <= bonus.size(); i++) {
         if (i == bonus.size() || bonus[i] == '_') {
             if (!word.empty()) {
-                std::string uw = word;
-                std::transform(uw.begin(), uw.end(), uw.begin(), ::toupper);
-                if (uw == "XP") {
-                    result += "XP";
-                } else {
-                    word[0] = static_cast<char>(toupper(static_cast<unsigned char>(word[0])));
-                    result += word;
-                }
+                result += word;
                 result += ' ';
                 word.clear();
             }
@@ -438,23 +424,23 @@ static dpp::message build_shop_page(int page, int prestige, uint64_t user_id) {
     int start = page * PET_SHOP_PER_PAGE;
     int end = std::min(start + PET_SHOP_PER_PAGE, total);
 
-    std::string desc = "\xF0\x9F\xBE **Pet Shop**\n\n";
+    std::string desc = "\xF0\x9F\xBE **pet shop**\n\n";
     std::string current_rarity;
     for (int i = start; i < end; i++) {
         const auto* s = visible[i];
         if (s->rarity != current_rarity) {
             current_rarity = s->rarity;
-            desc += "**" + uppercase_first(current_rarity) + "**\n";
+            desc += "**" + current_rarity + "**\n";
         }
         desc += rarity_color(s->rarity) + " " + s->emoji + " **" + s->name + "**";
         desc += " \xE2\x80\x94 $" + format_number(s->adopt_cost) + "\n";
         desc += "   " + s->description + "\n";
-        desc += "   Bonus: **+" + std::to_string(static_cast<int>(s->base_bonus)) + "% " + format_bonus_name(s->bonus_type) + "**\n\n";
+        desc += "   bonus: **+" + std::to_string(static_cast<int>(s->base_bonus)) + "% " + format_bonus_name(s->bonus_type) + "**\n\n";
     }
-    desc += "*Adopt: `b.pet adopt <type>` | `/pet adopt`*";
+    desc += "*adopt: `b.pet adopt <type>` | `/pet adopt`*";
 
     auto embed = bronx::create_embed(desc);
-    embed.set_title("\xF0\x9F\xBE Pet Shop \xE2\x80\x94 Page " + std::to_string(page + 1) + "/" + std::to_string(total_pages));
+    embed.set_title("\xF0\x9F\xBE pet shop \xE2\x80\x94 page " + std::to_string(page + 1) + "/" + std::to_string(total_pages));
 
     dpp::message msg;
     msg.add_embed(embed);
@@ -641,13 +627,13 @@ inline Command* create_pet_command(Database* db) {
                 adopt_pet(db, user_id, species->id, nickname);
                 
                 std::string desc = species->emoji + " **You adopted a " + species->name + "!**\n\n";
-                desc += "Name: **" + nickname + "**\n";
-                desc += "Bonus: **+" + std::to_string(static_cast<int>(species->base_bonus)) + "% " + format_bonus_name(species->bonus_type) + "**\n";
-                desc += "Cost: **$" + format_number(species->adopt_cost) + "**\n\n";
+                desc += "name: **" + nickname + "**\n";
+                desc += "bonus: **+" + std::to_string(static_cast<int>(species->base_bonus)) + "% " + format_bonus_name(species->bonus_type) + "**\n";
+                desc += "cost: **$" + format_number(species->adopt_cost) + "**\n\n";
                 desc += "*Equip with `b.pet equip " + nickname + "` to activate the bonus!*";
                 
                 auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
-                embed.set_title("\xF0\x9F\xBE New Pet!");
+                embed.set_title("\xF0\x9F\xBE new pet!");
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
                 return;
@@ -691,7 +677,7 @@ inline Command* create_pet_command(Database* db) {
                 const auto* species = find_species(pet->species_id);
                 std::string emoji = species ? species->emoji : "\xF0\x9F\xBE";
                 
-                auto embed = bronx::success(emoji + " **" + pet->nickname + "** has been fed! hunger restored to 100%\nCost: $" + format_number(feed_cost));
+                auto embed = bronx::success(emoji + " **" + pet->nickname + "** has been fed! hunger restored to 100%\ncost: $" + format_number(feed_cost));
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
                 return;
@@ -722,7 +708,7 @@ inline Command* create_pet_command(Database* db) {
                 oss.precision(1);
                 oss << bonus;
                 
-                auto embed = bronx::success(emoji + " **" + pet->nickname + "** is now your active pet!\nBonus: **+" + oss.str() + "% " + (species ? format_bonus_name(species->bonus_type) : "") + "**");
+                auto embed = bronx::success(emoji + " **" + pet->nickname + "** is now your active pet!\nbonus: **+" + oss.str() + "% " + (species ? format_bonus_name(species->bonus_type) : "") + "**");
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
                 return;
@@ -787,7 +773,7 @@ inline Command* create_pet_command(Database* db) {
                 desc += "Visit the pet shop to adopt your first companion:\n`b.pet shop`";
                 
                 auto embed = bronx::create_embed(desc);
-                embed.set_title("\xF0\x9F\xBE My Pets");
+                embed.set_title("\xF0\x9F\xBE my pets (");
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
                 return;
@@ -811,20 +797,20 @@ inline Command* create_pet_command(Database* db) {
                 if (pet.equipped) desc += " *(equipped)*";
                 desc += "\n";
                 
-                desc += "   " + rarity_color(species->rarity) + " " + uppercase_first(species->rarity) + " " + species->name + "\n";
-                desc += "   Level **" + std::to_string(pet.level) + "** ";
-                desc += "(XP: " + std::to_string(pet.xp) + "/" + std::to_string(xp_for_level(pet.level)) + ")\n";
-                desc += "   Hunger: " + hunger_bar(hunger) + "\n";
-                desc += "   Bonus: **+" + oss.str() + "% " + format_bonus_name(species->bonus_type) + "**";
+                desc += "   " + rarity_color(species->rarity) + " " + species->rarity + " " + species->name + "\n";
+                desc += "   level **" + std::to_string(pet.level) + "** ";
+                desc += "(xp: " + std::to_string(pet.xp) + "/" + std::to_string(xp_for_level(pet.level)) + ")\n";
+                desc += "   hunger: " + hunger_bar(hunger) + "\n";
+                desc += "   bonus: **+" + oss.str() + "% " + format_bonus_name(species->bonus_type) + "**";
                 if (hunger < 50) desc += " \xE2\x9A\xA0\xEF\xB8\x8F";
                 if (hunger == 0) desc += " *(inactive — feed me!)*";
                 desc += "\n\n";
             }
             
-            desc += "*Commands: `b.pet feed/equip/rename/release/shop`*";
+            desc += "*commands: `b.pet feed/equip/rename/release/shop`*";
             
             auto embed = bronx::create_embed(desc);
-            embed.set_title("\xF0\x9F\xBE My Pets (" + std::to_string(user_pets_list.size()) + "/5)");
+            embed.set_title("\xF0\x9F\xBE my pets (" + std::to_string(user_pets_list.size()) + "/5)");
             bronx::add_invoker_footer(embed, event.msg.author);
             bronx::send_message(bot, event, embed);
         },
@@ -906,12 +892,12 @@ inline Command* create_pet_command(Database* db) {
                 adopt_pet(db, user_id, species->id, species->name);
                 
                 std::string desc = species->emoji + " **You adopted a " + species->name + "!**\n\n";
-                desc += "Bonus: **+" + std::to_string(static_cast<int>(species->base_bonus)) + "% " + format_bonus_name(species->bonus_type) + "**\n";
-                desc += "Cost: **$" + format_number(species->adopt_cost) + "**\n\n";
+                desc += "bonus: **+" + std::to_string(static_cast<int>(species->base_bonus)) + "% " + format_bonus_name(species->bonus_type) + "**\n";
+                desc += "cost: **$" + format_number(species->adopt_cost) + "**\n\n";
                 desc += "*Equip with `/pet equip`!*";
                 
                 auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
-                embed.set_title("\xF0\x9F\xBE New Pet!");
+                embed.set_title("\xF0\x9F\xBE new pet!");
                 event.reply(dpp::message().add_embed(embed));
                 return;
             }
@@ -995,7 +981,7 @@ inline Command* create_pet_command(Database* db) {
             auto user_pets_list = get_user_pets(db, user_id);
             if (user_pets_list.empty()) {
                 auto embed = bronx::create_embed("\xF0\x9F\xBE **No pets yet!**\n\nUse `/pet shop` to browse available pets.");
-                embed.set_title("\xF0\x9F\xBE My Pets");
+                embed.set_title("\xF0\x9F\xBE my pets");
                 event.reply(dpp::message().add_embed(embed));
                 return;
             }
@@ -1015,19 +1001,19 @@ inline Command* create_pet_command(Database* db) {
                 desc += (pet.equipped ? "\xF0\x9F\x94\xB9 " : "\xE2\xAC\x9C ") + species->emoji + " **" + pet.nickname + "**";
                 if (pet.equipped) desc += " *(equipped)*";
                 desc += "\n";
-                desc += "   " + rarity_color(species->rarity) + " " + uppercase_first(species->rarity) + " | Lv." + std::to_string(pet.level);
+                desc += "   " + rarity_color(species->rarity) + " " + species->rarity + " | lv." + std::to_string(pet.level);
                 if (pet.level < species->max_level) {
-                    desc += " (XP: " + std::to_string(pet.xp) + "/" + std::to_string(xp_for_level(pet.level)) + ")";
+                    desc += " (xp: " + std::to_string(pet.xp) + "/" + std::to_string(xp_for_level(pet.level)) + ")";
                 } else {
-                    desc += " *(MAX)*";
+                    desc += " *(max)*";
                 }
                 desc += "\n";
-                desc += "   Hunger: " + hunger_bar(hunger) + "\n";
-                desc += "   Bonus: **+" + oss.str() + "% " + format_bonus_name(species->bonus_type) + "**\n\n";
+                desc += "   hunger: " + hunger_bar(hunger) + "\n";
+                desc += "   bonus: **+" + oss.str() + "% " + format_bonus_name(species->bonus_type) + "**\n\n";
             }
             
             auto embed = bronx::create_embed(desc);
-            embed.set_title("\xF0\x9F\xBE My Pets (" + std::to_string(user_pets_list.size()) + "/5)");
+            embed.set_title("\xF0\x9F\xBE my pets (" + std::to_string(user_pets_list.size()) + "/5)");
             bronx::add_invoker_footer(embed, event.command.get_issuing_user());
             event.reply(dpp::message().add_embed(embed));
         },

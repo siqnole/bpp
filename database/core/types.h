@@ -99,6 +99,15 @@ struct ShopItem {
     std::string metadata;  // JSON properties
 };
 
+// Custom Server Profile
+struct GuildProfile {
+    uint64_t guild_id;
+    std::string bio;
+    std::string website;
+    std::string banner_url;
+    std::string avatar_url;
+};
+
 // Server-specific market catalog item
 struct MarketItem {
     uint64_t guild_id;
