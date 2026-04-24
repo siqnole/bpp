@@ -337,7 +337,13 @@ double Database::get_user_active_points(uint64_t guild_id, uint64_t user_id, int
         n = 3;
     }
     mysql_stmt_bind_param(stmt, bp);
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_user_active_points execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
 
     double total = 0;
     MYSQL_BIND rb[1]; memset(rb, 0, sizeof(rb));
@@ -562,7 +568,13 @@ InfractionCounts Database::count_infractions(uint64_t guild_id, uint64_t user_id
     bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = (char*)&guild_id; bp[0].is_unsigned = 1;
     bp[1].buffer_type = MYSQL_TYPE_LONGLONG; bp[1].buffer = (char*)&user_id; bp[1].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bp);
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("count_infractions execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return c;
+    }
 
     int64_t r_total = 0, r_active = 0, r_pardoned = 0;
     MYSQL_BIND rb[3]; memset(rb, 0, sizeof(rb));
@@ -604,7 +616,13 @@ int Database::count_guild_infractions(uint64_t guild_id, const std::string& type
         bp[idx].buffer_type = MYSQL_TYPE_LONGLONG; bp[idx].buffer = (char*)&user_id; bp[idx].is_unsigned = 1; idx++;
     }
     mysql_stmt_bind_param(stmt, bp);
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("count_guild_infractions execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return 0;
+    }
 
     int64_t total = 0;
     MYSQL_BIND rb[1]; memset(rb, 0, sizeof(rb));
@@ -667,7 +685,10 @@ int Database::bulk_pardon_user(uint64_t guild_id, uint64_t user_id, uint64_t par
     bp[2].buffer_type = MYSQL_TYPE_LONGLONG; bp[2].buffer = (char*)&guild_id; bp[2].is_unsigned = 1;
     bp[3].buffer_type = MYSQL_TYPE_LONGLONG; bp[3].buffer = (char*)&user_id; bp[3].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bp);
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("bulk_pardon_user execute");
+    }
     int affected = (int)mysql_stmt_affected_rows(stmt);
     mysql_stmt_close(stmt);
     pool_->release(conn);
@@ -698,7 +719,10 @@ int Database::pardon_user_type(uint64_t guild_id, uint64_t user_id, const std::s
     bp[4].buffer_type = MYSQL_TYPE_STRING; bp[4].buffer = (char*)type.c_str();
     bp[4].buffer_length = type.size(); bp[4].length = &t_len;
     mysql_stmt_bind_param(stmt, bp);
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("pardon_user_type execute");
+    }
     int affected = (int)mysql_stmt_affected_rows(stmt);
     mysql_stmt_close(stmt);
     pool_->release(conn);
@@ -717,7 +741,10 @@ int Database::expire_infractions() {
         last_error_ = mysql_stmt_error(stmt); log_error("expire_infractions prepare");
         mysql_stmt_close(stmt); pool_->release(conn); return 0;
     }
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("expire_infractions execute");
+    }
     int affected = (int)mysql_stmt_affected_rows(stmt);
     mysql_stmt_close(stmt);
     pool_->release(conn);

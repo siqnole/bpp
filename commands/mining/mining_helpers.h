@@ -115,10 +115,10 @@ static std::vector<OreType> ore_types = {
     {"black opal",      "🖤", 10,   1800,   6000,  OreEffect::Volatile,    0.2,  3, 0,  "rarest opal variety"},
     {"palladium ore",   "🪙", 14,   1300,   4500,  OreEffect::NLogN,       0.16, 3, 0,  "catalyst metal"},
     {"iridium ore",     "🌌", 8,    2000,   7000,  OreEffect::Exponential, 0.18, 3, 0,  "densest natural element"},
-    {"mithril ore",     "🔮", 6,    2500,   8000,  OreEffect::Surge,       0.15, 3, 0,  "lighter than silk, harder than steel"},
+    {"mithril ore",     "🔮", 6,    5000,   12000, OreEffect::Surge,       0.15, 3, 0,  "lighter than silk, harder than steel"},
     {"osmium ore",      "⚫", 9,    1900,   6500,  OreEffect::Logarithmic, 0.14, 3, 0,  "densest element known"},
     {"star sapphire",   "⭐", 7,    2200,   7500,  OreEffect::Cascading,   0.19, 3, 0,  "displays a six-rayed star"},
-    {"dragon stone",    "🐉", 5,    3000,   10000, OreEffect::Jackpot,     0.22, 3, 0,  "formed in volcanic hearts"},
+    {"dragon stone",    "🐉", 5,    6000,   18000, OreEffect::Jackpot,     0.22, 3, 0,  "formed in volcanic hearts"},
 
     // ─── Legendary tier (pickaxe level 4-5) ───
     {"philosopher's stone","🔴", 3, 5000,   15000, OreEffect::Exponential, 0.25, 4, 0,  "transmutes base metals"},
@@ -128,7 +128,7 @@ static std::vector<OreType> ore_types = {
     {"adamantite",      "🛡️", 2,   12000,  35000, OreEffect::NLogN,       0.24, 4, 0,  "indestructible alloy"},
     {"world core shard","🌍", 1,   20000,  60000, OreEffect::Surge,       0.26, 5, 0,  "fragment of earth's heart"},
     {"stardust ore",    "✨", 1,   25000,  80000, OreEffect::Exponential, 0.3,  5, 0,  "cosmic particles condensed"},
-    {"eternity gem",    "♾️", 1,   30000,  100000,OreEffect::Wacky,       0.35, 5, 0,  "time frozen in crystal"},
+    {"eternity gem",    "♾️", 1,   45000,  125000,OreEffect::Wacky,       0.35, 5, 0,  "time frozen in crystal"},
 
     // ─── Prestige tier ores (P1-P10) ───
     // P1 (pickaxe level 7)
@@ -170,7 +170,7 @@ static std::vector<OreType> ore_types = {
     // P10 (level 16)
     {"infinity ore",    "♾️", 2,   10000000,50000000,  OreEffect::Ascended,   0.5,  16, 0, "beyond all boundaries"},
     {"omega crystal",   "🔱",  1,   12000000,60000000,  OreEffect::Persistent, 0.48, 16, 0, "the final mineral"},
-    {"limit breaker gem","🚀",3,   11000000,55000000,  OreEffect::Collector,  0.46, 16, 0, "shatters constraints"},
+    {"antigravity crystal","🍏", 1,   15000000,75000000,  OreEffect::Wacky,      0.5,  16, 0, "defies the weight of progression"},
 };
 
 // Generate unique ore item ID (prefixed M to distinguish from fish U)

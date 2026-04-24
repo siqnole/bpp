@@ -17,6 +17,7 @@ std::optional<GuildProfile> get_guild_profile_internal(Database& db, uint64_t gu
     if (!stmt) return std::nullopt;
 
     if (mysql_stmt_prepare(stmt, query, strlen(query))) {
+        db.log_error("get_guild_profile prepare");
         mysql_stmt_close(stmt);
         return std::nullopt;
     }
@@ -28,11 +29,13 @@ std::optional<GuildProfile> get_guild_profile_internal(Database& db, uint64_t gu
     bind_in[0].is_unsigned = true;
 
     if (mysql_stmt_bind_param(stmt, bind_in)) {
+        db.log_error("get_guild_profile bind");
         mysql_stmt_close(stmt);
         return std::nullopt;
     }
 
     if (mysql_stmt_execute(stmt)) {
+        db.log_error("get_guild_profile execute");
         mysql_stmt_close(stmt);
         return std::nullopt;
     }
@@ -69,6 +72,7 @@ std::optional<GuildProfile> get_guild_profile_internal(Database& db, uint64_t gu
     bind_out[3].is_null = &avatar_null;
 
     if (mysql_stmt_bind_result(stmt, bind_out)) {
+        db.log_error("get_guild_profile bind result");
         mysql_stmt_close(stmt);
         return std::nullopt;
     }
@@ -105,6 +109,7 @@ bool update_guild_profile_field_internal(Database& db, uint64_t guild_id, const 
     if (!stmt) return false;
 
     if (mysql_stmt_prepare(stmt, query, strlen(query))) {
+        db.log_error("update_guild_profile prepare");
         mysql_stmt_close(stmt);
         return false;
     }
@@ -123,11 +128,15 @@ bool update_guild_profile_field_internal(Database& db, uint64_t guild_id, const 
     bind[1].length = &val_len;
 
     if (mysql_stmt_bind_param(stmt, bind)) {
+        db.log_error("update_guild_profile bind");
         mysql_stmt_close(stmt);
         return false;
     }
 
     bool success = (mysql_stmt_execute(stmt) == 0);
+    if (!success) {
+        db.log_error("update_guild_profile execute");
+    }
     mysql_stmt_close(stmt);
     return success;
 }
@@ -147,6 +156,7 @@ bool clear_guild_profile_field_internal(Database& db, uint64_t guild_id, const s
     if (!stmt) return false;
 
     if (mysql_stmt_prepare(stmt, query, strlen(query))) {
+        db.log_error("clear_guild_profile prepare");
         mysql_stmt_close(stmt);
         return false;
     }
@@ -158,11 +168,15 @@ bool clear_guild_profile_field_internal(Database& db, uint64_t guild_id, const s
     bind[0].is_unsigned = true;
 
     if (mysql_stmt_bind_param(stmt, bind)) {
+        db.log_error("clear_guild_profile bind");
         mysql_stmt_close(stmt);
         return false;
     }
 
     bool success = (mysql_stmt_execute(stmt) == 0);
+    if (!success) {
+        db.log_error("clear_guild_profile execute");
+    }
     mysql_stmt_close(stmt);
     return success;
 }

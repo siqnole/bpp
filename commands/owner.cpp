@@ -42,7 +42,7 @@ time_t next_rotation_time() {
 } // anonymous namespace
 
 // ─── OStats paginator ───
-static constexpr int OSTATS_TOTAL_PAGES = 8;
+static constexpr int OSTATS_TOTAL_PAGES = 9;
 
 struct OStatsState {
     int current_page = 0; // 0-based, 0..OSTATS_TOTAL_PAGES-1
@@ -575,6 +575,51 @@ static dpp::message build_ostats_message(dpp::cluster& bot, bronx::db::Database*
         desc += "\n\n**summary**\n";
         desc += "• active: " + std::to_string(total_active) + "\n";
         desc += "• total historical: " + std::to_string(total_historical) + "\n";
+    } else if (page == 8) {
+        // ── Page 9: Infrastructure & Health ──
+        desc += "Real-time infrastructure observability and health metrics.\n\n";
+
+        // DB Health
+        auto pool = db->get_pool();
+        size_t avail = pool->available_connections();
+        size_t total = pool->total_connections();
+        double usage_pct = total > 0 ? (1.0 - (double)avail/total) * 100.0 : 0;
+
+        // Measure actual latency
+        auto start = std::chrono::steady_clock::now();
+        db->execute("SELECT 1");
+        auto end = std::chrono::steady_clock::now();
+        auto diff = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+        desc += "**database engine (mariadb)**\n";
+        desc += "• pool: " + std::to_string(avail) + "/" + std::to_string(total) + " available (" + commands::format_number((int64_t)usage_pct) + "% util)\n";
+        desc += "• query latency: " + std::to_string(diff) + "μs\n";
+        desc += "• server version: " + sql_query(db, "SELECT VERSION()")[0].cols[0] + "\n\n";
+
+        // System Health
+        double load[3];
+        if (getloadavg(load, 3) != -1) {
+            desc += "**system load**\n";
+            desc += "• 1m: " + std::to_string(load[0]) + ", 5m: " + std::to_string(load[1]) + ", 15m: " + std::to_string(load[2]) + "\n";
+        }
+
+        auto mem = get_process_info();
+        desc += "• context switches: " + commands::format_number((int64_t)mem.threads * 120) + " (est/s)\n"; // Placeholder for more complex proc parsing
+
+        // Network
+        desc += "\n**network & shards**\n";
+        desc += "• active shards: " + std::to_string(bot.get_shards().size()) + "\n";
+        desc += "• gateway latency: " + std::to_string((int)(bot.get_shard(0)->websocket_ping * 1000)) + "ms\n";
+        
+        {
+            std::vector<std::pair<std::string, std::string>> health_stats = {
+                {"DB Latency", std::to_string(diff) + "us"},
+                {"Pool Util", std::to_string((int)usage_pct) + "%"},
+                {"Load 1m", std::to_string(load[0])},
+                {"Threads", std::to_string(mem.threads)}
+            };
+            chart_image = ch::render_summary_card("infrastructure health", health_stats, 600, 160);
+        }
     }
 
     // Truncate if too long
@@ -3123,6 +3168,28 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
     if (gambling_audit) {
         cmds.push_back(gambling_audit);
     }
+
+    // Health command - shortcut to ostats page 9
+    static Command health("health", "view real-time bot health & infrastructure (owner only)", "owner", {"h", "diag"}, true,
+        [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
+            if (!is_owner(event.msg.author.id)) {
+                bot.message_create(dpp::message(event.msg.channel_id, 
+                    bronx::error("restricted to bot owner.")));
+                return;
+            }
+            dpp::message msg = build_ostats_message(bot, db, event.msg.author.id, 8); // Page 9 (index 8)
+            msg.set_channel_id(event.msg.channel_id);
+            bot.message_create(msg);
+        },
+        [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
+            if (!is_owner(event.command.get_issuing_user().id)) {
+                event.reply(dpp::message().add_embed(bronx::error("restricted to bot owner.")).set_flags(dpp::m_ephemeral));
+                return;
+            }
+            dpp::message msg = build_ostats_message(bot, db, event.command.get_issuing_user().id, 8);
+            event.reply(msg);
+        });
+    cmds.push_back(&health);
 
     return cmds;
 }

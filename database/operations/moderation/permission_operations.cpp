@@ -134,7 +134,13 @@ bool Database::is_guild_command_enabled(uint64_t guild_id, const std::string& co
                     pool_->release(conn);
                     return matched_exclusive;
                 }
+            } else {
+                last_error_ = mysql_stmt_error(stmt);
+                log_error("is_guild_command_enabled exclusive execute");
             }
+        } else {
+            last_error_ = mysql_stmt_error(stmt);
+            log_error("is_guild_command_enabled exclusive prepare");
         }
         mysql_stmt_close(stmt);
     }
@@ -415,7 +421,13 @@ bool Database::is_guild_module_enabled(uint64_t guild_id, const std::string& mod
                     pool_->release(conn);
                     return matched_exclusive;
                 }
+            } else {
+                last_error_ = mysql_stmt_error(stmt);
+                log_error("is_guild_module_enabled exclusive execute");
             }
+        } else {
+            last_error_ = mysql_stmt_error(stmt);
+            log_error("is_guild_module_enabled exclusive prepare");
         }
         mysql_stmt_close(stmt);
     }
@@ -1022,6 +1034,9 @@ namespace permission_operations {
         }
         
         bool success = mysql_stmt_execute(stmt) == 0;
+        if (!success) {
+            db->log_error("add_guild_staff execute");
+        }
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         
@@ -1060,6 +1075,9 @@ namespace permission_operations {
         }
         
         bool success = mysql_stmt_execute(stmt) == 0;
+        if (!success) {
+            db->log_error("remove_guild_staff execute");
+        }
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         
@@ -1269,6 +1287,9 @@ namespace permission_operations {
         }
         
         bool success = mysql_stmt_execute(stmt) == 0;
+        if (!success) {
+            db->log_error("set_global_admin execute");
+        }
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         
@@ -1308,6 +1329,9 @@ namespace permission_operations {
         }
         
         bool success = mysql_stmt_execute(stmt) == 0;
+        if (!success) {
+            db->log_error("set_global_mod execute");
+        }
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         
@@ -1347,6 +1371,9 @@ namespace permission_operations {
         }
         
         bool success = mysql_stmt_execute(stmt) == 0;
+        if (!success) {
+            db->log_error("set_dev execute");
+        }
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         
@@ -1576,6 +1603,9 @@ namespace permission_operations {
         }
         
         bool success = mysql_stmt_execute(stmt) == 0;
+        if (!success) {
+            db->log_error("upsert_guild_mod_config execute");
+        }
         mysql_stmt_close(stmt);
         db->get_pool()->release(conn);
         

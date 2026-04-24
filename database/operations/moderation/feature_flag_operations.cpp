@@ -66,12 +66,14 @@ std::vector<std::tuple<std::string, std::string, std::string>> Database::get_all
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("get_all_feature_flags prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return result;
     }
 
     if (mysql_stmt_execute(stmt) != 0) {
+        log_error("get_all_feature_flags execute");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return result;
@@ -122,6 +124,7 @@ bool Database::delete_feature_flag(const std::string& feature) {
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("delete_feature_flag prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -141,7 +144,11 @@ bool Database::delete_feature_flag(const std::string& feature) {
         MYSQL_STMT* wl_stmt = mysql_stmt_init(conn->get());
         if (mysql_stmt_prepare(wl_stmt, wl_query, strlen(wl_query)) == 0) {
             mysql_stmt_bind_param(wl_stmt, bind);
-            mysql_stmt_execute(wl_stmt);
+            if (mysql_stmt_execute(wl_stmt) != 0) {
+                log_error("delete_feature_flag wl execute");
+            }
+        } else {
+            log_error("delete_feature_flag wl prepare");
         }
         mysql_stmt_close(wl_stmt);
     }
@@ -161,6 +168,7 @@ bool Database::add_feature_flag_whitelist(const std::string& feature, uint64_t g
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("add_feature_flag_whitelist prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -178,6 +186,9 @@ bool Database::add_feature_flag_whitelist(const std::string& feature, uint64_t g
     bind[1].is_unsigned = 1;
 
     bool success = mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    if (!success) {
+        log_error("add_feature_flag_whitelist execute");
+    }
 
     mysql_stmt_close(stmt);
     pool_->release(conn);
@@ -190,6 +201,7 @@ bool Database::remove_feature_flag_whitelist(const std::string& feature, uint64_
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("remove_feature_flag_whitelist prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -207,6 +219,9 @@ bool Database::remove_feature_flag_whitelist(const std::string& feature, uint64_
     bind[1].is_unsigned = 1;
 
     bool success = mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    if (!success) {
+        log_error("remove_feature_flag_whitelist execute");
+    }
 
     mysql_stmt_close(stmt);
     pool_->release(conn);
@@ -220,12 +235,14 @@ std::vector<std::pair<std::string, uint64_t>> Database::get_all_feature_flag_whi
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("get_all_feature_flag_whitelists prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return result;
     }
 
     if (mysql_stmt_execute(stmt) != 0) {
+        log_error("get_all_feature_flag_whitelists execute");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return result;

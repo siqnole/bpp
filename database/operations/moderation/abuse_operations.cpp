@@ -87,7 +87,13 @@ bool Database::is_global_blacklisted(uint64_t user_id) {
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("is_global_blacklisted execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
     mysql_stmt_store_result(stmt);
     bool exists = mysql_stmt_num_rows(stmt) > 0;
     mysql_stmt_close(stmt);
@@ -219,7 +225,13 @@ bool Database::is_global_whitelisted(uint64_t user_id) {
     bind[0].buffer = (char*)&user_id;
     bind[0].is_unsigned = 1;
     mysql_stmt_bind_param(stmt, bind);
-    mysql_stmt_execute(stmt);
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("is_global_whitelisted execute");
+        mysql_stmt_close(stmt);
+        pool_->release(conn);
+        return false;
+    }
     mysql_stmt_store_result(stmt);
     bool exists = mysql_stmt_num_rows(stmt) > 0;
     mysql_stmt_close(stmt);

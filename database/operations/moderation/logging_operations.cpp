@@ -106,6 +106,8 @@ std::optional<LogConfig> Database::get_log_config(uint64_t guild_id, const std::
     param_bind[1].buffer_length = log_type.size();
 
     if (mysql_stmt_bind_param(stmt, param_bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt);
+        log_error("get_log_config execute");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return std::nullopt;
@@ -170,6 +172,7 @@ std::vector<LogConfig> Database::get_all_log_configs(uint64_t guild_id) {
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("get_all_log_configs prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return configs;
@@ -182,6 +185,7 @@ std::vector<LogConfig> Database::get_all_log_configs(uint64_t guild_id) {
     param_bind[0].is_unsigned = 1;
 
     if (mysql_stmt_bind_param(stmt, param_bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        log_error("get_all_log_configs execute");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return configs;
@@ -250,6 +254,7 @@ bool Database::delete_log_config(uint64_t guild_id, const std::string& log_type)
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("delete_log_config prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -268,6 +273,7 @@ bool Database::delete_log_config(uint64_t guild_id, const std::string& log_type)
 
     bool success = true;
     if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        log_error("delete_log_config execute");
         success = false;
     }
 
@@ -282,6 +288,7 @@ bool Database::clear_all_log_configs(uint64_t guild_id) {
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("clear_all_log_configs prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -296,6 +303,7 @@ bool Database::clear_all_log_configs(uint64_t guild_id) {
 
     bool success = true;
     if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        log_error("clear_all_log_configs execute");
         success = false;
     }
 
@@ -310,6 +318,7 @@ bool Database::is_guild_beta_tester(uint64_t guild_id) {
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("is_guild_beta_tester prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -322,6 +331,7 @@ bool Database::is_guild_beta_tester(uint64_t guild_id) {
     param_bind[0].is_unsigned = 1;
 
     if (mysql_stmt_bind_param(stmt, param_bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        log_error("is_guild_beta_tester execute");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -354,6 +364,7 @@ bool Database::set_guild_beta_tester(uint64_t guild_id, bool is_beta) {
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("set_guild_beta_tester prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -372,6 +383,7 @@ bool Database::set_guild_beta_tester(uint64_t guild_id, bool is_beta) {
 
     bool success = true;
     if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        log_error("set_guild_beta_tester execute");
         success = false;
     }
 
@@ -386,6 +398,7 @@ bool Database::is_public_stats_enabled(uint64_t guild_id) {
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("is_public_stats_enabled prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -398,6 +411,7 @@ bool Database::is_public_stats_enabled(uint64_t guild_id) {
     param_bind[0].is_unsigned = 1;
 
     if (mysql_stmt_bind_param(stmt, param_bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        log_error("is_public_stats_enabled execute");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -430,6 +444,7 @@ bool Database::set_public_stats_enabled(uint64_t guild_id, bool enabled) {
     
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, query, strlen(query)) != 0) {
+        log_error("set_public_stats_enabled prepare");
         mysql_stmt_close(stmt);
         pool_->release(conn);
         return false;
@@ -448,6 +463,7 @@ bool Database::set_public_stats_enabled(uint64_t guild_id, bool enabled) {
 
     bool success = true;
     if (mysql_stmt_bind_param(stmt, bind) != 0 || mysql_stmt_execute(stmt) != 0) {
+        log_error("set_public_stats_enabled execute");
         success = false;
     }
 

@@ -51,13 +51,16 @@ static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
     {"datamosh", {"datamosh", "pixel bleed glitch", "mpdecimate,lagfun=decay=0.98:range=50,scale=iw/2:-1,scale=iw*2:-1:flags=neighbor", true, /*complex=*/true}},
     {"melt", {"melt", "liquification effect", "minterpolate=fps=20:scd=none:me_mode=bidir:mi_mode=mci", true, /*complex=*/true}},
     {"smear", {"smear", "ghostly motion trails", "lagfun=decay=0.95:range=24", true}},
-    {"fisheye", {"fisheye", "fisheye lens distortion", "lenscorrection=k1=0.2:k2=0.2"}},
-    {"swirl", {"swirl", "twisted swirl effect", "swirl=1.5", false, true}},
+    {"fisheye", {"fisheye", "fisheye lens distortion", "lenscorrection=k1=0.5:k2=0.5"}},
+    {"swirl", {"swirl", "twisted swirl effect", "-swirl 180", false, false}},
     {"wave", {"wave", "aquatic ripples", "format=rgb24,geq=r='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':g='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))':b='p(X+10*sin(6.28*(Y/100+T)),Y+10*cos(6.28*(X/100+T)))'", true, true}},
     {"paint", {"paint", "oil paint simulation", "oilify=10"}},
     {"neon", {"neon", "neon glow effect", "edgedetect=mode=colormix:high=0.1:low=0.1,curves=all='0/0 0.5/0.8 1/1',hue=h=280:s=2"}},
     {"grayscale", {"grayscale", "black and white", "hue=s=0"}},
-    {"rainbow", {"rainbow", "continuous hue cycling", "hue=h=t*360", true}}
+    {"rainbow", {"rainbow", "continuous hue cycling", "hue=h=t*360", true}},
+    {"implode", {"implode", "pinched inward effect", "-implode 0.5", false, false}},
+    {"magik", {"liquid rescale", "distorts image using content-aware scaling", "-liquid-rescale 50x50%", false, false}},
+    {"jpeg", {"jpeg crush", "applies heavy compression artifacts", "format=yuv420p,scale=iw/4:-1,scale=iw*4:-1:flags=neighbor", false, false}}
 };
 
 // ---------------------------------------------------------------------------
