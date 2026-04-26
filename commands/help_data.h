@@ -229,6 +229,75 @@ inline void populate_extended_help(CommandHandler* handler) {
 
     // ── gambling ───────────────────────────────────────────────────────
 
+    set("blackjack", [](Command* c) {
+        c->extended_description =
+            "classic blackjack vs the dealer. hit, stand, double down, or split pairs "
+            "to beat the dealer without going over 21. skill tree bonuses apply — "
+            "payout bonus increases winnings, loss reduction softens busts, and luck "
+            "gives a chance to avoid busting on a bad draw.";
+        c->detailed_usage = ".blackjack <amount>";
+        c->subcommands = {
+            {"hit",         "draw another card"},
+            {"stand",       "end your turn and let the dealer play"},
+            {"double down", "double your bet and receive exactly one more card"},
+            {"split",       "split two equal-value cards into separate hands (costs an extra bet)"},
+        };
+        c->examples = {".blackjack 1000", ".bj 5000", ".21 500", ".card all"};
+        c->notes = "minimum bet is $100. blackjack pays 2.5x. push returns your bet.";
+    });
+
+    set("dice", [](Command* c) {
+        c->extended_description =
+            "roll two dice and win based on the result. "
+            "snake eyes or boxcars (2 or 12) pay 4x, a lucky 7 or 11 pays 1.5x, "
+            "any other doubles pay 2x. any other roll loses. "
+            "skill tree bonuses apply — luck gives a chance to re-roll a losing result.";
+        c->detailed_usage = ".dice <amount>";
+        c->examples = {".dice 500", ".roll 2000"};
+        c->notes = "minimum bet is $50. alias: `roll`.";
+    });
+
+    set("roulette", [](Command* c) {
+        c->extended_description =
+            "start a multiplayer roulette table. anyone can place bets using the buttons "
+            "before the game author spins the wheel. "
+            "bet on a color (red/black/green), parity (even/odd), or a single number. "
+            "color and parity bets pay 2:1; single number and green pay 35:1.";
+        c->detailed_usage = ".roulette";
+        c->subcommands = {
+            {"red / black", "bet on the landing color (2:1)"},
+            {"green",       "bet on 0 or 00 (35:1)"},
+            {"even / odd",  "bet on number parity — 0/00 do not count (2:1)"},
+            {"number",      "bet on a specific number 0-36 or 00 (35:1)"},
+            {"spin",        "author-only: close betting and spin the wheel"},
+            {"cancel",      "author-only: cancel the game and refund all bets"},
+        };
+        c->examples = {".roulette", ".rlt"};
+        c->notes = "only the player who started the game can spin or cancel.";
+    });
+
+    set("crash", [](Command* c) {
+        c->extended_description =
+            "a multiplier starts at 1.00x and climbs. cash out any time to lock in your "
+            "winnings — but if it crashes before you do, you lose everything. "
+            "the crash point is pre-determined at game start. "
+            "about 4% of rounds crash instantly at 1.00x (house edge).";
+        c->detailed_usage = ".crash <amount>";
+        c->examples = {".crash 1000", ".cr 5000"};
+        c->notes = "use the cash out button before the multiplier crashes. alias: `cr`.";
+    });
+
+    set("jackpot", [](Command* c) {
+        c->extended_description =
+            "view the current progressive jackpot pool and recent winners. "
+            "1% of all gambling losses across the server feed the pool. "
+            "every gambling win has a 0.01% (1-in-10,000) chance to trigger the jackpot "
+            "and claim the entire pool.";
+        c->detailed_usage = ".jackpot";
+        c->examples = {".jackpot", ".jp"};
+        c->notes = "the jackpot is triggered automatically on any gambling win — no extra bet required. alias: `jp`.";
+    });
+
     set("bomb", [](Command* c) {
         c->extended_description =
             "play minesweeper — pick safe cells to multiply your bet. "
@@ -447,6 +516,132 @@ inline void populate_extended_help(CommandHandler* handler) {
             {"remove / clear / unequip", "unequip your current title"},
         };
         c->examples = {".title", ".title equip 14", ".title remove"};
+    });
+
+    // ── utility ───────────────────────────────────────────────────────
+
+    set("ping", [](Command* c) {
+        c->extended_description =
+            "check bot latency. shows websocket ping (discord gateway) and round-trip time "
+            "(how long it took to send and receive a message). "
+            "bot owners also see uptime and shard info.";
+        c->detailed_usage = ".ping";
+        c->examples = {".ping", ".p", ".ms", ".latency"};
+        c->notes = "aliases: p, ms, pong, latency.";
+    });
+
+    set("userinfo", [](Command* c) {
+        c->extended_description =
+            "display detailed information about a user: username, display name, nickname, "
+            "discord account creation date, server join date, and avatar links. "
+            "defaults to yourself if no user is specified.";
+        c->detailed_usage = ".userinfo [@user | user_id]";
+        c->examples = {".userinfo", ".ui @User", ".whois 123456789"};
+        c->notes = "aliases: ui, whois, uinfo, u.";
+    });
+
+    set("serverinfo", [](Command* c) {
+        c->extended_description =
+            "display information about the current server: name, id, owner, creation date, "
+            "member count, role count, channel count, boost level, verification level, "
+            "vanity url, and shard info. shows custom bio/banner if the server has a profile set up.";
+        c->detailed_usage = ".serverinfo";
+        c->examples = {".serverinfo", ".si", ".guildinfo"};
+        c->notes = "aliases: si, guildinfo, sinfo.";
+    });
+
+    set("poll", [](Command* c) {
+        c->extended_description =
+            "create a poll with reaction-based voting. supports up to 9 options. "
+            "users react with the numbered emoji to cast their vote.";
+        c->detailed_usage = ".poll \"question\" \"option1\" \"option2\" [more options...]";
+        c->examples = {
+            ".poll \"best color?\" \"red\" \"blue\" \"green\"",
+            ".poll \"movie night?\" \"action\" \"comedy\""
+        };
+        c->notes = "wrap the question and each option in quotes. maximum 9 options.";
+    });
+
+    set("cleanup", [](Command* c) {
+        c->extended_description =
+            "bulk delete messages in the current channel. optionally filter by user, "
+            "bots only, or messages containing specific text. "
+            "requires manage messages permission.";
+        c->detailed_usage = ".cleanup <count> [@user] [--bots] [--contains <text>]";
+        c->flags = {
+            {"--bots",            "only delete messages sent by bots"},
+            {"--contains <text>", "only delete messages containing this text"},
+        };
+        c->examples = {".cleanup 20", ".purge 50 @User", ".clear 10 --bots"};
+        c->notes = "aliases: purge, clear. discord limits bulk delete to messages under 14 days old.";
+    });
+
+    set("suggestion", [](Command* c) {
+        c->extended_description =
+            "submit a feature suggestion. the suggestion is posted to the configured "
+            "suggestions channel for the community to vote on with reactions.";
+        c->detailed_usage = ".suggestion <text...>";
+        c->examples = {".suggestion add a fishing tournament mode"};
+        c->notes = "the suggestions channel must be configured by an admin.";
+    });
+
+    set("bugreport", [](Command* c) {
+        c->extended_description =
+            "report a bot bug. the report is posted to the configured bug-report channel. "
+            "include as much detail as possible: what you did, what happened, what you expected.";
+        c->detailed_usage = ".bugreport <text...>";
+        c->examples = {".bugreport .daily returned an error but still used the cooldown"};
+        c->notes = "aliases: bug. the bug-report channel must be configured by an admin.";
+    });
+
+    set("giveaway", [](Command* c) {
+        c->extended_description =
+            "create and manage giveaways. users react to enter. "
+            "when the timer ends a winner is drawn automatically. "
+            "you can also end a giveaway early or reroll a new winner.";
+        c->detailed_usage = ".giveaway <start|end|reroll> [args...]";
+        c->subcommands = {
+            {"start <duration> <prize...>", "start a giveaway (e.g. 1h, 30m, 7d)"},
+            {"end <message_id>",            "end a giveaway early and draw a winner"},
+            {"reroll <message_id>",         "reroll a new winner for a finished giveaway"},
+        };
+        c->examples = {
+            ".giveaway start 1h $50,000 cash",
+            ".giveaway end 123456789",
+            ".giveaway reroll 123456789"
+        };
+    });
+
+    set("snipe", [](Command* c) {
+        c->extended_description =
+            "view the last deleted message in the current channel. "
+            "only shows messages deleted after the bot last restarted.";
+        c->detailed_usage = ".snipe";
+        c->examples = {".snipe"};
+    });
+
+    set("avatar", [](Command* c) {
+        c->extended_description =
+            "view a user's avatar in full size. shows both the global avatar and the "
+            "server-specific avatar if one exists. defaults to yourself if no user is specified.";
+        c->detailed_usage = ".avatar [@user | user_id]";
+        c->examples = {".avatar", ".avatar @User", ".av 123456789"};
+        c->notes = "aliases: av, pfp, icon.";
+    });
+
+    set("invite", [](Command* c) {
+        c->extended_description =
+            "get the bot's invite link to add it to another server.";
+        c->detailed_usage = ".invite";
+        c->examples = {".invite"};
+    });
+
+    set("settings", [](Command* c) {
+        c->extended_description =
+            "view or update your personal bot settings: dm notifications, privacy options, "
+            "and other per-user preferences. run with no arguments to see all current values.";
+        c->detailed_usage = ".settings [key] [value]";
+        c->examples = {".settings", ".settings dm_notifications off", ".settings privacy public"};
     });
 
     // ── utility / permissions ──────────────────────────────────────────
