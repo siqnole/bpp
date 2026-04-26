@@ -693,6 +693,44 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "use `^` to target the message directly above the command.";
     });
 
+    // ── moderation ─────────────────────────────────────────────────────
+
+    set("mod", [](Command* c) {
+        c->extended_description =
+            "parent command for all moderation actions. run with no arguments to see all available subcommands. "
+            "punishments are logged to the configured mod log channel and stored as cases. "
+            "requires moderator role or administrator permission.";
+        c->detailed_usage = ".mod <action> [args...]";
+        c->subcommands = {
+            {"ban <@user> [duration] [reason]",     "ban a user from the server"},
+            {"unban <@user>",                       "remove a ban"},
+            {"kick <@user> [reason]",               "kick a user from the server"},
+            {"timeout <@user> <duration> [reason]", "apply a discord timeout"},
+            {"untimeout <@user>",                   "remove a timeout"},
+            {"mute <@user> [duration] [reason]",    "mute a user via the mute role"},
+            {"unmute <@user>",                      "remove a mute"},
+            {"warn <@user> [reason]",               "issue a formal warning"},
+            {"jail <@user> [duration]",             "restrict a user to the jail channel"},
+            {"unjail <@user>",                      "release a user from jail"},
+            {"case <id>",                           "view details of a moderation case"},
+            {"history <@user>",                     "view all infractions for a user"},
+            {"pardon <case_id>",                    "remove an infraction from a user's history"},
+            {"reason <case_id> <text>",             "update the reason for an existing case"},
+            {"modstats [@user]",                    "view moderation action statistics"},
+            {"muterole <@role>",                    "set the role used for mutes"},
+            {"jailsetup",                           "configure the jail channel"},
+            {"modlog",                              "set the moderation log channel"},
+        };
+        c->examples = {
+            ".mod ban @User 7d spamming",
+            ".mod warn @User repeated rule violations",
+            ".mod history @User",
+            ".mod case 42",
+            ".mod pardon 42"
+        };
+        c->notes = "duration format: 1m, 1h, 1d, 7d, etc. omit duration for permanent bans/mutes.";
+    });
+
     // ── owner ──────────────────────────────────────────────────────────
 
     set("givemoney", [](Command* c) {
@@ -732,6 +770,90 @@ inline void populate_extended_help(CommandHandler* handler) {
             {"-r <reason...>", "reason for whitelisting"},
         };
         c->examples = {".whitelist add -u @Trusted -r beta tester", ".whitelist list"};
+    });
+
+    // ── pets ───────────────────────────────────────────────────────────
+
+    set("pet", [](Command* c) {
+        c->extended_description =
+            "manage your pets. pets provide passive percentage bonuses to fishing, gambling, mining, "
+            "and other activities while equipped. hunger decays by 1 per hour (max 100); "
+            "a starving pet gives no bonus. you can own up to 5 pets at once. "
+            "rarity tiers: common, uncommon, rare, epic, legendary, prestige.";
+        c->detailed_usage = ".pets <action> [args...]";
+        c->subcommands = {
+            {"shop [page]",              "browse adoptable pets and their bonuses"},
+            {"adopt <species>",          "adopt a pet (costs money, one per species)"},
+            {"list",                     "view all your pets, hunger, and equipped status"},
+            {"equip <name>",             "equip a pet to activate its bonus"},
+            {"feed <name>",              "feed your pet to restore hunger to 100%"},
+            {"rename <name> <new_name>", "rename a pet (max 20 characters)"},
+            {"release <name>",           "release a pet permanently (requires `confirm`)"},
+        };
+        c->examples = {
+            ".pets shop",
+            ".pets adopt cat",
+            ".pets feed luna",
+            ".pets equip luna",
+            ".pets rename luna mooncat",
+            ".pets release luna confirm"
+        };
+        c->notes =
+            "aliases: pets. prestige rarity pets require prestige 5+. "
+            "feeding costs 1% of your net worth ($1k minimum, $5m maximum).";
+    });
+
+    // ── skill_tree ─────────────────────────────────────────────────────
+
+    set("skills", [](Command* c) {
+        c->extended_description =
+            "view and manage your skill tree. skills provide permanent percentage bonuses to "
+            "fishing, mining, and gambling via three branches: angler, prospector, and gambler. "
+            "skill points are earned by prestiging — each prestige grants additional points. "
+            "requires prestige 1 or higher to unlock.";
+        c->detailed_usage = ".skills [branch | invest <skill_name> | respec]";
+        c->subcommands = {
+            {"(no args)",           "overview of all three branches and your invested points"},
+            {"angler",              "view the angler branch (fishing bonuses)"},
+            {"prospector",          "view the prospector branch (mining bonuses)"},
+            {"gambler",             "view the gambler branch (gambling bonuses)"},
+            {"invest <skill_name>", "spend 1 skill point to upgrade a skill"},
+            {"respec [confirm]",    "reset all invested points (costs 10% of net worth)"},
+        };
+        c->examples = {
+            ".skills",
+            ".skills angler",
+            ".skills invest fishing xp bonus",
+            ".skills respec confirm"
+        };
+        c->notes =
+            "aliases: skill, skilltree, tree. "
+            "skills within a branch require points in lower tiers before unlocking higher tiers.";
+    });
+
+    // ── mastery ────────────────────────────────────────────────────────
+
+    set("mastery", [](Command* c) {
+        c->extended_description =
+            "view your fish and ore mastery progress. mastery is earned by repeatedly catching "
+            "the same fish species or mining the same ore type. "
+            "each mastery tier grants a permanent sell-value bonus for that species or ore. "
+            "tiers: novice, apprentice, journeyman, expert, master, grandmaster.";
+        c->detailed_usage = ".mastery [fish [species] | ore [type]]";
+        c->subcommands = {
+            {"(no args)",       "overview of fish and ore mastery totals"},
+            {"fish [species]",  "view fish mastery; filter by species name for detailed progress"},
+            {"ore [type]",      "view ore mastery; filter by ore type for detailed progress"},
+        };
+        c->examples = {
+            ".mastery",
+            ".mastery fish",
+            ".mastery ore",
+            ".mastery ore iron"
+        };
+        c->notes =
+            "higher mastery tiers increase the sell value of that specific species or ore. "
+            "mastery is cumulative and never resets on prestige or rebirth.";
     });
 
     // ── leaderboard ────────────────────────────────────────────────────
