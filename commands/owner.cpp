@@ -3177,7 +3177,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
                     bronx::error("restricted to bot owner.")));
                 return;
             }
-            dpp::message msg = build_ostats_message(bot, db, event.msg.author.id, 8); // Page 9 (index 8)
+            dpp::message msg = build_ostats_message(bot, db, event.msg.author.id);
             msg.set_channel_id(event.msg.channel_id);
             bot.message_create(msg);
         },
@@ -3186,7 +3186,7 @@ std::vector<Command*> get_owner_commands(CommandHandler* handler, bronx::db::Dat
                 event.reply(dpp::message().add_embed(bronx::error("restricted to bot owner.")).set_flags(dpp::m_ephemeral));
                 return;
             }
-            dpp::message msg = build_ostats_message(bot, db, event.command.get_issuing_user().id, 8);
+            dpp::message msg = build_ostats_message(bot, db, event.command.get_issuing_user().id);
             event.reply(msg);
         });
     cmds.push_back(&health);
