@@ -256,10 +256,11 @@ inline ::std::vector<Command*> get_rob_commands(Database* db) {
                     db->set_cooldown(robber_id, "rob", 7200); // 2 hour cooldown
                     log_balance_change(db, robber_id, "robbed " + victim_username + " for $" + format_number(stolen_amount));
                     log_balance_change(db, victim_id, "was robbed by <@" + ::std::to_string(robber_id) + "> for $" + format_number(stolen_amount));
-                    
+                    db->increment_stat(robber_id, "rob_earnings_total", stolen_amount);
+
                     ::std::string description = "💰 **robbery successful!**\n";
                     description += "you stole $" + format_number(stolen_amount) + " from " + victim_username + "!";
-                    
+
                     auto embed = bronx::success(description);
                     bronx::add_invoker_footer(embed, event.msg.author);
                     bronx::send_message(bot, event, embed);
@@ -414,10 +415,11 @@ inline ::std::vector<Command*> get_rob_commands(Database* db) {
                     db->set_cooldown(robber_id, "rob", 7200); // 2 hour cooldown
                     log_balance_change(db, robber_id, "robbed " + victim_username + " for $" + format_number(stolen_amount));
                     log_balance_change(db, victim_id, "was robbed by <@" + ::std::to_string(robber_id) + "> for $" + format_number(stolen_amount));
-                    
+                    db->increment_stat(robber_id, "rob_earnings_total", stolen_amount);
+
                     ::std::string description = "💰 **robbery successful!**\n";
                     description += "you stole $" + format_number(stolen_amount) + " from " + victim_username + "!";
-                    
+
                     auto embed = bronx::success(description);
                     bronx::add_invoker_footer(embed, event.command.get_issuing_user());
                     event.reply(dpp::message().add_embed(embed));

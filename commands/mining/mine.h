@@ -355,7 +355,8 @@ static void finalize_mining(Database* db, MiningSession& s, bool from_timeout) {
         std::string metadata = "{\"name\":\"" + ore_info.ore.name + "\",\"value\":" + std::to_string(ore_info.value) + ",\"locked\":false,\"type\":\"ore\"}";
         db->add_item(s.user_id, ore_info.item_id, "collectible", 1, metadata);
         db->increment_stat(s.user_id, "ores_mined", 1);
-        // Track per-species ore mastery
+        db->increment_stat(s.user_id, "ore_profit", ore_info.value);
+        db->increment_stat(s.user_id, "ore_mined_" + ore_info.ore.name, 1);
         db->increment_stat(s.user_id, "ore_mastery_" + ore_info.ore.name, 1);
     }
 
@@ -376,6 +377,7 @@ static void finalize_mining(Database* db, MiningSession& s, bool from_timeout) {
             std::string bonus_meta = "{\"name\":\"Cashout Bonus\",\"value\":" + std::to_string(s.bonus_value) + ",\"locked\":false,\"type\":\"ore\"}";
             db->add_item(s.user_id, s.bonus_ore_id, "collectible", 1, bonus_meta);
             db->increment_stat(s.user_id, "ores_mined", 1);
+            db->increment_stat(s.user_id, "ore_profit", s.bonus_value);
             s.total_value += s.bonus_value;
             total_ores_for_boss++;
         }
