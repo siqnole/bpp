@@ -76,10 +76,10 @@ namespace bronx {
     const uint32_t COLOR_INFO    = 0xA7C7E7;
 
     // Custom emojis (stored as string_view to avoid construction on each call)
-    inline constexpr std::string_view EMOJI_CHECK   = "<:check:1476703556428890132>";
-    inline constexpr std::string_view EMOJI_DENY    = "<:deny:1476703341454168288>";
-    inline constexpr std::string_view EMOJI_WARNING = "<:warning:1476717080723063038>";
-    inline constexpr std::string_view EMOJI_STAR    = "<:star:1476703830656684093>";
+    inline const std::string EMOJI_CHECK   = "<:check:1476703556428890132>";
+    inline const std::string EMOJI_DENY    = "<:deny:1476703341454168288>";
+    inline const std::string EMOJI_WARNING = "<:warning:1476717080723063038>";
+    inline const std::string EMOJI_STAR    = "<:star:1476703830656684093>";
 
     // Support server constants
     inline constexpr std::string_view SUPPORT_SERVER_URL  = "https://discord.gg/bronx";
@@ -97,7 +97,7 @@ namespace bronx {
         dpp::embed embed;
         embed.set_description(description);
         embed.set_color(color);
-        embed.set_timestamp(std::chrono::system_clock::now());
+        embed.set_timestamp(std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
         return embed;
     }
 
@@ -142,9 +142,7 @@ namespace bronx {
             "need help? join our support server!"
         };
 
-        static const std::array<std::string_view, 3> ECONOMY_CMDS {
-            "daily", "wallet", "bank", "slots", "fish", "sell", "trade"
-        };
+        static const std::array<std::string_view, 7> ECONOMY_CMDS {"daily", "wallet", "bank", "slots", "fish", "sell", "trade"};
 
         std::string footer_text;
         if (choice == 1) {
@@ -152,7 +150,7 @@ namespace bronx {
         } else if (choice == 2) {
             footer_text = "invite me with b.invite";
         } else {
-            footer_text = "try " + ECONOMY_CMDS.at(rng() % ECONOMY_CMDS.size());
+            footer_text = std::string("try ") + std::string(ECONOMY_CMDS.at(rng() % ECONOMY_CMDS.size()));
         }
         embed.set_footer(dpp::embed_footer().set_text(footer_text));
     }
@@ -225,10 +223,11 @@ namespace bronx {
     }
 
     // DM the user for a permission problem
-    inline void dm_permission_error(dpp::cluster& bot, uint64_t user_id, uint64_t channel_id,
+    inline void dm_permission_error(const dpp::cluster& bot, uint64_t user_id, uint64_t channel_id,
                                     const std::string& guild_name = "") {
         auto dm_msg = build_permission_dm(channel_id, guild_name);
-        bot.direct_message_create(user_id, dm_msg, [user_id, channel_id](const dpp::confirmation_callback_t& cb) {
+        // dpp::cluster::direct_message_create is non-const; const_cast is safe here as we only need mutable access
+        const_cast<dpp::cluster&>(bot).direct_message_create(user_id, dm_msg, [user_id, channel_id](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
                 std::cerr << "Permission error DM failed for user " << user_id
                           << " (channel " << channel_id << "): " << cb.get_error().message << "\n";
@@ -350,7 +349,7 @@ namespace bronx {
             const auto* g = dpp::find_guild(event.command.guild_id);
             if (g) guild_name = g->name;
         }
-        event.reply(reply_msg, [bot, user_id, chan_id, guild_name](const dpp::confirmation_callback_t& cb) {
+        event.reply(reply_msg, [&bot, user_id, chan_id, guild_name](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error() && is_permission_error(cb)) {
                 dm_permission_error(bot, user_id, chan_id, guild_name);
             }

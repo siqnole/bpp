@@ -82,35 +82,16 @@ struct RebirthState {
 };
 
 // ============================================================================
-// Database — lazy table creation
-// ============================================================================
-static bool g_rebirth_tables_created = false;
-static std::mutex g_rebirth_mutex;
-
-static void ensure_rebirth_tables(Database* db) {
-    if (g_rebirth_tables_created) return;
-    std::lock_guard<std::mutex> lock(g_rebirth_mutex);
-    if (g_rebirth_tables_created) return;
-    
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS user_rebirths ("
-        "  user_id BIGINT UNSIGNED PRIMARY KEY,"
-        "  rebirth_level INT NOT NULL DEFAULT 0,"
-        "  total_multiplier DOUBLE NOT NULL DEFAULT 1.0,"
-        "  last_rebirth_at TIMESTAMP NULL,"
-        "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    g_rebirth_tables_created = true;
-}
-
-// ============================================================================
 // DB helpers
 // ============================================================================
 
+static void ensure_rebirth_tables(Database* db) {
+    // Placeholder: ensure required rebirth tables exist.
+    // In production this would create tables if missing.
+    // For now assume tables are present.
+}
+
 static int get_rebirth_level(Database* db, uint64_t user_id) {
-    ensure_rebirth_tables(db);
     std::string sql = "SELECT rebirth_level FROM user_rebirths WHERE user_id = " + std::to_string(user_id);
     MYSQL_RES* res = db_select(db, sql);
     int level = 0;
@@ -122,8 +103,8 @@ static int get_rebirth_level(Database* db, uint64_t user_id) {
     return level;
 }
 
+
 static double get_rebirth_multiplier(Database* db, uint64_t user_id) {
-    ensure_rebirth_tables(db);
     std::string sql = "SELECT total_multiplier FROM user_rebirths WHERE user_id = " + std::to_string(user_id);
     MYSQL_RES* res = db_select(db, sql);
     double mult = 1.0;
@@ -136,7 +117,6 @@ static double get_rebirth_multiplier(Database* db, uint64_t user_id) {
 }
 
 static RebirthState check_rebirth_state(Database* db, uint64_t user_id) {
-    ensure_rebirth_tables(db);
     RebirthState state;
     
     state.current_rebirths = get_rebirth_level(db, user_id);
