@@ -29,6 +29,77 @@ inline void populate_extended_help(CommandHandler* handler) {
 
     // ── economy ────────────────────────────────────────────────────────
 
+    set("balance", [](Command* c) {
+        c->extended_description =
+            "view your wallet, bank balance, and net worth. mention another user to check their balance. "
+            "if the server has a server economy enabled, balances shown are per-guild.";
+        c->detailed_usage = ".balance [@user]";
+        c->examples = {".bal", ".balance @User", ".b", ".$ @User"};
+        c->notes = "aliases: bal, b, $, wallet, cash. the footer shows whether global or server economy is active.";
+    });
+
+    set("pay", [](Command* c) {
+        c->extended_description =
+            "send money from your wallet to another user. "
+            "a 5% tax applies by default (server economy may use a different rate). "
+            "transfers between prestiged and non-prestiged players are blocked. "
+            "there is a 30-second cooldown between successive pays to the same recipient.";
+        c->detailed_usage = ".pay <@user> <amount>";
+        c->examples = {".pay @User 5000", ".pay @User all", ".pay @User 50%"};
+        c->notes = "supports shorthand amounts: all, half, 50%, 1k, 1m, etc.";
+    });
+
+    set("daily", [](Command* c) {
+        c->extended_description =
+            "claim your daily cash reward. the payout is 8% of your current net worth, "
+            "with a minimum of $500 and a maximum of $250m. resets every 24 hours.";
+        c->detailed_usage = ".daily";
+        c->examples = {".daily", ".d"};
+        c->notes = "aliases: d, 24h. cooldown resets 24 hours after each claim.";
+    });
+
+    set("weekly", [](Command* c) {
+        c->extended_description =
+            "claim your weekly cash reward. the payout is 50% of your current net worth, "
+            "with a minimum of $1,000 and a maximum of $1b. resets every 7 days.";
+        c->detailed_usage = ".weekly";
+        c->examples = {".weekly", ".wk"};
+        c->notes = "aliases: wk, 7d. cooldown resets 7 days after each claim.";
+    });
+
+    set("work", [](Command* c) {
+        c->extended_description =
+            "work a random job to earn cash. the payout is 3% of your net worth, "
+            "with a minimum of $100 and a maximum of $25m. has a 30-minute cooldown.";
+        c->detailed_usage = ".work";
+        c->examples = {".work", ".w"};
+        c->notes = "aliases: w, job. cooldown is 30 minutes between uses.";
+    });
+
+    set("rob", [](Command* c) {
+        c->extended_description =
+            "attempt to steal money from another user's wallet. success chance depends on "
+            "how your wallet compares to the target's. if you fail, you pay a fine of "
+            "15–30% of your wallet. there is also a 10% chance of getting caught by the police, "
+            "costing you 50–75% of your wallet. has a 2-hour cooldown after any outcome.";
+        c->detailed_usage = ".rob <@user>";
+        c->examples = {".rob @User", ".r @User"};
+        c->notes = "you cannot rob while in passive mode. the target cannot be in passive mode. "
+            "both you and the target need at least $100 in your wallets. use `.passive` to toggle passive mode.";
+    });
+
+    set("rebirth", [](Command* c) {
+        c->extended_description =
+            "the ultimate endgame prestige. at prestige 20, rebirth resets your prestige, "
+            "balance, inventory, fish, mining claims, skill tree, and cooldowns in exchange "
+            "for a permanent 1.1x earnings multiplier on all income. up to 5 rebirths are "
+            "available, each with escalating requirements and a stacking multiplier (max ~1.61x). "
+            "run without `confirm` to preview your current progress and requirements.";
+        c->detailed_usage = ".rebirth [confirm]";
+        c->examples = {".rebirth", ".rebirth confirm", ".rb"};
+        c->notes = "titles are preserved across rebirths. each rebirth grants a unique title. aliases: rb, transcend.";
+    });
+
     set("bank", [](Command* c) {
         c->extended_description =
             "open an interactive bank menu to deposit, withdraw, upgrade your bank limit, "
@@ -126,6 +197,27 @@ inline void populate_extended_help(CommandHandler* handler) {
 
     // ── fishing ────────────────────────────────────────────────────────
 
+    set("fish", [](Command* c) {
+        c->extended_description =
+            "the main fishing command. cast your rod and catch fish, manage your inventory, sell catches, "
+            "equip gear, and join or create fishing crews. anti-macro system: math captcha triggers randomly "
+            "to prevent automation; failing escalates your cooldown penalty (5min → 30min → global blacklist). "
+            "skill tree bonuses affect cooldown speed and catch quality.";
+        c->detailed_usage = ".fish <action> [args...]";
+        c->subcommands = {
+            {"cast", "cast your rod and catch a fish (aliases: f, catch)"},
+            {"inventory", "view your caught fish (aliases: finv, inv, i)"},
+            {"sell [fish_id|all]", "sell unlocked fish for cash (alias: sellfish)"},
+            {"info <species>", "details on a specific fish species (alias: finfo)"},
+            {"equip [rod] [bait]", "equip fishing gear"},
+            {"lock <fish_id>", "lock a fish to protect from bulk-sell (alias: lockfish)"},
+            {"suggest <details...>", "propose a new fish species (alias: suggestfish)"},
+            {"crew <action> [args...]", "manage your fishing crew"},
+        };
+        c->examples = {".fish cast", ".f", ".fish inv", ".fish sell all", ".fish equip gold rod"};
+        c->notes = "casting has a cooldown that decreases with skill tree bonuses. rare and legendary fish are harder to catch.";
+    });
+
     set("fishdex", [](Command* c) {
         c->extended_description =
             "view your fish collection, optionally filtered by a category. "
@@ -219,6 +311,26 @@ inline void populate_extended_help(CommandHandler* handler) {
     });
 
     // ── mining ─────────────────────────────────────────────────────────
+
+    set("mine", [](Command* c) {
+        c->extended_description =
+            "play the interactive mining minigame. a 3×3 grid appears with glowing ore cells. "
+            "click revealed ores to collect them — the session ends when the timer expires or no more ores remain. "
+            "multimine chance (from skill tree bonuses) can double ore per click. ore value scales with rarity tier and prestige bonuses. "
+            "session ends when the timer expires or you run out of ores.";
+        c->detailed_usage = ".mine";
+        c->examples = {".mine"};
+        c->notes = "higher prestige gives +5% ore value per level. home court (support server) gives +5%. supporter role gives +10%.";
+    });
+
+    set("minv", [](Command* c) {
+        c->extended_description =
+            "view your mining inventory: all collected ores, their values, and quantities. "
+            "paginated with button navigation. use `.sellore` to convert ore to cash.";
+        c->detailed_usage = ".minv";
+        c->examples = {".minv", ".mi", ".mininginfo"};
+        c->notes = "aliases: mi, mininginfo. ores are grouped by type.";
+    });
 
     set("sellore", [](Command* c) {
         c->extended_description =
@@ -693,6 +805,38 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "use `^` to target the message directly above the command.";
     });
 
+    // ── moderation ─────────────────────────────────────────────────────
+
+    set("mod", [](Command* c) {
+        c->extended_description =
+            "consolidated moderation command. subcommands handle: banning/kicking/muting/jailing users, "
+            "issuing warnings, viewing/managing infractions, and configuring moderation settings. "
+            "requires moderator role or admin permissions.";
+        c->detailed_usage = ".mod <action> [args...]";
+        c->subcommands = {
+            {"ban <@user> [duration] [reason...]", "ban a user (duration: 7d, 30d, permanent, etc.)"},
+            {"unban <@user>", "remove a ban"},
+            {"kick <@user> [reason...]", "kick a user from the server"},
+            {"timeout <@user> <duration> [reason...]", "apply discord timeout (max 28 days)"},
+            {"untimeout <@user>", "remove timeout"},
+            {"mute <@user> [duration] [reason...]", "assign mute role (custom, server-configured)"},
+            {"unmute <@user>", "remove mute role"},
+            {"warn <@user> [reason...]", "issue a warning (tracked in history)"},
+            {"jail <@user> [duration]", "assign jail role (custom, server-configured)"},
+            {"unjail <@user>", "remove jail role"},
+            {"case <case_id>", "view details of a specific moderation case"},
+            {"history <@user>", "view all infractions for a user"},
+            {"modstats [@user]", "view mod action statistics (server or per-mod)"},
+            {"pardon <case_id>", "remove an infraction from a user's record"},
+            {"reason <case_id> <text...>", "add or update the reason for a case"},
+            {"muterole <@role>", "set the role assigned when muting users"},
+            {"jailsetup", "configure the jail role and channel"},
+            {"logconfig [#channel]", "set the moderation log channel"},
+        };
+        c->examples = {".mod ban @User 7d spamming", ".mod warn @User", ".mod history @User", ".mod case 142"};
+        c->notes = "all actions are logged and auditable. expired timeouts are automatically removed.";
+    });
+
     // ── owner ──────────────────────────────────────────────────────────
 
     set("givemoney", [](Command* c) {
@@ -732,6 +876,59 @@ inline void populate_extended_help(CommandHandler* handler) {
             {"-r <reason...>", "reason for whitelisting"},
         };
         c->examples = {".whitelist add -u @Trusted -r beta tester", ".whitelist list"};
+    });
+
+    // ── pets ───────────────────────────────────────────────────────────
+
+    set("pets", [](Command* c) {
+        c->extended_description =
+            "manage your pets — adoptable creatures that provide passive bonuses to fishing, gambling, mining, "
+            "and general earning. pets have hunger (decays 1/hour), levels, xp, and rarity tiers. "
+            "starving pets don't grant bonuses. rarity tiers: common → uncommon → rare → epic → legendary → prestige.";
+        c->detailed_usage = ".pets <action> [args...]";
+        c->subcommands = {
+            {"shop [page]", "browse adoptable pet species with bonuses"},
+            {"adopt <species>", "adopt a pet (costs money, rarity affects price)"},
+            {"list", "view all your pets, their levels, and hunger"},
+            {"info <name|id>", "detailed stats for a specific pet (hunger, level, xp, bonus type)"},
+            {"feed <name|id>", "feed your pet to restore hunger to 100"},
+            {"rename <name|id> <new_name>", "give your pet a nickname"},
+            {"release <name|id>", "permanently remove a pet"},
+        };
+        c->examples = {".pets shop", ".pets adopt cat", ".pets feed luna", ".pets info luna"};
+        c->notes = "each pet species grants a unique bonus. pets are equipped via `.equip`. pets gain xp when their bonus is active.";
+    });
+
+    // ── skill tree ──────────────────────────────────────────────────────
+
+    set("skills", [](Command* c) {
+        c->extended_description =
+            "view and upgrade your skill tree. skills provide permanent percentage bonuses to fishing, gambling, mining, "
+            "work, and general earning. skill points are earned by leveling up. upgrade costs increase with rank.";
+        c->detailed_usage = ".skills <action>";
+        c->subcommands = {
+            {"view", "see all available skills and your current levels"},
+            {"upgrade <skill_name>", "spend skill points to increase a skill's rank"},
+            {"info <skill_name>", "detailed scaling info for a specific skill"},
+        };
+        c->examples = {".skills view", ".skills upgrade fishing_xp_bonus", ".skills info gambling_payout_bonus"};
+        c->notes = "aliases: skilltree, skill. skill points cap at 100. reset your tree with `.reset-skills` (costs money).";
+    });
+
+    // ── mastery ─────────────────────────────────────────────────────────
+
+    set("mastery", [](Command* c) {
+        c->extended_description =
+            "view your fish and ore mastery progress. mastery is earned by repeatedly catching the same fish species "
+            "or mining the same ore type. mastery tiers: common → uncommon → rare → epic → legendary → prestige. "
+            "higher mastery tiers grant permanent value bonuses for that species/ore.";
+        c->detailed_usage = ".mastery <fish|ore> [species|type]";
+        c->subcommands = {
+            {"fish [species]", "view fish mastery progress (species optional)"},
+            {"ore [type]", "view ore mastery progress (type optional)"},
+        };
+        c->examples = {".mastery fish", ".mastery fish salmon", ".mastery ore iron"};
+        c->notes = "mastery tiers unlock exclusive cosmetics and titles. catch/mine 1000+ of a species/ore to reach prestige.";
     });
 
     // ── leaderboard ────────────────────────────────────────────────────
