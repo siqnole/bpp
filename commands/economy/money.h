@@ -43,6 +43,7 @@ inline ::std::vector<Command*> get_money_commands(Database* db) {
             // Cooldown claimed - now give the reward
             if (db->update_wallet(event.msg.author.id, amount)) {
                 log_balance_change(db, event.msg.author.id, "claimed daily reward +$" + format_number(amount));
+                db->increment_stat(event.msg.author.id, "daily_earnings_total", amount);
                 ::commands::pets::pet_hooks::on_daily(db, event.msg.author.id);
                 ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coins_earned_today", amount);
                 
@@ -75,6 +76,7 @@ inline ::std::vector<Command*> get_money_commands(Database* db) {
             // Cooldown claimed - now give the reward
             if (db->update_wallet(event.command.get_issuing_user().id, amount)) {
                 log_balance_change(db, event.command.get_issuing_user().id, "claimed daily reward +$" + format_number(amount));
+                db->increment_stat(event.command.get_issuing_user().id, "daily_earnings_total", amount);
                 ::commands::pets::pet_hooks::on_daily(db, event.command.get_issuing_user().id);
                 ::commands::daily_challenges::track_daily_stat(db, event.command.get_issuing_user().id, "coins_earned_today", amount);
                 
@@ -111,7 +113,7 @@ inline ::std::vector<Command*> get_money_commands(Database* db) {
             // Cooldown claimed - now give the reward
             if (db->update_wallet(event.msg.author.id, amount)) {
                 log_balance_change(db, event.msg.author.id, "claimed weekly reward +$" + format_number(amount));
-                
+                db->increment_stat(event.msg.author.id, "weekly_earnings_total", amount);
                 auto embed = bronx::success("claimed your weekly reward of $" + format_number(amount) + "!\n(50% of your networth: $" + format_number(networth) + ")");
                 bronx::add_invoker_footer(embed, event.msg.author);
                 bronx::send_message(bot, event, embed);
@@ -141,7 +143,7 @@ inline ::std::vector<Command*> get_money_commands(Database* db) {
             // Cooldown claimed - now give the reward
             if (db->update_wallet(event.command.get_issuing_user().id, amount)) {
                 log_balance_change(db, event.command.get_issuing_user().id, "claimed weekly reward +$" + format_number(amount));
-                
+                db->increment_stat(event.command.get_issuing_user().id, "weekly_earnings_total", amount);
                 auto embed = bronx::success("claimed your weekly reward of $" + format_number(amount) + "!\n(50% of your networth: $" + format_number(networth) + ")");
                 bronx::add_invoker_footer(embed, event.command.get_issuing_user());
                 event.reply(dpp::message().add_embed(embed));
@@ -191,6 +193,7 @@ inline ::std::vector<Command*> get_money_commands(Database* db) {
             // Cooldown claimed - now give the reward
             if (db->update_wallet(event.msg.author.id, amount)) {
                 log_balance_change(db, event.msg.author.id, "worked (" + job + ") +$" + format_number(amount));
+                db->increment_stat(event.msg.author.id, "work_earnings_total", amount);
                 ::commands::pets::pet_hooks::on_work(db, event.msg.author.id);
                 ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "work_count_today", 1);
                 ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coins_earned_today", amount);
@@ -242,6 +245,7 @@ inline ::std::vector<Command*> get_money_commands(Database* db) {
             // Cooldown claimed - now give the reward
             if (db->update_wallet(event.command.get_issuing_user().id, amount)) {
                 log_balance_change(db, event.command.get_issuing_user().id, "worked (" + job + ") +$" + format_number(amount));
+                db->increment_stat(event.command.get_issuing_user().id, "work_earnings_total", amount);
                 ::commands::pets::pet_hooks::on_work(db, event.command.get_issuing_user().id);
                 ::commands::daily_challenges::track_daily_stat(db, event.command.get_issuing_user().id, "work_count_today", 1);
                 ::commands::daily_challenges::track_daily_stat(db, event.command.get_issuing_user().id, "coins_earned_today", amount);
