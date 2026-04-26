@@ -25,6 +25,13 @@ GATE-3 SAFETY:
   pre-check: must check `mysql_stmt` preparation result
   rollback: `cp ~/.claude/CLAUDE.md .bak` before major rule changes
 
+GATE-4 BUILD INTEGRITY:
+  rule: NEVER deploy code to production without local build verification
+  action: always run `cmake -B build_local -S . && cmake --build build_local -j$(nproc)` locally first
+  validation: fix ALL errors before touching production, warnings alone are acceptable
+  merge-conflicts: resolve completely before committing, verify no `<<<<<<< HEAD` markers remain
+  rationale: broken code reaching production wastes time, breaks services, and erodes trust
+  
 </gates>
 
 <rules>
