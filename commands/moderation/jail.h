@@ -12,53 +12,6 @@
 namespace commands {
 namespace moderation {
 
-// apply_jail takes a plain InfractionConfig (already unwrapped by callers)
-inline void apply_jail(dpp::cluster& bot, bronx::db::Database* db,
-                       uint64_t guild_id, uint64_t target_id, uint64_t mod_id,
-                       uint64_t jail_role_id, uint32_t duration,
-                       const std::string& reason, const bronx::db::InfractionConfig& config,
-                       const std::string& guild_name,
-                       const std::vector<dpp::snowflake>& current_roles,
-                       std::function<void(bool, const std::string&, const std::optional<bronx::db::InfractionRow>&)> callback) {
-
-    nlohmann::json meta;
-    meta["stored_roles"] = nlohmann::json::array();
-    for (auto& r : current_roles) {
-        meta["stored_roles"].push_back(static_cast<uint64_t>(r));
-    }
-    meta["jail_role_id"] = jail_role_id;
-    std::string metadata_str = meta.dump();
-
-    for (auto& role_id : current_roles) {
-        if (role_id == guild_id) continue;
-        bot.guild_member_remove_role(guild_id, target_id, role_id,
-            [](const dpp::confirmation_callback_t&) {});
-    }
-
-    bot.guild_member_add_role(guild_id, target_id, jail_role_id,
-        [db, guild_id, target_id, mod_id, duration, reason, config, guild_name, metadata_str, callback, &bot](const dpp::confirmation_callback_t& cb) {
-            if (cb.is_error()) {
-                callback(false, "failed to add jail role: " + cb.get_error().message, std::nullopt);
-                return;
-            }
-
-            auto inf = bronx::db::infraction_operations::create_infraction(
-                db, guild_id, target_id, mod_id,
-                "jail", reason, config.point_mute, // plain member access — config is already unwrapped
-                duration, metadata_str);
-
-            if (!inf.has_value()) {
-                callback(false, "jail applied but failed to create infraction record", std::nullopt);
-                return;
-            }
-
-            schedule_punishment_expiry(bot, db, guild_id, inf->case_number, "jail", target_id, duration, metadata_str);
-            check_and_escalate(bot, db, guild_id, target_id, guild_name);
-            send_mod_log(bot, db, guild_id, inf.value());
-            callback(true, "", inf);
-        });
-}
-
 inline Command* get_jail_command(bronx::db::Database* db) {
     static Command* cmd = nullptr;
     static bool initialized = false;
@@ -105,7 +58,7 @@ inline Command* get_jail_command(bronx::db::Database* db) {
                 }
             }
 
-            // Unwrap config — if not configured, bail with a friendly error
+            // Unwrap config
             auto config_opt = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
             if (!config_opt.has_value() || config_opt.value().jail_role_id == 0) {
                 bronx::send_message(bot, event, bronx::error("jail role is not configured — use the setup command to set one"));
@@ -132,10 +85,11 @@ inline Command* get_jail_command(bronx::db::Database* db) {
                 reason += args[i];
             }
 
-            std::string guild_name = guild ? guild->name : "unknown server";
-
-            if (config.dm_on_action) {
-                dm_user_action(bot, target_id, guild_name, "jail", reason, duration, config.point_mute);
+            // If reason is empty, we trigger modal if it was slash, but for text we'll set default
+            if (reason.empty()) {
+                dpp::interaction_modal_response modal("mod_jail_modal_" + std::to_string(target_id) + "_" + std::to_string(duration), "jail member");
+                modal.add_component(dpp::component().set_label("reason").set_id("reason").set_type(dpp::cot_text).set_placeholder("reason for the jail").set_min_length(1).set_max_length(512));
+                reason = "no reason provided";
             }
 
             std::vector<dpp::snowflake> current_roles;
@@ -144,20 +98,29 @@ inline Command* get_jail_command(bronx::db::Database* db) {
                 if (it != guild->members.end()) current_roles = it->second.get_roles();
             }
 
-            apply_jail(bot, db, guild_id, target_id, mod_id, config.jail_role_id,
-                duration, reason, config, guild_name, current_roles,
-                [&bot, &event, target_id, duration, reason](bool success, const std::string& err, const std::optional<bronx::db::InfractionRow>& inf) {
-                    if (!success) { bronx::send_message(bot, event, bronx::error(err)); return; }
-
+            apply_jail_internal(bot, db, guild_id, target_id, mod_id, duration, reason, config, current_roles,
+                [&bot, &event, target_id, duration, reason](const bronx::db::InfractionRow& inf, bool is_quiet) {
+                    if (is_quiet) return;
+                    
                     std::string desc = bronx::EMOJI_CHECK + " **jailed** <@" + std::to_string(target_id) + ">"
                         + "\n**duration:** " + format_duration(duration)
-                        + "\n**case:** #" + std::to_string(inf->case_number);
-                    if (!reason.empty()) desc += "\n**reason:** " + reason;
-                    desc += "\n**roles stored:** " + std::to_string(inf->metadata.size() > 2 ? 1 : 0) + " roles saved for restoration";
+                        + "\n**case:** #" + std::to_string(inf.case_number);
+                    if (!inf.reason.empty()) desc += "\n**reason:** " + inf.reason;
+
+                    int roles_stored = 0;
+                    try {
+                        auto meta = nlohmann::json::parse(inf.metadata);
+                        if (meta.contains("stored_roles") && meta["stored_roles"].is_array())
+                            roles_stored = static_cast<int>(meta["stored_roles"].size());
+                    } catch (...) {}
+                    desc += "\n**roles stored:** " + std::to_string(roles_stored) + " roles saved for restoration";
 
                     auto embed = bronx::create_embed(desc, get_action_color("jail"));
                     bronx::add_invoker_footer(embed, event.msg.author);
                     bronx::send_message(bot, event, embed);
+                },
+                [&bot, &event](const std::string& err) {
+                    bronx::send_message(bot, event, bronx::error(err));
                 });
         },
         // slash handler
@@ -221,10 +184,12 @@ inline Command* get_jail_command(bronx::db::Database* db) {
                 reason = std::get<std::string>(reason_param);
             }
 
-            std::string guild_name = guild ? guild->name : "unknown server";
-
-            if (config.dm_on_action) {
-                dm_user_action(bot, target_id, guild_name, "jail", reason, duration, config.point_mute);
+            // if no reason, trigger modal
+            if (reason.empty()) {
+                dpp::interaction_modal_response modal("mod_jail_modal_" + std::to_string(target_id) + "_" + std::to_string(duration), "jail member");
+                modal.add_component(dpp::component().set_label("reason").set_id("reason").set_type(dpp::cot_text).set_placeholder("reason for the jail").set_min_length(1).set_max_length(512));
+                event.dialog(modal);
+                return;
             }
 
             std::vector<dpp::snowflake> current_roles;
@@ -233,19 +198,21 @@ inline Command* get_jail_command(bronx::db::Database* db) {
                 if (it != guild->members.end()) current_roles = it->second.get_roles();
             }
 
-            apply_jail(bot, db, guild_id, target_id, mod_id, config.jail_role_id,
-                duration, reason, config, guild_name, current_roles,
-                [&bot, event, target_id, duration, reason](bool success, const std::string& err, const std::optional<bronx::db::InfractionRow>& inf) {
-                    if (!success) { event.reply(dpp::message().add_embed(bronx::error(err)).set_flags(dpp::m_ephemeral)); return; }
+            apply_jail_internal(bot, db, guild_id, target_id, mod_id, duration, reason, config, current_roles,
+                [&bot, event, target_id, duration](const bronx::db::InfractionRow& inf, bool is_quiet) {
+                    if (is_quiet) {
+                        event.reply(dpp::message().add_embed(bronx::success("user jailed (quiet mode)")).set_flags(dpp::m_ephemeral));
+                        return;
+                    }
 
                     std::string desc = bronx::EMOJI_CHECK + " **jailed** <@" + std::to_string(target_id) + ">"
                         + "\n**duration:** " + format_duration(duration)
-                        + "\n**case:** #" + std::to_string(inf->case_number);
-                    if (!reason.empty()) desc += "\n**reason:** " + reason;
+                        + "\n**case:** #" + std::to_string(inf.case_number);
+                    if (!inf.reason.empty()) desc += "\n**reason:** " + inf.reason;
 
                     int roles_stored = 0;
                     try {
-                        auto meta = nlohmann::json::parse(inf->metadata);
+                        auto meta = nlohmann::json::parse(inf.metadata);
                         if (meta.contains("stored_roles") && meta["stored_roles"].is_array())
                             roles_stored = static_cast<int>(meta["stored_roles"].size());
                     } catch (...) {}
@@ -254,6 +221,9 @@ inline Command* get_jail_command(bronx::db::Database* db) {
                     auto embed = bronx::create_embed(desc, get_action_color("jail"));
                     bronx::add_invoker_footer(embed, event.command.get_issuing_user());
                     event.reply(dpp::message().add_embed(embed));
+                },
+                [event](const std::string& err) {
+                    event.reply(dpp::message().add_embed(bronx::error(err)).set_flags(dpp::m_ephemeral));
                 });
         },
         {

@@ -65,52 +65,35 @@ inline Command* get_warn_command(bronx::db::Database* db) {
                 reason += args[i];
             }
 
+            // if no reason, for text command we'll just require it
             if (reason.empty()) {
-                bronx::send_message(bot, event, bronx::error("a reason is required for warnings"));
+                bronx::send_message(bot, event, bronx::error("usage: `warn @user <reason>`"));
                 return;
             }
 
-            // get config
-            auto config = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
-            std::string guild_name;
-            auto* guild = dpp::find_guild(guild_id);
-            guild_name = guild ? guild->name : "unknown server";
-
-            // dm user if enabled
-            if (config.has_value() && config.value().dm_on_action) {
-                dm_user_action(bot, target_id, guild_name, "warn", reason, 0, config.value().point_warn);
-            }
-
-            // create infraction (no discord action, just a record)
-            auto inf = bronx::db::infraction_operations::create_infraction(
-                db, guild_id, target_id, mod_id,
-                "warn", reason, config.value().point_warn,
-                config.value().default_duration_warn);
-
-            if (!inf.has_value()) {
-                bronx::send_message(bot, event, bronx::error("failed to create warning record"));
+            auto config_opt = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
+            if (!config_opt.has_value()) {
+                bronx::send_message(bot, event, bronx::error("failed to fetch moderation config"));
                 return;
             }
 
-            // check escalation (warn points may trigger auto-action like timeout/ban)
-            check_and_escalate(bot, db, guild_id, target_id, guild_name);
+            apply_warn_internal(bot, db, guild_id, target_id, mod_id, reason, config_opt.value(),
+                [&bot, &event, target_id, config_opt](const bronx::db::InfractionRow& inf, bool is_quiet, double active_points) {
+                    if (is_quiet) return;
+                    
+                    std::string desc = bronx::EMOJI_CHECK + " **warned** <@" + std::to_string(target_id) + ">"
+                        + "\n**case:** #" + std::to_string(inf.case_number)
+                        + "\n**reason:** " + inf.reason
+                        + "\n**points:** +" + std::to_string(config_opt.value().point_warn)
+                        + " (total active: " + std::to_string(active_points) + ")";
 
-            // send mod log
-            send_mod_log(bot, db, guild_id, inf.value());
-
-            // get total active points for context
-            double active_points = bronx::db::infraction_operations::get_user_active_points(db, guild_id, target_id);
-
-            // reply success
-            std::string desc = bronx::EMOJI_CHECK + " **warned** <@" + std::to_string(target_id) + ">"
-                + "\n**case:** #" + std::to_string(inf->case_number)
-                + "\n**reason:** " + reason
-                + "\n**points:** +" + std::to_string(config.value().point_warn)
-                + " (total active: " + std::to_string(active_points) + ")";
-
-            auto embed = bronx::create_embed(desc, get_action_color("warn"));
-            bronx::add_invoker_footer(embed, event.msg.author);
-            bronx::send_message(bot, event, embed);
+                    auto embed = bronx::create_embed(desc, get_action_color("warn"));
+                    bronx::add_invoker_footer(embed, event.msg.author);
+                    bronx::send_message(bot, event, embed);
+                },
+                [&bot, &event](const std::string& err) {
+                    bronx::send_message(bot, event, bronx::error(err));
+                });
         },
         // slash handler
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
@@ -146,58 +129,47 @@ inline Command* get_warn_command(bronx::db::Database* db) {
                 return;
             }
 
-            // get reason (required)
+            // get reason (optional in slash now, triggers modal if missing)
             std::string reason;
             auto reason_param = event.get_parameter("reason");
             if (std::holds_alternative<std::string>(reason_param)) {
                 reason = std::get<std::string>(reason_param);
             }
 
+            // if no reason, trigger modal
             if (reason.empty()) {
-                event.reply(dpp::message().add_embed(bronx::error("a reason is required for warnings")).set_flags(dpp::m_ephemeral));
+                dpp::interaction_modal_response modal("mod_warn_modal_" + std::to_string(target_id), "warn member");
+                modal.add_component(dpp::component().set_label("reason").set_id("reason").set_type(dpp::cot_text).set_placeholder("reason for the warning").set_min_length(1).set_max_length(512));
+                event.dialog(modal);
                 return;
             }
 
-            // get config
-            auto config = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
-            auto* guild = dpp::find_guild(guild_id);
-            std::string guild_name = guild ? guild->name : "unknown server";
-
-            // dm user if enabled
-            if (config.has_value() && config.value().dm_on_action) {
-                dm_user_action(bot, target_id, guild_name, "warn", reason, 0, config.value().point_warn);
-            }
-
-            // create infraction (no discord action, just a record)
-            auto inf = bronx::db::infraction_operations::create_infraction(
-                db, guild_id, target_id, mod_id,
-                "warn", reason, config.value().point_warn,
-                config.value().default_duration_warn);
-
-            if (!inf.has_value()) {
-                event.reply(dpp::message().add_embed(bronx::error("failed to create warning record")).set_flags(dpp::m_ephemeral));
+            auto config_opt = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
+            if (!config_opt.has_value()) {
+                event.reply(dpp::message().add_embed(bronx::error("failed to fetch moderation config")).set_flags(dpp::m_ephemeral));
                 return;
             }
 
-            // check escalation
-            check_and_escalate(bot, db, guild_id, target_id, guild_name);
+            apply_warn_internal(bot, db, guild_id, target_id, mod_id, reason, config_opt.value(),
+                [&bot, event, target_id, config_opt](const bronx::db::InfractionRow& inf, bool is_quiet, double active_points) {
+                    if (is_quiet) {
+                        event.reply(dpp::message().add_embed(bronx::success("user warned (quiet mode)")).set_flags(dpp::m_ephemeral));
+                        return;
+                    }
+                    
+                    std::string desc = bronx::EMOJI_CHECK + " **warned** <@" + std::to_string(target_id) + ">"
+                        + "\n**case:** #" + std::to_string(inf.case_number)
+                        + "\n**reason:** " + inf.reason
+                        + "\n**points:** +" + std::to_string(config_opt.value().point_warn)
+                        + " (total active: " + std::to_string(active_points) + ")";
 
-            // send mod log
-            send_mod_log(bot, db, guild_id, inf.value());
-
-            // get total active points for context
-            double active_points = bronx::db::infraction_operations::get_user_active_points(db, guild_id, target_id);
-
-            // reply success
-            std::string desc = bronx::EMOJI_CHECK + " **warned** <@" + std::to_string(target_id) + ">"
-                + "\n**case:** #" + std::to_string(inf->case_number)
-                + "\n**reason:** " + reason
-                + "\n**points:** +" + std::to_string(config.value().point_warn)
-                + " (total active: " + std::to_string(active_points) + ")";
-
-            auto embed = bronx::create_embed(desc, get_action_color("warn"));
-            bronx::add_invoker_footer(embed, event.command.get_issuing_user());
-            event.reply(dpp::message().add_embed(embed));
+                    auto embed = bronx::create_embed(desc, get_action_color("warn"));
+                    bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+                    event.reply(dpp::message().add_embed(embed));
+                },
+                [event](const std::string& err) {
+                    event.reply(dpp::message().add_embed(bronx::error(err)).set_flags(dpp::m_ephemeral));
+                });
         },
         // options
         {

@@ -258,6 +258,18 @@ inline void restore_active_timers(dpp::cluster& bot, bronx::db::Database* db) {
 
 // ── Internal Apply Helpers (used by commands and modals) ──────────
 
+inline bool is_action_quiet(const std::string& action, const bronx::db::InfractionConfig& config) {
+    if (!config.quiet_overrides.empty() && config.quiet_overrides != "{}") {
+        try {
+            auto overrides = nlohmann::json::parse(config.quiet_overrides);
+            if (overrides.contains(action) && overrides[action].is_boolean()) {
+                return overrides[action].get<bool>();
+            }
+        } catch (...) {}
+    }
+    return config.quiet_global;
+}
+
 inline void apply_mute_internal(dpp::cluster& bot, bronx::db::Database* db, 
                                uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
                                uint32_t duration, const std::string& reason, 
@@ -308,7 +320,7 @@ inline void apply_mute_internal(dpp::cluster& bot, bronx::db::Database* db,
             // send mod log
             send_mod_log(bot, db, guild_id, inf.value());
 
-            success_cb(inf.value(), config.quiet_global);
+            success_cb(inf.value(), is_action_quiet("mute", config));
         });
 }
 
@@ -359,15 +371,7 @@ inline void apply_ban_internal(dpp::cluster& bot, bronx::db::Database* db,
             send_mod_log(bot, db, guild_id, inf.value());
 
             // quiet check
-            bool is_quiet = config.quiet_global;
-            try {
-                auto overrides = nlohmann::json::parse(config.quiet_overrides);
-                if (overrides.contains("ban") && overrides["ban"].is_boolean()) {
-                    is_quiet = overrides["ban"].get<bool>();
-                }
-            } catch (...) {}
-
-            success_cb(inf.value(), is_quiet);
+            success_cb(inf.value(), is_action_quiet("ban", config));
         });
 }
 
@@ -419,7 +423,162 @@ inline void apply_timeout_internal(dpp::cluster& bot, bronx::db::Database* db,
             // send mod log
             send_mod_log(bot, db, guild_id, inf.value());
 
-            success_cb(inf.value(), config.quiet_global);
+            success_cb(inf.value(), is_action_quiet("timeout", config));
+        });
+}
+
+inline void apply_kick_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                               uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                               const std::string& reason, 
+                               const bronx::db::InfractionConfig& config,
+                               std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                               std::function<void(const std::string&)> error_cb) {
+
+    std::string guild_name = "unknown server";
+    auto* g = dpp::find_guild(guild_id);
+    if (g) guild_name = g->name;
+
+    // dm user BEFORE kicking
+    if (config.dm_on_action) {
+        dm_user_action(bot, target_id, guild_name, "kick", reason, 0, config.point_kick);
+    }
+
+    // kick member
+    bot.guild_member_delete(guild_id, target_id,
+        [&bot, db, guild_id, target_id, mod_id, reason, config, guild_name, success_cb, error_cb](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                error_cb("failed to kick user: " + cb.get_error().message);
+                return;
+            }
+
+            // create infraction
+            auto inf = bronx::db::infraction_operations::create_infraction(
+                db, guild_id, target_id, mod_id,
+                "kick", reason, config.point_kick,
+                config.default_duration_kick);
+
+            if (!inf.has_value()) {
+                error_cb("user kicked but failed to create infraction record");
+                return;
+            }
+
+            // check escalation
+            check_and_escalate(bot, db, guild_id, target_id, guild_name);
+
+            // send mod log
+            send_mod_log(bot, db, guild_id, inf.value());
+
+            success_cb(inf.value(), is_action_quiet("kick", config));
+        });
+}
+
+inline void apply_warn_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                               uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                               const std::string& reason, 
+                               const bronx::db::InfractionConfig& config,
+                               std::function<void(const bronx::db::InfractionRow&, bool, double)> success_cb,
+                               std::function<void(const std::string&)> error_cb) {
+
+    std::string guild_name = "unknown server";
+    auto* g = dpp::find_guild(guild_id);
+    if (g) guild_name = g->name;
+
+    // dm user if enabled
+    if (config.dm_on_action) {
+        dm_user_action(bot, target_id, guild_name, "warn", reason, 0, config.point_warn);
+    }
+
+    // create infraction
+    auto inf = bronx::db::infraction_operations::create_infraction(
+        db, guild_id, target_id, mod_id,
+        "warn", reason, config.point_warn,
+        config.default_duration_warn);
+
+    if (!inf.has_value()) {
+        error_cb("failed to create warning record");
+        return;
+    }
+
+    // check escalation
+    check_and_escalate(bot, db, guild_id, target_id, guild_name);
+
+    // send mod log
+    send_mod_log(bot, db, guild_id, inf.value());
+
+    // get total active points for context
+    double active_points = bronx::db::infraction_operations::get_user_active_points(db, guild_id, target_id);
+
+    success_cb(inf.value(), is_action_quiet("warn", config), active_points);
+}
+
+inline void apply_jail_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                               uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                               uint32_t duration, const std::string& reason, 
+                               const bronx::db::InfractionConfig& config,
+                               const std::vector<dpp::snowflake>& current_roles,
+                               std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                               std::function<void(const std::string&)> error_cb) {
+
+    if (config.jail_role_id == 0) {
+        error_cb("jail role is not configured — use the setup command to set one");
+        return;
+    }
+
+    std::string guild_name = "unknown server";
+    auto* g = dpp::find_guild(guild_id);
+    if (g) guild_name = g->name;
+
+    // dm user BEFORE jailing
+    if (config.dm_on_action) {
+        dm_user_action(bot, target_id, guild_name, "jail", reason, duration, config.point_mute);
+    }
+
+    // prepare metadata (stored roles)
+    nlohmann::json meta;
+    meta["stored_roles"] = nlohmann::json::array();
+    for (auto& r : current_roles) {
+        if (r == guild_id) continue;
+        meta["stored_roles"].push_back(static_cast<uint64_t>(r));
+    }
+    meta["jail_role_id"] = config.jail_role_id;
+    std::string metadata_str = meta.dump();
+
+    // strip roles
+    for (auto& role_id : current_roles) {
+        if (role_id == guild_id) continue;
+        bot.guild_member_remove_role(guild_id, target_id, role_id,
+            [](const dpp::confirmation_callback_t&) {});
+    }
+
+    // add jail role
+    bot.guild_member_add_role(guild_id, target_id, config.jail_role_id,
+        [&bot, db, guild_id, target_id, mod_id, duration, reason, config, guild_name, metadata_str, success_cb, error_cb](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                error_cb("failed to add jail role: " + cb.get_error().message);
+                return;
+            }
+
+            // create infraction
+            auto inf = bronx::db::infraction_operations::create_infraction(
+                db, guild_id, target_id, mod_id,
+                "jail", reason, config.point_mute,
+                duration, metadata_str);
+
+            if (!inf.has_value()) {
+                error_cb("jail applied but failed to create infraction record");
+                return;
+            }
+
+            // schedule expiry
+            schedule_punishment_expiry(bot, db, guild_id, inf->case_number, "jail", target_id, duration, metadata_str);
+
+            // check escalation
+            check_and_escalate(bot, db, guild_id, target_id, guild_name);
+
+            // send mod log
+            send_mod_log(bot, db, guild_id, inf.value());
+
+            success_cb(inf.value(), is_action_quiet("jail", config));
         });
 }
 

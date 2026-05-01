@@ -80,46 +80,36 @@ inline Command* get_kick_command(bronx::db::Database* db) {
                 reason += args[i];
             }
 
-            std::string guild_name = guild ? guild->name : "unknown server";
-
-            // dm user BEFORE kicking (they won't receive DM after being removed)
-            if (config.has_value() && config.value().dm_on_action) {
-                dm_user_action(bot, target_id, guild_name, "kick", reason, 0, config.value().point_kick);
+            // if no reason, trigger modal
+            if (reason.empty()) {
+                dpp::interaction_modal_response modal("mod_kick_modal_" + std::to_string(target_id), "kick member");
+                modal.add_component(dpp::component().set_label("reason").set_id("reason").set_type(dpp::cot_text).set_placeholder("reason for the kick").set_min_length(1).set_max_length(512));
+                
+                // we can't trigger modal from message_create_t easily without a button
+                // so for text command, we'll just require it or use a default
+                reason = "no reason provided";
             }
 
-            // kick member
-            bot.guild_member_delete(guild_id, target_id,
-                [&bot, db, guild_id, target_id, mod_id, reason, config, guild_name, &event](const dpp::confirmation_callback_t& cb) {
-                    if (cb.is_error()) {
-                        bronx::send_message(bot, event, bronx::error("failed to kick user: " + cb.get_error().message));
-                        return;
-                    }
+            auto config_opt = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
+            if (!config_opt.has_value()) {
+                bronx::send_message(bot, event, bronx::error("failed to fetch moderation config"));
+                return;
+            }
 
-                    // create infraction (duration is for record purposes only)
-                    auto inf = bronx::db::infraction_operations::create_infraction(
-                        db, guild_id, target_id, mod_id,
-                        "kick", reason, config.value().point_kick,
-                        config.value().default_duration_kick);
-
-                    if (!inf.has_value()) {
-                        bronx::send_message(bot, event, bronx::error("user kicked but failed to create infraction record"));
-                        return;
-                    }
-
-                    // check escalation
-                    check_and_escalate(bot, db, guild_id, target_id, guild_name);
-
-                    // send mod log
-                    send_mod_log(bot, db, guild_id, inf.value());
-
-                    // reply success
+            apply_kick_internal(bot, db, guild_id, target_id, mod_id, reason, config_opt.value(),
+                [&bot, &event, target_id](const bronx::db::InfractionRow& inf, bool is_quiet) {
+                    if (is_quiet) return;
+                    
                     std::string desc = bronx::EMOJI_CHECK + " **kicked** <@" + std::to_string(target_id) + ">"
-                        + "\n**case:** #" + std::to_string(inf->case_number);
-                    if (!reason.empty()) desc += "\n**reason:** " + reason;
+                        + "\n**case:** #" + std::to_string(inf.case_number);
+                    if (!inf.reason.empty()) desc += "\n**reason:** " + inf.reason;
 
                     auto embed = bronx::create_embed(desc, get_action_color("kick"));
                     bronx::add_invoker_footer(embed, event.msg.author);
                     bronx::send_message(bot, event, embed);
+                },
+                [&bot, &event](const std::string& err) {
+                    bronx::send_message(bot, event, bronx::error(err));
                 });
         },
         // slash handler
@@ -169,9 +159,6 @@ inline Command* get_kick_command(bronx::db::Database* db) {
                 }
             }
 
-            // get config
-            auto config = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
-
             // parse optional reason
             std::string reason;
             auto reason_param = event.get_parameter("reason");
@@ -179,46 +166,37 @@ inline Command* get_kick_command(bronx::db::Database* db) {
                 reason = std::get<std::string>(reason_param);
             }
 
-            std::string guild_name = guild ? guild->name : "unknown server";
-
-            // dm user BEFORE kicking
-            if (config.has_value() && config.value().dm_on_action) {
-                dm_user_action(bot, target_id, guild_name, "kick", reason, 0, config.value().point_kick);
+            // if no reason, trigger modal
+            if (reason.empty()) {
+                dpp::interaction_modal_response modal("mod_kick_modal_" + std::to_string(target_id), "kick member");
+                modal.add_component(dpp::component().set_label("reason").set_id("reason").set_type(dpp::cot_text).set_placeholder("reason for the kick").set_min_length(1).set_max_length(512));
+                event.dialog(modal);
+                return;
             }
 
-            // kick member
-            bot.guild_member_delete(guild_id, target_id,
-                [&bot, db, guild_id, target_id, mod_id, reason, config, guild_name, event](const dpp::confirmation_callback_t& cb) {
-                    if (cb.is_error()) {
-                        event.reply(dpp::message().add_embed(bronx::error("failed to kick user: " + cb.get_error().message)).set_flags(dpp::m_ephemeral));
+            auto config_opt = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
+            if (!config_opt.has_value()) {
+                event.reply(dpp::message().add_embed(bronx::error("failed to fetch moderation config")).set_flags(dpp::m_ephemeral));
+                return;
+            }
+
+            apply_kick_internal(bot, db, guild_id, target_id, mod_id, reason, config_opt.value(),
+                [&bot, event, target_id](const bronx::db::InfractionRow& inf, bool is_quiet) {
+                    if (is_quiet) {
+                        event.reply(dpp::message().add_embed(bronx::success("user kicked (quiet mode)")).set_flags(dpp::m_ephemeral));
                         return;
                     }
-
-                    // create infraction
-                    auto inf = bronx::db::infraction_operations::create_infraction(
-                        db, guild_id, target_id, mod_id,
-                        "kick", reason, config.value().point_kick,
-                        config.value().default_duration_kick);
-
-                    if (!inf.has_value()) {
-                        event.reply(dpp::message().add_embed(bronx::error("user kicked but failed to create infraction record")).set_flags(dpp::m_ephemeral));
-                        return;
-                    }
-
-                    // check escalation
-                    check_and_escalate(bot, db, guild_id, target_id, guild_name);
-
-                    // send mod log
-                    send_mod_log(bot, db, guild_id, inf.value());
-
-                    // reply success
+                    
                     std::string desc = bronx::EMOJI_CHECK + " **kicked** <@" + std::to_string(target_id) + ">"
-                        + "\n**case:** #" + std::to_string(inf->case_number);
-                    if (!reason.empty()) desc += "\n**reason:** " + reason;
+                        + "\n**case:** #" + std::to_string(inf.case_number);
+                    if (!inf.reason.empty()) desc += "\n**reason:** " + inf.reason;
 
                     auto embed = bronx::create_embed(desc, get_action_color("kick"));
                     bronx::add_invoker_footer(embed, event.command.get_issuing_user());
                     event.reply(dpp::message().add_embed(embed));
+                },
+                [event](const std::string& err) {
+                    event.reply(dpp::message().add_embed(bronx::error(err)).set_flags(dpp::m_ephemeral));
                 });
         },
         // options
