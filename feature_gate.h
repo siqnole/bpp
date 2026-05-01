@@ -10,6 +10,7 @@
 #include <iostream>
 #include <chrono>
 #include "database/core/database.h"
+#include "utils/logger.h"
 
 namespace bronx {
 
@@ -172,8 +173,7 @@ public:
             features_[name].whitelist.insert(guild_id);
         }
 
-        std::cerr << "\033[36m⚑ FeatureGate: loaded " << features_.size()
-                  << " feature flags\033[0m\n";
+        bronx::logger::info("feature", "loaded " + std::to_string(features_.size()) + " feature flags");
     }
 
 private:

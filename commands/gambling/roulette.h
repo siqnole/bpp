@@ -14,6 +14,7 @@
 #include <thread>
 #include <atomic>
 #include <iostream> // debug logging
+#include "../../utils/logger.h"
 #include "../../log.h"
 
 using namespace bronx::db;
@@ -315,13 +316,11 @@ inline void update_roulette_bet_message(dpp::cluster& bot, Database* db, uint64_
     msg.id = game.message_id;
     msg.channel_id = game.channel_id;
     
-    std::cout << DBG_ROUL "update_roulette_bet_message game=" << game_id << " channel=" << game.channel_id << " msg=" << game.message_id << "\n";
+    bronx::logger::debug("roulette 🎰", "update_roulette_bet_message game=" + std::to_string(game_id) + " channel=" + std::to_string(game.channel_id) + " msg=" + std::to_string(game.message_id));
     bot.message_edit(msg, [game_id](const dpp::confirmation_callback_t& callback) {
         if (callback.is_error()) {
             auto err = callback.get_error();
-            std::cout << DBG_ROUL "roulette message_edit callback game=" << game_id
-                      << " code=" << err.code << " msg=" << err.message << "\n";
-            // still log 10062 so we can see when unknown interaction occurs
+            bronx::logger::error("roulette 🎰", "message_edit callback game=" + std::to_string(game_id) + ": " + err.message);
         }
     });
 }
@@ -337,9 +336,9 @@ inline void roulette_spin_worker(dpp::cluster& bot, Database* db, uint64_t game_
         if (cb.is_error()) {
             if (cb.get_error().code == 10062) {
                 token_valid->store(false);
-                std::cout << DBG_ROUL "interaction token expired, skipping remaining frames\n";
+                bronx::logger::warn("roulette 🎰", "interaction token expired, skipping remaining frames");
             } else {
-                std::cout << "[ERROR] roulette anim edit: " << cb.get_error().message << std::endl;
+                bronx::logger::error("roulette 🎰", "anim edit: " + cb.get_error().message);
             }
         }
     };
@@ -526,10 +525,10 @@ inline void roulette_spin_worker(dpp::cluster& bot, Database* db, uint64_t game_
 }
 
 inline void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {
-    std::cout << DBG_ROUL "handle_roulette_spin game=" << game_id << " user=" << event.command.get_issuing_user().id << "\n";
+    bronx::logger::debug("roulette 🎰", "handle_roulette_spin game=" + std::to_string(game_id) + " user=" + std::to_string(event.command.get_issuing_user().id));
     auto it = active_roulette_games.find(game_id);
     if (it == active_roulette_games.end() || !it->second.active) {
-        std::cout << DBG_ROUL "roulette spin inactive game_id=" << game_id << "\n";
+        bronx::logger::debug("roulette 🎰", "spin inactive game_id=" + std::to_string(game_id));
         event.reply(dpp::ir_update_message, dpp::message().set_content("This roulette game is no longer active."), dpp::utility::log_error());
         return;
     }
@@ -538,7 +537,7 @@ inline void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::but
     
     // Check if the user is the author
     if (event.command.get_issuing_user().id != game.author_id) {
-        std::cout << DBG_ROUL "roulette spin unauthorized user=" << event.command.get_issuing_user().id << " game_id=" << game_id << "\n";
+        bronx::logger::debug("roulette 🎰", "spin unauthorized user=" + std::to_string(event.command.get_issuing_user().id) + " game_id=" + std::to_string(game_id));
         event.reply(dpp::ir_channel_message_with_source,
             dpp::message().add_embed(bronx::error("Only the game author can start the spin!")).set_flags(dpp::m_ephemeral),
             dpp::utility::log_error());
@@ -557,9 +556,9 @@ inline void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::but
     int result = dis(gen);
     
     // Debug log the result for tracking distribution
-    std::cout << DBG_ROUL "roulette_spin result=" << result 
-              << " display=" << get_number_display(result)
-              << " color=" << get_number_color_name(result) << std::endl;
+    bronx::logger::debug("roulette 🎰", "spin result=" + std::to_string(result) 
+              + " display=" + get_number_display(result)
+              + " color=" + get_number_color_name(result));
     
     // Initial spinning embed (edit after defer using interaction webhook to avoid 50013)
     // PERFORMANCE FIX: Run animation + result processing in a detached thread to
@@ -574,10 +573,10 @@ inline void handle_roulette_spin(dpp::cluster& bot, Database* db, const dpp::but
 }
 
 inline void handle_roulette_cancel(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t game_id) {
-    std::cout << DBG_ROUL "handle_roulette_cancel game=" << game_id << " user=" << event.command.get_issuing_user().id << "\n";
+    bronx::logger::debug("roulette 🎰", "handle_roulette_cancel game=" + std::to_string(game_id) + " user=" + std::to_string(event.command.get_issuing_user().id));
     auto it = active_roulette_games.find(game_id);
     if (it == active_roulette_games.end()) {
-        std::cout << DBG_ROUL "roulette cancel inactive game_id=" << game_id << "\n";
+        bronx::logger::debug("roulette 🎰", "cancel inactive game_id=" + std::to_string(game_id));
         event.reply(dpp::ir_update_message, dpp::message().set_content("This roulette game is no longer active."), dpp::utility::log_error());
         return;
     }
@@ -585,7 +584,9 @@ inline void handle_roulette_cancel(dpp::cluster& bot, Database* db, const dpp::b
     auto& game = it->second;
     
     // Only author can cancel
-    if (event.command.get_issuing_user().id != game.author_id) {        std::cout << DBG_ROUL "roulette cancel unauthorized user=" << event.command.get_issuing_user().id << " game_id=" << game_id << "\n";        event.reply(dpp::ir_channel_message_with_source,
+    if (event.command.get_issuing_user().id != game.author_id) {
+        bronx::logger::debug("roulette 🎰", "cancel unauthorized user=" + std::to_string(event.command.get_issuing_user().id) + " game_id=" + std::to_string(game_id));
+        event.reply(dpp::ir_channel_message_with_source,
             dpp::message().add_embed(bronx::error("Only the game author can cancel!")).set_flags(dpp::m_ephemeral),
             dpp::utility::log_error());
         return;
@@ -800,14 +801,14 @@ inline Command* get_roulette_command(Database* db) {
                 // Fetch the actual message to get its ID
                 bot.interaction_response_get_original(token, [game_id](const dpp::confirmation_callback_t& resp_callback) {
                     if (resp_callback.is_error()) {
-                        std::cout << DBG_ROUL "roulette interaction_response_get_original failed: " << resp_callback.get_error().message << "\n";
+                        bronx::logger::error("roulette 🎰", "interaction_response_get_original failed: " + resp_callback.get_error().message);
                         return;
                     }
                     auto msg = resp_callback.get<dpp::message>();
                     auto it = active_roulette_games.find(game_id);
                     if (it != active_roulette_games.end()) {
                         it->second.message_id = msg.id;
-                        std::cout << DBG_ROUL "roulette slash command message_id set to " << msg.id << "\n";
+                        bronx::logger::debug("roulette 🎰", "slash command message_id set to " + std::to_string(msg.id));
                     }
                 });
             });

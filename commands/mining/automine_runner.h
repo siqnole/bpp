@@ -5,6 +5,7 @@
 #include "../global_boss.h"
 #include <chrono>
 #include <iostream>
+#include "../../utils/logger.h"
 #include <cmath>
 #include <set>
 
@@ -39,7 +40,7 @@ inline int64_t run_automine_for_user(Database* db, uint64_t user_id) {
         }
 
         if (pickaxe_id.empty() || minecart_id.empty() || bag_id.empty()) {
-            std::cerr << "Autominer user=" << user_id << " missing gear\n";
+            bronx::logger::warn("autominer", "user=" + std::to_string(user_id) + " missing gear");
             return 0;
         }
 
@@ -118,8 +119,7 @@ inline int64_t run_automine_for_user(Database* db, uint64_t user_id) {
             db->increment_stat(user_id, "ores_sold", 1);
         }
 
-        std::cout << "Autominer user=" << user_id
-                  << " mined=" << num_ores << " value=$" << total_value << "\n";
+        bronx::logger::debug("autominer", "user=" + std::to_string(user_id) + " mined=" + std::to_string(num_ores) + " value=$" + std::to_string(total_value));
 
         // Track global boss progress from autominer
         if (num_ores > 0) {
@@ -130,10 +130,10 @@ inline int64_t run_automine_for_user(Database* db, uint64_t user_id) {
         return total_value;
 
     } catch (const std::exception& e) {
-        std::cerr << "Autominer error user=" << user_id << ": " << e.what() << "\n";
+        bronx::logger::error("autominer", "error user=" + std::to_string(user_id) + ": " + std::string(e.what()));
         return 0;
     } catch (...) {
-        std::cerr << "Autominer unknown error user=" << user_id << "\n";
+        bronx::logger::error("autominer", "unknown error user=" + std::to_string(user_id));
         return 0;
     }
 }

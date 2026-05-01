@@ -25,6 +25,8 @@
 #include "utility/media.h"
 #include "utility/media_edit.h"
 #endif
+#include "utility/interaction_roles.h"
+#include "utility/tickets.h"
 #include <vector>
 
 namespace commands {
@@ -88,6 +90,9 @@ inline ::std::vector<Command*> get_utility_commands(CommandHandler* handler, bro
             for (auto* cmd : giveaway_cmds) {
                 cmds.push_back(cmd);
             }
+            
+            cmds.push_back(utility::get_interaction_role_command(db));
+            cmds.push_back(utility::get_ticket_setup_command(db));
         }
     }
     
@@ -103,6 +108,8 @@ inline void register_utility_interactions(dpp::cluster& bot, bronx::db::Database
     if (db) {
         utility::register_giveaway_interactions(bot, db);
         utility::register_privacy_interactions(bot, db);
+        utility::register_interaction_role_interactions(bot, db);
+        utility::register_ticket_interactions(bot, db);
     }
     if (snipe_cache) {
         utility::register_snipe_interactions(bot, snipe_cache);

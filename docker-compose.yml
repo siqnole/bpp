@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bpp-bot:latest
+    container_name: bpp-bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - /tmp:/tmp
+    # If you want to use the TUI, run with: docker-compose run --rm discord-bot
+    # For production background run: docker-compose up -d
+    command: ["--no-tui"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"

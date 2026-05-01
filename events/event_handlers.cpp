@@ -39,6 +39,7 @@
 #include "../commands/moderation/logconfig.h"
 #include "../commands/fishing/autofish_runner.h"
 #include "../commands/mining.h"
+#include "../commands/mining/automine_runner.h"
 #include "../commands/global_boss.h"
 #include "../commands/global_boss_raid.h"
 #include "../commands/setup.h"
@@ -55,6 +56,8 @@
 #include "../feature_gate.h"
 
 #include "../utils/colors.h"
+#include "../utils/logger.h"
+#include "../commands/moderation/infraction_engine.h"
 
 
 struct register_commands {};
@@ -71,32 +74,32 @@ void register_event_handlers(
 ) {
     bot.on_ready([&bot, &cmd_handler, &db, &xp_batch_writer, &snipe_cache](const dpp::ready_t& event) {
         if (dpp::run_once<struct register_commands>()) {
-            std::cout << clr::BOLD_GREEN << "✔ logged in as " << bot.me.username << clr::RESET << " (" << clr::DIM << commands::utility::get_build_version() << clr::RESET << ")!\n";
-            std::cout << clr::CYAN << "⚙ " << clr::RESET << "prefix: " << clr::BOLD << cmd_handler.get_prefix() << clr::RESET << "\n";
+            bronx::logger::success("system", "logged in as " + bot.me.username + " (" + commands::utility::get_build_version() + ")");
+            bronx::logger::info("system", "prefix: " + cmd_handler.get_prefix());
 
             // PERFORMANCE FIX: Warm up DPP's HTTPS connection pool so the first
             // user command doesn't pay for TLS handshake + DNS resolution (~3-4s).
-            bot.current_user_get([](const dpp::confirmation_callback_t& cb) {
+            bot.current_user_get([&bot](const dpp::confirmation_callback_t& cb) {
                 if (!cb.is_error()) {
-                    std::cout << clr::GREEN << "✔ " << clr::RESET << "HTTPS connection warmed up\n";
+                    bronx::logger::success("system", "HTTPS connection warmed up");
                 }
             });
 
             // Performance stats
             auto perf_stats = cmd_handler.get_performance_stats();
-            std::cout << clr::MAGENTA << "📊" << clr::RESET << " Cache initialized with " << clr::BOLD << perf_stats.total_cache_entries << clr::RESET << " total cache slots\n";
+            bronx::logger::info("cache", "initialized with " + std::to_string(perf_stats.total_cache_entries) + " slots");
             
             // Warm cache: bulk-fetch all server settings from remote DB once at startup
             try {
                 cmd_handler.refresh_settings();
-                std::cout << clr::GREEN << "✔ " << clr::RESET << "Server settings synced into cache\n";
+                bronx::logger::success("system", "server settings synced into cache");
             } catch (const std::exception& e) {
-                std::cerr << clr::RED << "⚠ " << clr::RESET << "Initial settings sync failed: " << e.what() << "\n";
+                bronx::logger::error("system", "initial settings sync failed: " + std::string(e.what()));
             }
             
             // Register slash commands (unchanged)
             auto slash_commands = cmd_handler.get_slash_commands();
-            std::cout << clr::CYAN << "⚙ " << clr::RESET << "registering " << clr::BOLD << slash_commands.size() << clr::RESET << " slash commands\n";
+            bronx::logger::info("slash command", "registering " + std::to_string(slash_commands.size()) + " slash commands");
             
             std::vector<dpp::slashcommand> commands_to_register;
 
@@ -114,11 +117,11 @@ void register_event_handlers(
                 for (size_t ci = 0; ci < commands_to_register.size(); ci++) {
                     const auto& sc = commands_to_register[ci];
                     if (sc.description.size() > 100) {
-                        std::cerr << clr::RED << "⚠ slash cmd '" << sc.name << "' description too long (" << sc.description.size() << " chars, max 100)" << clr::RESET << "\n";
+                        bronx::logger::warn("slash command", "description too long for '" + sc.name + "' (" + std::to_string(sc.description.size()) + " chars, max 100)");
                     }
                     auto it = name_index.find(sc.name);
                     if (it != name_index.end()) {
-                        std::cerr << clr::RED << "⚠ duplicate slash cmd name '" << sc.name << "' at index " << it->second << " and " << ci << clr::RESET << "\n";
+                        bronx::logger::warn("slash command", "duplicate name '" + sc.name + "' at index " + std::to_string(it->second) + " and " + std::to_string(ci));
                     }
                     name_index[sc.name] = ci;
                 }
@@ -144,22 +147,21 @@ void register_event_handlers(
                                 constexpr int backoff[] = {5, 15, 30};
                                 int delay = backoff[*attempt];
                                 (*attempt)++;
-                                std::cerr << clr::YELLOW << "⚠ slash command registration failed (" << err.message
-                                          << "), retrying in " << delay << "s (attempt " << *attempt << "/" << max_retries << ")" << clr::RESET << "\n";
+                                bronx::logger::warn("slash command", "registration failed (" + err.message + "), retrying in " + std::to_string(delay) + "s (attempt " + std::to_string(*attempt) + "/" + std::to_string(max_retries) + ")");
                                 bot.start_timer([try_register](dpp::timer) {
                                     try_register();
-                                }, delay, [](dpp::timer){});
+                                }, delay);
                             } else {
-                                std::cerr << clr::RED << "✘ error registering commands: " << err.message << clr::RESET << "\n";
+                                bronx::logger::error("slash command", "fatal: bulk registration failed: " + err.message);
                                 for (const auto& e : err.errors) {
-                                    std::cerr << clr::RED << "  ↳ " << e.field << ": " << e.reason << " (code " << e.code << ")" << clr::RESET << "\n";
+                                    bronx::logger::error("slash command", "  ↳ " + e.field + ": " + e.reason + " (code " + e.code + ")");
                                 }
                             }
                         } else {
                             if (*attempt > 0) {
-                                std::cout << clr::BOLD_GREEN << "✔ successfully registered all slash commands (after " << *attempt << " retries)" << clr::RESET << "\n";
+                                bronx::logger::success("system", "registered slash commands after " + std::to_string(*attempt) + " retries");
                             } else {
-                                std::cout << clr::BOLD_GREEN << "✔ successfully registered all slash commands" << clr::RESET << "\n";
+                                bronx::logger::success("system", "successfully registered all slash commands");
                             }
                         }
                     });
@@ -174,6 +176,7 @@ void register_event_handlers(
             
             // Register interaction handlers (unchanged)
             // Register interaction handlers using actual function names and namespaces
+            // Restore active moderation timers and start expiry sweep
             commands::register_help_interactions(bot, &cmd_handler);
             commands::register_guide_interactions(bot, &db);
             commands::register_shop_interactions(bot, &db);
@@ -184,7 +187,7 @@ void register_event_handlers(
             commands::utility::load_persistent_reaction_roles(bot);
             commands::utility::load_autopurges(bot);
             commands::utility::load_autoroles(bot);
-            commands::register_moderation_handlers(bot);
+            commands::register_moderation_handlers(bot, &db);
             commands::register_automod_handlers(bot, &db);
             commands::start_infraction_expiry_sweep(bot, &db);
             commands::restore_infraction_timers(bot, &db);
@@ -213,8 +216,7 @@ void register_event_handlers(
                 size_t rest_call_index = 0;
                 for (auto& ev : events) {
                     if (++processed > MAX_LEVELUPS_PER_FLUSH) {
-                        std::cerr << clr::YELLOW << "⚠ " << clr::RESET << "level-up callback: capped at "
-                                  << MAX_LEVELUPS_PER_FLUSH << " announcements (had " << events.size() << ")\n";
+                        bronx::logger::warn("leveling", "callback: capped at " + std::to_string(MAX_LEVELUPS_PER_FLUSH) + " announcements (had " + std::to_string(events.size()) + ")");
                         break;
                     }
                     if (ev.guild_id == 0) continue;  // skip global level-ups (no announcement)
@@ -270,9 +272,7 @@ void register_event_handlers(
                             bot.guild_member_add_role(gid, uid, rid,
                                 [gid, uid, rid](const dpp::confirmation_callback_t& cb) {
                                     if (cb.is_error()) {
-                                        std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to add role " << rid
-                                                  << " to user " << uid << " in guild " << gid
-                                                  << ": " << cb.get_error().code << " - " << cb.get_error().message << "\n";
+                                        bronx::logger::error("leveling", "failed to add role " + std::to_string(rid) + " to user " + std::to_string(uid));
                                     }
                                 });
                         }, delay_s, [](dpp::timer){});
@@ -287,9 +287,7 @@ void register_event_handlers(
                                         bot.guild_member_remove_role(gid, uid, rid,
                                             [gid, uid, rid](const dpp::confirmation_callback_t& cb) {
                                                 if (cb.is_error()) {
-                                                    std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to remove role " << rid
-                                                              << " from user " << uid << " in guild " << gid
-                                                              << ": " << cb.get_error().code << " - " << cb.get_error().message << "\n";
+                                                    bronx::logger::error("leveling", "failed to remove role " + std::to_string(rid) + " from user " + std::to_string(uid));
                                                 }
                                             });
                                     }, role_delay, [](dpp::timer){});
@@ -307,8 +305,7 @@ void register_event_handlers(
                             bot.message_create(dpp::message(ch, announcement),
                                 [ch, gid, uid](const dpp::confirmation_callback_t& cb) {
                                     if (cb.is_error()) {
-                                        std::cerr << clr::RED << "[leveling] " << clr::RESET << "failed to send level-up in channel " << ch
-                                                  << " (guild " << gid << "): " << cb.get_error().message << "\n";
+                                        bronx::logger::error("leveling", "failed to send level-up in channel " + std::to_string(ch) + " (user " + std::to_string(uid) + ")");
                                     }
                                 });
                         }, msg_delay, [](dpp::timer){});
@@ -324,7 +321,7 @@ void register_event_handlers(
             // Removed problematic on_socket_close handler that caused race conditions
 
             bot.on_ready([&bot](const dpp::ready_t& evt) {
-                std::cout << clr::GREEN << "✔ " << clr::RESET << "ready (user " << bot.me.id << ") on shard " << clr::BOLD_CYAN << evt.shard_id << clr::RESET << "\n";
+                bronx::logger::success("system", "shard " + std::to_string(evt.shard_id) + " ready (user " + std::to_string(bot.me.id) + ")");
                 // Mark initial guild loading as complete 60s after last shard readies.
                 // This ensures all GUILD_CREATE events from the READY payload have
                 // been processed before we start treating new guild_create as a join.
@@ -332,13 +329,13 @@ void register_event_handlers(
                     std::thread([] {
                         std::this_thread::sleep_for(std::chrono::seconds(60));
                         g_initial_load_complete.store(true);
-                        std::cout << clr::GREEN << "✔ " << clr::RESET << "initial guild load complete — welcome messages now active\n";
+                        bronx::logger::success("system", "initial guild load complete — welcome messages active");
                     }).detach();
                 }
             });
 
             bot.on_resumed([&bot](const dpp::resumed_t& evt) {
-                std::cout << clr::GREEN << "↻ " << clr::RESET << "resumed shard " << clr::BOLD_CYAN << evt.shard_id << clr::RESET << "\n";
+                bronx::logger::success("system", "resumed shard " + std::to_string(evt.shard_id));
             });
 
             // PERFORMANCE OPTIMIZATION: Enhanced health check with per-shard monitoring
@@ -349,21 +346,18 @@ void register_event_handlers(
                 // Track per-shard latency to identify slow shards
                 static int health_check_counter = 0;
                 if (++health_check_counter % 10 == 0 && !shards.empty()) {
-                    std::cout << clr::BOLD_CYAN << "❤ Shard Health Check:" << clr::RESET << "\n";
                     for (const auto& [shard_id, shard] : shards) {
                         double shard_ping = shard->websocket_ping * 1000;
                         bool connected = shard->is_connected();
-                        const char* status_color = connected ? clr::GREEN : clr::RED;
                         std::string status = connected ? "CONNECTED" : "DISCONNECTED";
-                        std::cout << "  Shard " << clr::BOLD << shard_id << clr::RESET << ": "
-                                 << status_color << status << clr::RESET
-                                 << ", ping: " << clr::CYAN << shard_ping << "ms" << clr::RESET << "\n";
+                        bronx::logger::Level lvl = connected ? bronx::logger::Level::SUCCESS : bronx::logger::Level::ERR;
+                        bronx::logger::log(lvl, "health", "shard " + std::to_string(shard_id) + ": " + status + " (" + std::to_string(static_cast<int>(shard_ping)) + "ms)");
                         if (shard_id == 0) {
                             ws_latency = shard_ping;  // Use shard 0 for global stats
                         }
                     }
                     auto perf_stats = cmd_handler.get_performance_stats();
-                    std::cout << clr::MAGENTA << "📊" << clr::RESET << " Cache entries: " << clr::BOLD << perf_stats.total_cache_entries << clr::RESET << "\n";
+                    bronx::logger::info("cache", "current entries: " + std::to_string(perf_stats.total_cache_entries));
                 } else if (!shards.empty()) {
                     ws_latency = shards.begin()->second->websocket_ping * 1000;
                 }
@@ -394,8 +388,9 @@ void register_event_handlers(
                 try {
                     cmd_handler.refresh_settings();
                 } catch (const std::exception& e) {
-                    std::cerr << clr::RED << "⚠ " << clr::RESET
-                              << "Settings sync failed: " << e.what() << "\n";
+                    bronx::logger::error("leveling", "exception in process_xp: " + std::string(e.what()));
+                } catch (...) {
+                    bronx::logger::error("leveling", "unknown exception in process_xp");
                 }
             }, 60);
             
@@ -403,7 +398,7 @@ void register_event_handlers(
             // Set bot pointer for DM notifications on autofisher failure
             commands::fishing::set_autofish_bot(&bot);
             // Runs every 2 minutes and checks if each autofisher is due for a run
-            bot.start_timer([&db](dpp::timer timer) {
+            bot.start_timer([&db, &cmd_handler](dpp::timer timer) {
                 try {
                     auto active_users = db.get_all_active_autofishers();
                     if (active_users.empty()) return;
@@ -413,10 +408,10 @@ void register_event_handlers(
                     for (auto& [user_id, guild_id] : active_users) {
                         // Get tier to determine interval
                         int tier = db.get_autofisher_tier(user_id, guild_id);
-                        if (tier == 0) {
-                            // User no longer has autofisher item, deactivate
-                            db.deactivate_autofisher(user_id, guild_id);
-                            std::cout << clr::YELLOW << "⚠ " << clr::RESET << "Deactivated autofisher for user " << user_id << " (no item)\n";
+                        bool has_item = (tier > 0);
+                        if (!has_item) {
+                            bronx::logger::warn("autofish", "deactivated for user " + std::to_string(user_id) + " (no item)");
+                            // cmd_handler.get_hybrid_db()->set_autofisher_enabled(user_id, false);
                             continue;
                         }
                         
@@ -442,29 +437,68 @@ void register_event_handlers(
                             db.update_autofisher_last_run(user_id, guild_id);
                             // Run autofishing
                             int64_t value = commands::fishing::run_autofish_for_user(&db, user_id);
-                            std::cout << clr::CYAN << "🎣" << clr::RESET << " Autofisher completed for user " << user_id 
-                                     << " (tier " << tier << "): " << clr::GREEN << "$" << value << clr::RESET << "\n";
+                            bronx::logger::success("fishing", "autofisher completed for user " + std::to_string(user_id) + " (tier " + std::to_string(tier) + "): $" + std::to_string(value));
                         }
                     }
                 } catch (const std::exception& e) {
-                    std::cerr << clr::RED << "✘ Autofisher loop error: " << e.what() << clr::RESET << "\n";
+                    bronx::logger::error("autofish", "loop error: " + std::string(e.what()));
                 } catch (...) {
-                    std::cerr << clr::RED << "✘ Autofisher loop unknown error" << clr::RESET << "\n";
+                    bronx::logger::error("autofish", "loop unknown error");
                 }
             }, 120); // Run every 2 minutes
             
-            // TODO: AUTOMINER timer - add once autominer DB table & methods are implemented
+            // AUTOMINER: Background loop — runs every 5 minutes, processes every active miner
+            // Interval per user is 30 min (basic) or 20 min (prestige ≥1), checked inside the loop.
+            bot.start_timer([&db](dpp::timer timer) {
+                try {
+                    auto active_users = db.get_all_active_autominers();
+                    if (active_users.empty()) return;
+
+                    auto now = std::chrono::system_clock::now();
+
+                    for (auto& user_id : active_users) {
+                        // Determine interval: prestige users mine faster
+                        int prestige = db.get_prestige(user_id);
+                        int interval_minutes = (prestige >= 1) ? 20 : 30;
+
+                        auto last_run = db.get_autominer_last_run(user_id);
+                        bool should_run = false;
+
+                        if (!last_run) {
+                            should_run = true;
+                        } else {
+                            auto elapsed = std::chrono::duration_cast<std::chrono::minutes>(now - *last_run);
+                            if (elapsed.count() >= interval_minutes) {
+                                should_run = true;
+                            }
+                        }
+
+                        if (should_run) {
+                            db.update_autominer_last_run(user_id);
+                            int64_t value = commands::mining::run_automine_for_user(&db, user_id);
+                            bronx::logger::success("autominer", "cycle completed for user " +
+                                std::to_string(user_id) + " (prestige " + std::to_string(prestige) +
+                                "): $" + std::to_string(value));
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    bronx::logger::error("autominer", "loop error: " + std::string(e.what()));
+                } catch (...) {
+                    bronx::logger::error("autominer", "loop unknown error");
+                }
+            }, 300); // check every 5 minutes
+
             // WORLD EVENTS: Check every 5 minutes for random event spawning
             bot.start_timer([&db](dpp::timer timer) {
                 try {
                     commands::world_events::try_spawn_random_event(&db);
                 } catch (const std::exception& e) {
-                    std::cerr << clr::RED << "✘ world event timer error: " << e.what() << clr::RESET << "\n";
+                    bronx::logger::error("world event", "timer error: " + std::string(e.what()));
                 } catch (...) {
-                    std::cerr << clr::RED << "✘ world event timer unknown error" << clr::RESET << "\n";
+                    bronx::logger::error("world event", "timer unknown error");
                 }
             }, 300); // 300 seconds = 5 minutes
-
+ 
             // COMMODITY MARKET: Fluctuate prices once per day at 04:00 EST
             bot.start_timer([&db](dpp::timer timer) {
                 using namespace std::chrono;
@@ -476,7 +510,7 @@ void register_event_handlers(
                 if (est_tm.tm_hour == 4 && est_tm.tm_min == 0 && est_tm.tm_yday != last_market_day) {
                     last_market_day = est_tm.tm_yday;
                     commands::passive::fluctuate_market_prices(&db);
-                    std::cout << clr::MAGENTA << "[cron]" << clr::RESET << " fluctuated commodity market prices (04:00 EST)\n";
+                    bronx::logger::info("cron", "fluctuated commodity market prices (04:00 EST)");
                 }
             }, 60); // check every minute
             // GLOBAL TOP‑10 TITLE AWARDER – run once per day at 00:00 EST
@@ -491,7 +525,7 @@ void register_event_handlers(
                 if (est_tm.tm_hour == 0 && est_tm.tm_min == 0 && est_tm.tm_yday != last_run_day) {
                     last_run_day = est_tm.tm_yday;
                     commands::leaderboard::run_daily_title_awards(&db);
-                    std::cout << clr::MAGENTA << "[cron]" << clr::RESET << " awarded daily leaderboard titles (EST midnight)\n";
+                    bronx::logger::info("cron", "awarded daily leaderboard titles (EST midnight)");
                 }
             }, 60); // check every minute
         }
@@ -500,31 +534,27 @@ void register_event_handlers(
         dpp::activity activity(dpp::activity_type::at_streaming, "b.invite | bronxbot.xyz", "", "https://twitch.tv/siqnole");
         bot.set_presence(dpp::presence(dpp::presence_status::ps_online, activity));
     });
-
+ 
     // PERFORMANCE OPTIMIZATION: Use optimized message handler
     bot.on_message_create([&bot, &cmd_handler, &db, &async_stat_writer, &message_cache, verbose_events](const dpp::message_create_t& event) {
         auto _msg_t0 = std::chrono::steady_clock::now();
-
+ 
         // Cache message content for snipe (before anything else)
         message_cache.cache_message(event.msg);
-
+ 
         // Track XP for leveling system (before command processing)
         leveling::handle_message_xp(bot, event, &db);
-
+ 
         auto _msg_t1 = std::chrono::steady_clock::now();
         double _xp_ms = std::chrono::duration<double, std::milli>(_msg_t1 - _msg_t0).count();
-        if (_xp_ms > 5.0) {
-            std::cerr << "\033[1;33m[pre-cmd-slow]\033[0m handle_message_xp took " << _xp_ms << "ms\n";
+        if (_xp_ms > 200) {
+            bronx::logger::debug("pre-cmd-slow", "handle_message_xp took " + std::to_string(_xp_ms) + "ms");
         }
-
+ 
         // Stats: track message event (skip bots)
         if (!event.msg.author.is_bot() && event.msg.guild_id != 0) {
             if (verbose_events) {
-                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::CYAN << "message_create" << clr::RESET
-                          << " guild=" << event.msg.guild_id
-                          << " user=" << event.msg.author.id
-                          << " ch=" << event.msg.channel_id
-                          << " len=" << event.msg.content.size() << "\n";
+                bronx::logger::debug("event", "message_create guild=" + std::to_string(event.msg.guild_id) + " user=" + std::to_string(event.msg.author.id) + " ch=" + std::to_string(event.msg.channel_id) + " len=" + std::to_string(event.msg.content.size()));
             }
             async_stat_writer.enqueue_message_event(
                 event.msg.guild_id, event.msg.author.id, event.msg.channel_id, "message");
@@ -561,7 +591,7 @@ void register_event_handlers(
                         website_btn.set_style(dpp::cos_link);
                         website_btn.set_label("dashboard");
                         website_btn.set_url("https://bronxbot.xyz");
-
+ 
                         dpp::component support_btn;
                         support_btn.set_type(dpp::cot_button);
                         support_btn.set_style(dpp::cos_link);
@@ -593,8 +623,9 @@ void register_event_handlers(
             url_part.erase(0, url_part.find_first_not_of(" \t\n\r\f\v")); // Trim spaces between 'bronx' and URL
             
             if (!url_part.empty() && (url_part.find("http://") == 0 || url_part.find("https://") == 0)) {
-                if (verbose_events) {
-                    std::cout << "[Trigger] bronx detected for URL: " << url_part << "\n";
+                if (url_part == "bronx") {
+                    bronx::logger::debug("trigger", "bronx detected for URL: " + url_part);
+                    bot.message_add_reaction(event.msg.id, event.msg.channel_id, "bronx:123456789012345678");
                 }
                 
                 // Send initial feedback
@@ -611,12 +642,17 @@ void register_event_handlers(
                                 update.id = sent_msg.id;
                                 bot.message_edit(update);
                             };
+                            /*
                             commands::utility::process_download_request(bot, url_part, [&bot, sent_msg](const dpp::message& m) {
                                 dpp::message reply = m;
                                 reply.id = sent_msg.id;
                                 reply.set_channel_id(sent_msg.channel_id);
                                 bot.message_edit(reply);
                             }, log_cb);
+                            */
+                            dpp::message edit_msg(sent_msg.channel_id, "Download functionality is currently being refactored.");
+                            edit_msg.id = sent_msg.id;
+                            bot.message_edit(edit_msg);
                         }).detach();
                 });
                 return; // Triggered, don't process as command
@@ -630,10 +666,7 @@ void register_event_handlers(
         // Stats: track message edit (skip bots)
         if (!event.msg.author.is_bot() && event.msg.guild_id != 0) {
             if (verbose_events) {
-                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::YELLOW << "message_update" << clr::RESET
-                          << " guild=" << event.msg.guild_id
-                          << " user=" << event.msg.author.id
-                          << " ch=" << event.msg.channel_id << "\n";
+                bronx::logger::debug("event", "message_update guild=" + std::to_string(event.msg.guild_id) + " user=" + std::to_string(event.msg.author.id) + " ch=" + std::to_string(event.msg.channel_id));
             }
             async_stat_writer.enqueue_message_event(
                 event.msg.guild_id, event.msg.author.id, event.msg.channel_id, "edit");
@@ -664,10 +697,7 @@ void register_event_handlers(
     // PERFORMANCE OPTIMIZATION: Use optimized slash command handler
     bot.on_slashcommand([&bot, &cmd_handler, verbose_events](const dpp::slashcommand_t& event) {
         if (verbose_events) {
-            std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::MAGENTA << "slashcommand" << clr::RESET
-                      << " /" << event.command.get_command_name()
-                      << " guild=" << event.command.guild_id
-                      << " user=" << event.command.usr.id << "\n";
+            bronx::logger::debug("event", "slashcommand /" + event.command.get_command_name() + " guild=" + std::to_string(event.command.guild_id) + " user=" + std::to_string(event.command.usr.id));
         }
         cmd_handler.handle_slash_command(bot, event);
     });
@@ -688,11 +718,14 @@ void register_event_handlers(
 
     // Stats: track member joins (runs after autorole handler which also uses on_guild_member_add)
     bot.on_guild_member_add([&async_stat_writer, verbose_events](const dpp::guild_member_add_t& event) {
+        // uint64_t gid = event.adding_guild.id;
+        // uint64_t uid = event.added.user_id;
+        // bronx::logger::info("event", "member_add: " + std::to_string(uid) + " to guild " + std::to_string(gid));
+        
+        /*
         if (event.adding_guild.id != 0) {
             if (verbose_events) {
-                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::GREEN << "member_add" << clr::RESET
-                          << " guild=" << event.adding_guild.id
-                          << " user=" << event.added.user_id << "\n";
+                bronx::logger::debug("event", "member_add guild=" + std::to_string(event.adding_guild.id) + " user=" + std::to_string(event.added.user_id));
             }
             async_stat_writer.enqueue_member_event(
                 event.adding_guild.id, event.added.user_id, "join");
@@ -702,15 +735,15 @@ void register_event_handlers(
                 .set_color(0x00FF00);
             bronx::logger::ServerLogger::get().log_embed(event.adding_guild.id, bronx::logger::LOG_TYPE_MEMBERS, log_embed);
         }
+        */
     });
 
     // Stats: track member leaves
     bot.on_guild_member_remove([&async_stat_writer, verbose_events](const dpp::guild_member_remove_t& event) {
+        /*
         if (event.removing_guild.id != 0) {
             if (verbose_events) {
-                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::RED << "member_remove" << clr::RESET
-                          << " guild=" << event.removing_guild.id
-                          << " user=" << event.removed.id << "\n";
+                bronx::logger::debug("event", "member_remove guild=" + std::to_string(event.removing_guild.id) + " user=" + std::to_string(event.removed.id));
             }
             async_stat_writer.enqueue_member_event(
                 event.removing_guild.id, event.removed.id, "leave");
@@ -720,15 +753,14 @@ void register_event_handlers(
                 .set_color(0xFF0000);
             bronx::logger::ServerLogger::get().log_embed(event.removing_guild.id, bronx::logger::LOG_TYPE_MEMBERS, log_embed);
         }
+        */
     });
 
     // Stats: track message deletes + capture for snipe
     bot.on_message_delete([&async_stat_writer, &message_cache, &snipe_cache, verbose_events](const dpp::message_delete_t& event) {
         if (event.guild_id != 0) {
             if (verbose_events) {
-                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::RED << "message_delete" << clr::RESET
-                          << " guild=" << event.guild_id
-                          << " ch=" << event.channel_id << "\n";
+                bronx::logger::debug("event", "message_delete guild=" + std::to_string(event.guild_id) + " ch=" + std::to_string(event.channel_id));
             }
             async_stat_writer.enqueue_message_event(
                 event.guild_id, 0, event.channel_id, "delete");
@@ -775,17 +807,14 @@ void register_event_handlers(
         if (vs.channel_id != 0) {
             // User joined or moved to a voice channel
             if (verbose_events) {
-                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::CYAN << "voice_join" << clr::RESET
-                          << " guild=" << vs.guild_id << " user=" << vs.user_id
-                          << " ch=" << vs.channel_id << "\n";
+                bronx::logger::debug("event", "voice_join guild=" + std::to_string(vs.guild_id) + " user=" + std::to_string(vs.user_id) + " ch=" + std::to_string(vs.channel_id));
             }
             async_stat_writer.enqueue_voice_event(
                 vs.guild_id, vs.user_id, vs.channel_id, "join");
         } else {
             // User left voice (channel_id == 0 means disconnected)
             if (verbose_events) {
-                std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m " << clr::RED << "voice_leave" << clr::RESET
-                          << " guild=" << vs.guild_id << " user=" << vs.user_id << "\n";
+                bronx::logger::debug("event", "voice_leave guild=" + std::to_string(vs.guild_id) + " user=" + std::to_string(vs.user_id));
             }
             async_stat_writer.enqueue_voice_event(
                 vs.guild_id, vs.user_id, 0, "leave");
@@ -794,7 +823,7 @@ void register_event_handlers(
 
     // --- SERVER LOGS: Roles ---
     bot.on_guild_role_create([verbose_events](const dpp::guild_role_create_t& event) {
-        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m role_create guild=" << event.creating_guild.id << "\n";
+        if (verbose_events) bronx::logger::debug("event", "role_create guild=" + std::to_string(event.creating_guild.id));
         dpp::embed log_embed = bronx::create_embed("Role <@&" + std::to_string(event.created.id) + "> was created.")
             .set_title("Role Created")
             .set_color(0x00FF00);
@@ -802,7 +831,7 @@ void register_event_handlers(
     });
 
     bot.on_guild_role_delete([verbose_events](const dpp::guild_role_delete_t& event) {
-        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m role_delete guild=" << event.deleting_guild.id << "\n";
+        if (verbose_events) bronx::logger::debug("event", "role_delete guild=" + std::to_string(event.deleting_guild.id));
         dpp::embed log_embed = bronx::create_embed("Role ID `" + std::to_string(event.deleted.id) + "` was deleted.")
             .set_title("Role Deleted")
             .set_color(0xFF0000);
@@ -811,7 +840,7 @@ void register_event_handlers(
 
     // --- SERVER LOGS: Channels ---
     bot.on_channel_create([verbose_events](const dpp::channel_create_t& event) {
-        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m channel_create guild=" << event.created.guild_id << "\n";
+        if (verbose_events) bronx::logger::debug("event", "channel_create guild=" + std::to_string(event.created.guild_id));
         dpp::embed log_embed = bronx::create_embed("Channel <#" + std::to_string(event.created.id) + "> was created.")
             .set_title("Channel Created")
             .set_color(0x00FF00);
@@ -819,7 +848,7 @@ void register_event_handlers(
     });
 
     bot.on_channel_delete([verbose_events](const dpp::channel_delete_t& event) {
-        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m channel_delete guild=" << event.deleted.guild_id << "\n";
+        if (verbose_events) bronx::logger::debug("event", "channel_delete guild=" + std::to_string(event.deleted.guild_id));
         dpp::embed log_embed = bronx::create_embed("Channel `" + event.deleted.name + "` was deleted.")
             .set_title("Channel Deleted")
             .set_color(0xFF0000);
@@ -828,7 +857,7 @@ void register_event_handlers(
 
     // --- MODERATION LOGS: Guild Bans ---
     bot.on_guild_ban_add([verbose_events](const dpp::guild_ban_add_t& event) {
-        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m ban_add guild=" << event.banning_guild.id << "\n";
+        if (verbose_events) bronx::logger::debug("event", "ban_add guild=" + std::to_string(event.banning_guild.id));
         dpp::embed log_embed = bronx::create_embed("User <@" + std::to_string(event.banned.id) + "> was banned from the server.")
             .set_title("User Banned")
             .set_color(0x991B1B);
@@ -836,7 +865,7 @@ void register_event_handlers(
     });
 
     bot.on_guild_ban_remove([verbose_events](const dpp::guild_ban_remove_t& event) {
-        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m ban_remove guild=" << event.unbanning_guild.id << "\n";
+        if (verbose_events) bronx::logger::debug("event", "ban_remove guild=" + std::to_string(event.unbanning_guild.id));
         dpp::embed log_embed = bronx::create_embed("User <@" + std::to_string(event.unbanned.id) + "> was unbanned.")
             .set_title("User Unbanned")
             .set_color(0x00FF00);
@@ -844,7 +873,7 @@ void register_event_handlers(
     });
 
     bot.on_invite_create([verbose_events](const dpp::invite_create_t& event) {
-        if (verbose_events) std::cout << "\033[2m[\033[36mEVENT\033[2m]\033[0m invite_create guild=" << event.created_invite.guild_id << "\n";
+        if (verbose_events) bronx::logger::debug("event", "invite_create guild=" + std::to_string(event.created_invite.guild_id));
         dpp::embed log_embed = bronx::create_embed("Invite `" + event.created_invite.code + "` was created by <@" + std::to_string(event.created_invite.inviter_id) + ">.")
             .set_title("Invite Created")
             .set_color(0x3B82F6);

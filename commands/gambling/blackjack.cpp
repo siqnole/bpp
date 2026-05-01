@@ -14,6 +14,7 @@
 #include <map>
 #include <vector>
 #include <iostream>  // debug logging
+#include "../../utils/logger.h"
 #include "../../log.h"
 #include "../daily_challenges/daily_stat_tracker.h"
 
@@ -251,11 +252,10 @@ void update_blackjack_message(dpp::cluster& bot, Database* db, uint64_t user_id,
     msg.id = game.message_id;
     msg.channel_id = game.channel_id;
 
-    std::cout << DBG_BJ "update_blackjack_message user=" << user_id << " game_over=" << game_over << "\n";
+    bronx::logger::debug("blackjack 🃏", "update_blackjack_message user=" + std::to_string(user_id) + " game_over=" + std::to_string(game_over));
     bot.message_edit(msg, [user_id](const dpp::confirmation_callback_t& cb) {
         if (cb.is_error()) {
-            std::cout << DBG_BJ "blackjack message_edit failed for user " << user_id
-                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+            bronx::logger::error("blackjack 🃏", "message_edit failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
         }
     });
 }
@@ -268,18 +268,17 @@ void reply_blackjack_update(Database* db, const dpp::button_click_t& event,
                              uint64_t user_id, bool game_over = false) {
     dpp::message msg = build_blackjack_message(db, user_id, game_over);
     if (msg.embeds.empty() && msg.content.empty()) return;
-    std::cout << DBG_BJ "reply_blackjack_update user=" << user_id << " game_over=" << game_over << "\n";
+    bronx::logger::debug("blackjack 🃏", "reply_blackjack_update user=" + std::to_string(user_id) + " game_over=" + std::to_string(game_over));
     event.reply(dpp::ir_update_message, msg,
                 [user_id](const dpp::confirmation_callback_t& cb) {
                     if (cb.is_error()) {
-                        std::cout << DBG_BJ "reply_blackjack_update failed for user " << user_id
-                                  << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                        bronx::logger::error("blackjack 🃏", "reply_blackjack_update failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                     }
                 });
 }
 
 void finish_blackjack_game(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t user_id) {
-    std::cout << DBG_BJ "finish_blackjack_game called for user " << user_id << "\n";
+    bronx::logger::debug("blackjack 🃏", "finish_blackjack_game called for user " + std::to_string(user_id));
     auto it = active_blackjack_games.find(user_id);
     if (it == active_blackjack_games.end() || !it->second.active) return;
     
@@ -422,14 +421,13 @@ void finish_blackjack_game(dpp::cluster& bot, Database* db, const dpp::button_cl
 
     embed.set_description(description);
     
-    std::cout << DBG_BJ "finish_blackjack_game replying for user " << user_id << "\n";
+    bronx::logger::debug("blackjack 🃏", "finish_blackjack_game replying for user " + std::to_string(user_id));
     // Reply directly with ir_update_message — avoids the deferred-update path
     // that triggers a DPP 10.1.x variant exception on the 204 response.
     event.reply(dpp::ir_update_message, dpp::message().add_embed(embed),
                 [user_id](const dpp::confirmation_callback_t& cb){
                     if (cb.is_error()) {
-                        std::cout << DBG_BJ "finish_blackjack_game reply failed for user " << user_id
-                                  << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                        bronx::logger::error("blackjack 🃏", "finish_blackjack_game reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                     }
                 });
     
@@ -437,16 +435,15 @@ void finish_blackjack_game(dpp::cluster& bot, Database* db, const dpp::button_cl
     active_blackjack_games.erase(user_id);
 }
 void handle_blackjack_hit(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t user_id) {
-    std::cout << DBG_BJ "handle_blackjack_hit for user " << user_id << "\n";
+    bronx::logger::debug("blackjack 🃏", "handle_blackjack_hit for user " + std::to_string(user_id));
     auto it = active_blackjack_games.find(user_id);
     if (it == active_blackjack_games.end() || !it->second.active) {
-        std::cout << DBG_BJ "hit handler inactive reply for user " << user_id << "\n";
+        bronx::logger::debug("blackjack 🃏", "hit handler inactive reply for user " + std::to_string(user_id));
         event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("This blackjack game is no longer active.")).set_flags(dpp::m_ephemeral),
                     [user_id](const dpp::confirmation_callback_t& cb){
                         if (cb.is_error()) {
-                            std::cout << DBG_BJ "blackjack inactive-reply failed for user " << user_id
-                                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                            bronx::logger::error("blackjack 🃏", "inactive-reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                         }
                     });
         return;
@@ -493,12 +490,11 @@ void handle_blackjack_hit(dpp::cluster& bot, Database* db, const dpp::button_cli
         }
         
         embed.set_description(description);
-        std::cout << DBG_BJ "hit handler bust reply for user " << user_id << "\n";
+        bronx::logger::debug("blackjack 🃏", "hit handler bust reply for user " + std::to_string(user_id));
         event.reply(dpp::ir_update_message, dpp::message().add_embed(embed),
                     [user_id](const dpp::confirmation_callback_t& cb){
                         if (cb.is_error()) {
-                            std::cout << DBG_BJ "blackjack reply after bust failed for user " << user_id
-                                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                            bronx::logger::error("blackjack 🃏", "reply after bust failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                         }
                     });
         
@@ -515,21 +511,20 @@ void handle_blackjack_hit(dpp::cluster& bot, Database* db, const dpp::button_cli
     } else {
         // Continue playing current hand
         reply_blackjack_update(db, event, user_id);
-        std::cout << DBG_BJ "hit handler update completed for user " << user_id << "\n";
+        bronx::logger::debug("blackjack 🃏", "hit handler update completed for user " + std::to_string(user_id));
     }
 }
 
 void handle_blackjack_stand(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t user_id) {
-    std::cout << DBG_BJ "handle_blackjack_stand for user " << user_id << "\n";
+    bronx::logger::debug("blackjack 🃏", "handle_blackjack_stand for user " + std::to_string(user_id));
     auto it = active_blackjack_games.find(user_id);
     if (it == active_blackjack_games.end() || !it->second.active) {
-        std::cout << DBG_BJ "stand handler inactive reply for user " << user_id << "\n";
+        bronx::logger::debug("blackjack 🃏", "stand handler inactive reply for user " + std::to_string(user_id));
         event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("This blackjack game is no longer active.")).set_flags(dpp::m_ephemeral),
                     [user_id](const dpp::confirmation_callback_t& cb){
                         if (cb.is_error()) {
-                            std::cout << DBG_BJ "stand inactive-reply failed for user " << user_id
-                                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                            bronx::logger::error("blackjack 🃏", "stand inactive-reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                         }
                     });
         return;
@@ -540,22 +535,21 @@ void handle_blackjack_stand(dpp::cluster& bot, Database* db, const dpp::button_c
         // move to second hand instead of finishing
         game.current_hand = 1;
         reply_blackjack_update(db, event, user_id);
-        std::cout << DBG_BJ "stand handler split transition for user " << user_id << "\n";
+        bronx::logger::debug("blackjack 🃏", "stand handler split transition for user " + std::to_string(user_id));
     } else {
         finish_blackjack_game(bot, db, event, user_id);
     }
 }
 
 void handle_blackjack_double(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t user_id) {
-    std::cout << DBG_BJ "handle_blackjack_double for user " << user_id << "\n";
+    bronx::logger::debug("blackjack 🃏", "handle_blackjack_double for user " + std::to_string(user_id));
     auto it = active_blackjack_games.find(user_id);
     if (it == active_blackjack_games.end() || !it->second.active) {
         event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("This blackjack game is no longer active.")).set_flags(dpp::m_ephemeral),
                     [user_id](const dpp::confirmation_callback_t& cb){
                         if (cb.is_error()) {
-                            std::cout << DBG_BJ "double inactive-reply failed for user " << user_id
-                                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                            bronx::logger::error("blackjack 🃏", "double inactive-reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                         }
                     });
         return;
@@ -576,8 +570,7 @@ void handle_blackjack_double(dpp::cluster& bot, Database* db, const dpp::button_
             dpp::message().add_embed(bronx::error("You don't have enough to double down!")).set_flags(dpp::m_ephemeral),
             [user_id](const dpp::confirmation_callback_t& cb){
                 if (cb.is_error()) {
-                    std::cout << DBG_BJ "double insufficient-funds reply failed for user " << user_id
-                              << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                    bronx::logger::error("blackjack 🃏", "double insufficient-funds reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                 }
             });
         return;
@@ -620,8 +613,7 @@ void handle_blackjack_double(dpp::cluster& bot, Database* db, const dpp::button_
         event.reply(dpp::ir_update_message, dpp::message().add_embed(embed),
                     [user_id](const dpp::confirmation_callback_t& cb){
                         if (cb.is_error()) {
-                            std::cout << DBG_BJ "double reply after bust failed for user " << user_id
-                                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                            bronx::logger::error("blackjack 🃏", "double reply after bust failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                         }
                     });
         
@@ -639,15 +631,14 @@ void handle_blackjack_double(dpp::cluster& bot, Database* db, const dpp::button_
 
 // Handles splitting a hand when the initial two cards share the same value.
 void handle_blackjack_split(dpp::cluster& bot, Database* db, const dpp::button_click_t& event, uint64_t user_id) {
-    std::cout << DBG_BJ "handle_blackjack_split for user " << user_id << "\n";
+    bronx::logger::debug("blackjack 🃏", "handle_blackjack_split for user " + std::to_string(user_id));
     auto it = active_blackjack_games.find(user_id);
     if (it == active_blackjack_games.end() || !it->second.active) {
         event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("This blackjack game is no longer active.")).set_flags(dpp::m_ephemeral),
                     [user_id](const dpp::confirmation_callback_t& cb){
                         if (cb.is_error()) {
-                            std::cout << DBG_BJ "split inactive-reply failed for user " << user_id
-                                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                            bronx::logger::error("blackjack 🃏", "split inactive-reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                         }
                     });
         return;
@@ -660,8 +651,7 @@ void handle_blackjack_split(dpp::cluster& bot, Database* db, const dpp::button_c
                     dpp::message().set_content("You cannot split this hand."),
                     [user_id](const dpp::confirmation_callback_t& cb){
                         if (cb.is_error()) {
-                            std::cout << DBG_BJ "split invalid-reply failed for user " << user_id
-                                      << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                            bronx::logger::error("blackjack 🃏", "split invalid-reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                         }
                     });
         return;
@@ -674,8 +664,7 @@ void handle_blackjack_split(dpp::cluster& bot, Database* db, const dpp::button_c
             dpp::message().add_embed(bronx::error("You don't have enough to split!")).set_flags(dpp::m_ephemeral),
             [user_id](const dpp::confirmation_callback_t& cb){
                 if (cb.is_error()) {
-                    std::cout << DBG_BJ "split insufficient funds reply failed for user " << user_id
-                              << " code=" << cb.get_error().code << " msg=" << cb.get_error().message << "\n";
+                    bronx::logger::error("blackjack 🃏", "split insufficient funds reply failed for user " + std::to_string(user_id) + ": " + cb.get_error().message);
                 }
             });
         return;

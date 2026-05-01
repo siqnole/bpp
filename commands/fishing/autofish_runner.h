@@ -4,7 +4,8 @@
 #include "../economy_core.h"
 #include "../global_boss.h"
 #include <chrono>
-#include <iostream>
+#include <chrono>
+#include "../../utils/logger.h"
 #include <cmath>
 #include <set>
 #include <map>
@@ -71,8 +72,7 @@ inline int autofisher_try_buy_bait(Database* db, uint64_t user_id, const Autofis
     if (!db->update_bank(user_id, -cost)) return 0;
 
     db->autofisher_deposit_bait(user_id, to_buy);
-    std::cout << "Autofisher bought " << to_buy << "x " << cfg.af_bait_id
-              << " for $" << cost << " from user " << user_id << "'s bank\n";
+    bronx::logger::debug("autofish", "bought " + std::to_string(to_buy) + "x " + cfg.af_bait_id + " for $" + std::to_string(cost) + " from user " + std::to_string(user_id) + "'s bank");
     return to_buy;
 }
 
@@ -83,19 +83,19 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
         // Load autofisher configuration (own gear, bait pool, settings)
         auto maybe_cfg = db->get_autofisher_config(user_id);
         if (!maybe_cfg) {
-            std::cerr << "Autofisher user=" << user_id << " no config row\n";
+            bronx::logger::error("autofish", "user=" + std::to_string(user_id) + " no config row");
             return 0;
         }
         AutofisherConfig cfg = *maybe_cfg;
 
         if (cfg.af_rod_id.empty()) {
-            std::cerr << "Autofisher user=" << user_id << " no rod equipped\n";
+            bronx::logger::error("autofish", "user=" + std::to_string(user_id) + " no rod equipped");
             af_notify_user(af_bot_ptr, user_id, "no_rod",
                 "your autofisher has **no rod equipped**.\nuse `autofisher equip rod <id>` to fix this.");
             return 0;
         }
         if (cfg.af_bait_id.empty()) {
-            std::cerr << "Autofisher user=" << user_id << " no bait type set\n";
+            bronx::logger::warn("autofish", "user=" + std::to_string(user_id) + " no bait type set");
             af_notify_user(af_bot_ptr, user_id, "no_bait",
                 "your autofisher has **no bait type set**.\nuse `autofisher equip bait <id>` to fix this.");
             return 0;
@@ -103,7 +103,7 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
 
         // Rod must still be in the user's own inventory
         if (!db->has_item(user_id, cfg.af_rod_id, 1)) {
-            std::cerr << "Autofisher user=" << user_id << " rod not in inventory\n";
+            bronx::logger::error("autofish", "user=" + std::to_string(user_id) + " rod not in inventory");
             af_notify_user(af_bot_ptr, user_id, "rod_missing",
                 "your autofisher rod `" + cfg.af_rod_id + "` is **no longer in your inventory** (sold or consumed).\n"
                 "equip a new rod with `autofisher equip rod <id>`.");
@@ -122,7 +122,7 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
 
         // Allow common/uncommon/rare bait (levels 1-3) with any rod
         if (bait_lvl > 3 && abs(rod_lvl - bait_lvl) > 2) {
-            std::cerr << "Autofisher user=" << user_id << " incompatible gear levels\n";
+            bronx::logger::error("autofish", "user=" + std::to_string(user_id) + " incompatible gear levels");
             af_notify_user(af_bot_ptr, user_id, "gear_mismatch",
                 "your autofisher gear is **incompatible** — rod level " + std::to_string(rod_lvl) +
                 " vs bait level " + std::to_string(bait_lvl) + " (gap > 2).\n"
@@ -139,7 +139,7 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
         }
 
         if (cfg.af_bait_qty <= 0) {
-            std::cerr << "Autofisher user=" << user_id << " out of bait\n";
+            bronx::logger::warn("autofish", "user=" + std::to_string(user_id) + " out of bait");
             af_notify_user(af_bot_ptr, user_id, "out_of_bait",
                 "your autofisher is **out of bait** and couldn't buy more.\n"
                 "deposit bait with `autofisher deposit` or enable bank draw with `autofisher balance <amount>`.");
@@ -176,7 +176,7 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
         if (pool.empty()) {
             // fallback: return bait and error out instead of using all fish types
             db->autofisher_deposit_bait(user_id, used_bait);
-            std::cerr << "Autofisher user=" << user_id << " no fish available for gear combo\n";
+            bronx::logger::error("autofish", "user=" + std::to_string(user_id) + " no fish available for gear combo");
             return 0;
         }
 
@@ -193,7 +193,7 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
         for (int w : weights) total_weight += w;
         if (total_weight <= 0) {
             db->autofisher_deposit_bait(user_id, used_bait);
-            std::cerr << "Autofisher user=" << user_id << " invalid weight distribution\n";
+            bronx::logger::error("autofish", "user=" + std::to_string(user_id) + " invalid weight distribution");
             return 0;
         }
 
@@ -204,7 +204,7 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
             dis = std::discrete_distribution<>(weights.begin(), weights.end());
         } catch (const std::invalid_argument& e) {
             db->autofisher_deposit_bait(user_id, used_bait);
-            std::cerr << "Autofisher user=" << user_id << " dist error: " << e.what() << "\n";
+            bronx::logger::error("autofish", "user=" + std::to_string(user_id) + " dist error: " + std::string(e.what()));
             return 0;
         }
 
@@ -299,8 +299,7 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
         if (auto bi = db->get_shop_item(cfg.af_bait_id)) bait_price = bi->price;
         db->record_fishing_log(rod_lvl, bait_lvl, total_value - bait_price * used_bait);
 
-        std::cout << "Autofisher user=" << user_id
-                  << " caught=" << total_fish << " value=$" << total_value << "\n";
+        bronx::logger::debug("autofish", "user=" + std::to_string(user_id) + " caught=" + std::to_string(total_fish) + " value=$" + std::to_string(total_value));
 
         // Track global boss progress from autofish
         if (total_fish > 0) {
@@ -327,18 +326,17 @@ inline int64_t run_autofish_for_user(Database* db, uint64_t user_id) {
                 db->update_wallet(user_id, payout);
                 // Track global boss fish profit from autofisher auto-sell
                 global_boss::on_fish_profit(db, user_id, payout);
-                std::cout << "Autofisher auto-sell user=" << user_id
-                          << " gross=$" << gross << " payout=$" << payout << "\n";
+                bronx::logger::debug("autofish", "auto-sell user=" + std::to_string(user_id) + " gross=$" + std::to_string(gross) + " payout=$" + std::to_string(payout));
             }
         }
 
         return total_value;
 
     } catch (const std::exception& e) {
-        std::cerr << "Autofisher error user=" << user_id << ": " << e.what() << "\n";
+        bronx::logger::error("autofish", "error user=" + std::to_string(user_id) + ": " + std::string(e.what()));
         return 0;
     } catch (...) {
-        std::cerr << "Autofisher unknown error user=" << user_id << "\n";
+        bronx::logger::error("autofish", "unknown error user=" + std::to_string(user_id));
         return 0;
     }
 }

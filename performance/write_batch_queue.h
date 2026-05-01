@@ -23,6 +23,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include "../utils/logger.h"
 
 // Forward declaration — avoid circular include with async_stat_writer.h
 namespace bronx { namespace perf { class RemoteStatsConnection; } }
@@ -232,7 +233,7 @@ private:
                 }
             } catch (const std::exception& e) {
                 stats_.errors++;
-                std::cerr << "[write_batch] wallet flush failed for " << user_id << ": " << e.what() << "\n";
+                bronx::logger::error("write_batch", "wallet flush failed for " + std::to_string(user_id) + ": " + std::string(e.what()));
                 // Re-queue the delta for next flush
                 std::lock_guard<std::mutex> lk(wallet_mutex_);
                 wallet_deltas_[user_id] += delta;
@@ -256,7 +257,7 @@ private:
                 }
             } catch (const std::exception& e) {
                 stats_.errors++;
-                std::cerr << "[write_batch] bank flush failed for " << user_id << ": " << e.what() << "\n";
+                bronx::logger::error("write_batch", "bank flush failed for " + std::to_string(user_id) + ": " + std::string(e.what()));
                 std::lock_guard<std::mutex> lk(bank_mutex_);
                 bank_deltas_[user_id] += delta;
             }
@@ -270,7 +271,7 @@ private:
                 stats_.stat_writes++;
             } catch (const std::exception& e) {
                 stats_.errors++;
-                std::cerr << "[write_batch] stat flush failed for " << key.first << ":" << key.second << ": " << e.what() << "\n";
+                bronx::logger::error("write_batch", "stat flush failed for " + std::to_string(key.first) + ":" + key.second + ": " + std::string(e.what()));
             }
         }
 
@@ -285,7 +286,7 @@ private:
                 stats_.item_writes++;
             } catch (const std::exception& e) {
                 stats_.errors++;
-                std::cerr << "[write_batch] item flush failed for " << m.user_id << ":" << m.item_id << ": " << e.what() << "\n";
+                bronx::logger::error("write_batch", "item flush failed for " + std::to_string(m.user_id) + ":" + m.item_id + ": " + std::string(e.what()));
             }
         }
 
@@ -293,9 +294,9 @@ private:
         static std::atomic<uint64_t> flush_count{0};
         if (++flush_count % 30 == 1) {
             size_t total = wallet_snap.size() + bank_snap.size() + stat_snap.size() + item_snap.size();
-            std::cerr << "[write_batch] flushed " << total << " mutations ("
-                      << wallet_snap.size() << "W " << bank_snap.size() << "B "
-                      << stat_snap.size() << "S " << item_snap.size() << "I)\n";
+            bronx::logger::debug("write_batch", "flushed " + std::to_string(total) + " mutations ("
+                      + std::to_string(wallet_snap.size()) + "W " + std::to_string(bank_snap.size()) + "B "
+                      + std::to_string(stat_snap.size()) + "S " + std::to_string(item_snap.size()) + "I)");
         }
     }
 };

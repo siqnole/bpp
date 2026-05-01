@@ -60,10 +60,20 @@ db-migration: update `database/schema.sql` + apply to vps mysql
 </rhythm>
 
 <conn label="VPS DEPLOYMENT (107.173.67.242)">
+ssh-alias: `ssh vps` (config alias)
 bot-service: `bpp-bot.service` (path: `/opt/bpp`)
 site-service: `bpp-site.service` (path: `/opt/bpp/site`)
 nginx: `bpp-nginx.conf` (port 80 -> 3000)
 </conn>
+
+<db label="DATABASE (MariaDB on VPS)">
+host: `127.0.0.1` (on vps)
+user: `bronxbot`
+pass: `bronx2026_secure`
+db: `bronxbot`
+access: `ssh vps "mariadb -u bronxbot -pbronx2026_secure bronxbot"`
+</db>
+
 
 <ref label="CORE FILES">
 - [commands/patch.h](file:///home/siqnole/Documents/code/bpp/commands/patch.h) → patch notes logic

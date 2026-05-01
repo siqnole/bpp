@@ -75,22 +75,6 @@ inline Command* get_steal_command() {
                 return;
             }
 
-            // permission check: member must have Manage Emojis & Stickers or Administrator
-            bool allowed = false;
-            dpp::guild* g = dpp::find_guild(event.msg.guild_id);
-            if (g && g->owner_id == event.msg.author.id) allowed = true;
-            for (const auto &rid : event.msg.member.get_roles()) {
-                dpp::role* r = dpp::find_role(rid);
-                if (!r) continue;
-                uint64_t perms = static_cast<uint64_t>(r->permissions);
-                if (perms & static_cast<uint64_t>(dpp::p_administrator)) { allowed = true; break; }
-                if (perms & static_cast<uint64_t>(dpp::p_manage_emojis_and_stickers)) { allowed = true; break; }
-            }
-            if (!allowed) {
-                bronx::send_message(bot, event, bronx::error("you need Manage Emojis & Stickers or Administrator to use this command"));
-                return;
-            }
-
             // helper: extract URL from token (handles raw URL or markdown-style link)
             auto extract_url = [](const ::std::string &tok) -> ::std::string {
                 size_t p = tok.find("http");

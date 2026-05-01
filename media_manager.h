@@ -4,6 +4,7 @@
 #include <whisper.h>
 #include <string>
 #include <iostream>
+#include "utils/logger.h"
 
 namespace bronx {
 
@@ -26,23 +27,23 @@ struct MediaManager {
         // Initialize Tesseract
         ocr_api = new tesseract::TessBaseAPI();
         if (ocr_api->Init(nullptr, "eng")) {
-            std::cerr << "\033[1;31m[MediaManager]\033[0m Could not initialize Tesseract OCR!\n";
+            bronx::logger::error("media manager", "could not initialize Tesseract OCR!");
             return false;
         }
-        std::cout << "\033[1;32m[MediaManager]\033[0m Tesseract OCR initialized (eng).\n";
+        bronx::logger::success("media manager", "Tesseract OCR initialized (eng).");
 
         // Initialize Whisper
         whisper_context_params params = whisper_context_default_params();
         params.use_gpu = false;
         params.flash_attn = false;
-        std::cerr << "[MediaManager] Initializing whisper with use_gpu=" << params.use_gpu << " flash_attn=" << params.flash_attn << "\n";
+        bronx::logger::debug("media manager", "initializing whisper with use_gpu=" + std::to_string(params.use_gpu) + " flash_attn=" + std::to_string(params.flash_attn));
         whisper_ctx = whisper_init_from_file_with_params(whisper_model_path.c_str(), params);
         if (!whisper_ctx) {
-            std::cerr << "\033[1;31m[MediaManager]\033[0m Could not initialize whisper.cpp from file: " << whisper_model_path << "!\n";
+            bronx::logger::error("media manager", "could not initialize whisper.cpp from file: " + whisper_model_path + "!");
             // Tesseract is already init'd, but we fail if either fails for simplicity in this bot
             return false;
         }
-        std::cerr << "\033[1;32m[MediaManager]\033[0m whisper.cpp context initialized from " << whisper_model_path << ".\n";
+        bronx::logger::success("media manager", "whisper.cpp context initialized from " + whisper_model_path + ".");
 
         return true;
     }

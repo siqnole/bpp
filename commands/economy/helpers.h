@@ -291,7 +291,7 @@ inline ::std::string format_number(double num) {
 
 // Format a requirement line with check/deny emoji
 inline ::std::string format_requirement(bool met, const ::std::string& text) {
-    return (met ? std::string(bronx::EMOJI_CHECK) + " " : std::string(bronx::EMOJI_DENY) + " ") + text;
+    return (met ? std::string("<:check:1476703556428890132>") + " " : std::string("<:deny:1476703341454168288>") + " ") + text;
 }
 
 } // namespace economy

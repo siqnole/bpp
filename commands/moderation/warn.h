@@ -11,16 +11,6 @@
 namespace commands {
 namespace moderation {
 
-// parse @mention or raw snowflake
-inline uint64_t warn_parse_mention(const std::string& s) {
-    if (s.size() > 2 && s[0] == '<' && s[1] == '@') {
-        std::string stripped = s.substr(2, s.size() - 3);
-        if (!stripped.empty() && stripped[0] == '!') stripped = stripped.substr(1);
-        try { return std::stoull(stripped); } catch (...) { return 0; }
-    }
-    try { return std::stoull(s); } catch (...) { return 0; }
-}
-
 inline Command* get_warn_command(bronx::db::Database* db) {
     static Command* cmd = nullptr;
     static bool initialized = false;
@@ -52,7 +42,7 @@ inline Command* get_warn_command(bronx::db::Database* db) {
                 return;
             }
 
-            uint64_t target_id = warn_parse_mention(args[0]);
+            uint64_t target_id = parse_mention(args[0]);
             if (target_id == 0) {
                 bronx::send_message(bot, event, bronx::error("invalid user mention"));
                 return;

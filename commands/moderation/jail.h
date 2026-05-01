@@ -12,15 +12,6 @@
 namespace commands {
 namespace moderation {
 
-inline uint64_t jail_parse_mention(const std::string& s) {
-    if (s.size() > 2 && s[0] == '<' && s[1] == '@') {
-        std::string stripped = s.substr(2, s.size() - 3);
-        if (!stripped.empty() && stripped[0] == '!') stripped = stripped.substr(1);
-        try { return std::stoull(stripped); } catch (...) { return 0; }
-    }
-    try { return std::stoull(s); } catch (...) { return 0; }
-}
-
 // apply_jail takes a plain InfractionConfig (already unwrapped by callers)
 inline void apply_jail(dpp::cluster& bot, bronx::db::Database* db,
                        uint64_t guild_id, uint64_t target_id, uint64_t mod_id,
@@ -97,7 +88,7 @@ inline Command* get_jail_command(bronx::db::Database* db) {
                 return;
             }
 
-            uint64_t target_id = jail_parse_mention(args[0]);
+            uint64_t target_id = parse_mention(args[0]);
             if (target_id == 0) { bronx::send_message(bot, event, bronx::error("invalid user mention")); return; }
             if (target_id == mod_id) { bronx::send_message(bot, event, bronx::error("you can't jail yourself")); return; }
             if (target_id == bot.me.id) { bronx::send_message(bot, event, bronx::error("you can't jail the bot")); return; }

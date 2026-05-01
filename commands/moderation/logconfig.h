@@ -7,7 +7,7 @@
 #include "../../database/operations/moderation/logging_operations.h"
 #include "../../server_logger.h"
 #include "../../feature_gate.h"
-#include <iostream>
+#include "../../utils/logger.h"
 
 namespace commands {
 namespace moderation {
@@ -107,7 +107,7 @@ inline Command* get_log_command(bronx::db::Database* db) {
                         
                         bot.channel_create(ch, [&bot, db, guild_id, index, types, create_next_channel, event](const dpp::confirmation_callback_t& cb_ch) {
                             if (cb_ch.is_error()) {
-                                std::cerr << "Failed to create channel for " << types[index] << ": " << cb_ch.get_error().message << std::endl;
+                                bronx::logger::error("logconfig", "Failed to create channel for " + types[index] + ": " + cb_ch.get_error().message);
                                 (*create_next_channel)(index + 1);
                                 return;
                             }
@@ -120,7 +120,7 @@ inline Command* get_log_command(bronx::db::Database* db) {
                             
                             bot.create_webhook(wh, [&bot, db, guild_id, index, types, create_next_channel, created_ch, event](const dpp::confirmation_callback_t& cb_wh) {
                                 if (cb_wh.is_error()) {
-                                    std::cerr << "Failed to create webhook for " << types[index] << ": " << cb_wh.get_error().message << std::endl;
+                                    bronx::logger::error("logconfig", "Failed to create webhook for " + types[index] + ": " + cb_wh.get_error().message);
                                     (*create_next_channel)(index + 1);
                                     return;
                                 }

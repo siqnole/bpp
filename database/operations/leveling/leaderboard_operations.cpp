@@ -379,9 +379,9 @@ std::vector<LeaderboardEntry> Database::get_prestige_leaderboard(uint64_t guild_
                 entry.value = rebirth * 100 + prestige;
                 entry.rank = rank++;
                 if (rebirth > 0) {
-                    entry.extra_info = get_rebirth_emoji_for_level(rebirth) + " R" + std::to_string(rebirth) + " \xC2\xB7 P" + std::to_string(prestige) + " " + bronx::EMOJI_STAR;
+                    entry.extra_info = get_rebirth_emoji_for_level(rebirth) + " R" + std::to_string(rebirth) + " \xC2\xB7 P" + std::to_string(prestige) + " " + std::string(bronx::EMOJI_STAR);
                 } else {
-                    entry.extra_info = std::to_string(prestige) + " " + bronx::EMOJI_STAR;
+                    entry.extra_info = std::to_string(prestige) + " " + std::string(bronx::EMOJI_STAR);
                 }
                 entries.push_back(entry);
             }

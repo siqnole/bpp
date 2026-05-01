@@ -730,6 +730,114 @@ int Database::pardon_user_type(uint64_t guild_id, uint64_t user_id, const std::s
 }
 
 // ---------------------------------------------------------------------------
+// get_active_timed_infractions
+// ---------------------------------------------------------------------------
+std::vector<InfractionRow> Database::get_active_timed_infractions() {
+    std::vector<InfractionRow> out;
+    auto conn = pool_->acquire();
+    const char* q = "SELECT id, guild_id, case_number, user_id, moderator_id, type, "
+        "COALESCE(reason,''), points, COALESCE(duration_seconds,0), expires_at, "
+        "active, pardoned, COALESCE(pardoned_by,0), pardoned_at, COALESCE(pardoned_reason,''), "
+        "COALESCE(metadata,'{}'), created_at "
+        "FROM guild_infractions WHERE active = 1 AND expires_at > NOW()";
+
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        last_error_ = mysql_stmt_error(stmt); log_error("get_active_timed_infractions prepare");
+        mysql_stmt_close(stmt); pool_->release(conn); return out;
+    }
+
+    if (mysql_stmt_execute(stmt) != 0) {
+        last_error_ = mysql_stmt_error(stmt); log_error("get_active_timed_infractions execute");
+        mysql_stmt_close(stmt); pool_->release(conn); return out;
+    }
+
+    uint64_t rid, r_guild, r_user, r_mod, r_pardoned_by;
+    uint32_t r_case, r_dur;
+    char r_type[32], r_reason[2048], r_pardon_reason[2048], r_meta[4096];
+    unsigned long r_type_len, r_reason_len, r_pardon_reason_len, r_meta_len;
+    double r_points;
+    my_bool r_active, r_pardoned;
+    MYSQL_TIME r_expires, r_pardoned_at, r_created;
+    my_bool r_expires_null, r_pardoned_at_null;
+
+    MYSQL_BIND rb[17]; memset(rb, 0, sizeof(rb));
+    rb[0].buffer_type = MYSQL_TYPE_LONGLONG; rb[0].buffer = (char*)&rid; rb[0].is_unsigned = 1;
+    rb[1].buffer_type = MYSQL_TYPE_LONGLONG; rb[1].buffer = (char*)&r_guild; rb[1].is_unsigned = 1;
+    rb[2].buffer_type = MYSQL_TYPE_LONG; rb[2].buffer = (char*)&r_case; rb[2].is_unsigned = 1;
+    rb[3].buffer_type = MYSQL_TYPE_LONGLONG; rb[3].buffer = (char*)&r_user; rb[3].is_unsigned = 1;
+    rb[4].buffer_type = MYSQL_TYPE_LONGLONG; rb[4].buffer = (char*)&r_mod; rb[4].is_unsigned = 1;
+    rb[5].buffer_type = MYSQL_TYPE_STRING; rb[5].buffer = r_type; rb[5].buffer_length = sizeof(r_type); rb[5].length = &r_type_len;
+    rb[6].buffer_type = MYSQL_TYPE_STRING; rb[6].buffer = r_reason; rb[6].buffer_length = sizeof(r_reason); rb[6].length = &r_reason_len;
+    rb[7].buffer_type = MYSQL_TYPE_DOUBLE; rb[7].buffer = (char*)&r_points;
+    rb[8].buffer_type = MYSQL_TYPE_LONG; rb[8].buffer = (char*)&r_dur; rb[8].is_unsigned = 1;
+    rb[9].buffer_type = MYSQL_TYPE_TIMESTAMP; rb[9].buffer = (char*)&r_expires; rb[9].is_null = &r_expires_null;
+    rb[10].buffer_type = MYSQL_TYPE_TINY; rb[10].buffer = (char*)&r_active;
+    rb[11].buffer_type = MYSQL_TYPE_TINY; rb[11].buffer = (char*)&r_pardoned;
+    rb[12].buffer_type = MYSQL_TYPE_LONGLONG; rb[12].buffer = (char*)&r_pardoned_by; rb[12].is_unsigned = 1;
+    rb[13].buffer_type = MYSQL_TYPE_TIMESTAMP; rb[13].buffer = (char*)&r_pardoned_at; rb[13].is_null = &r_pardoned_at_null;
+    rb[14].buffer_type = MYSQL_TYPE_STRING; rb[14].buffer = r_pardon_reason; rb[14].buffer_length = sizeof(r_pardon_reason); rb[14].length = &r_pardon_reason_len;
+    rb[15].buffer_type = MYSQL_TYPE_STRING; rb[15].buffer = r_meta; rb[15].buffer_length = sizeof(r_meta); rb[15].length = &r_meta_len;
+    rb[16].buffer_type = MYSQL_TYPE_TIMESTAMP; rb[16].buffer = (char*)&r_created;
+
+    mysql_stmt_bind_result(stmt, rb);
+    mysql_stmt_store_result(stmt);
+
+    auto mysql_time_to_tp = [](const MYSQL_TIME& mt) -> std::chrono::system_clock::time_point {
+        struct tm t{};
+        t.tm_year = mt.year - 1900; t.tm_mon = mt.month - 1; t.tm_mday = mt.day;
+        t.tm_hour = mt.hour; t.tm_min = mt.minute; t.tm_sec = mt.second;
+        return std::chrono::system_clock::from_time_t(timegm(&t));
+    };
+
+    while (mysql_stmt_fetch(stmt) == 0) {
+        InfractionRow row;
+        row.id = rid; row.guild_id = r_guild; row.case_number = r_case;
+        row.user_id = r_user; row.moderator_id = r_mod;
+        row.type = std::string(r_type, r_type_len);
+        row.reason = std::string(r_reason, r_reason_len);
+        row.points = r_points; row.duration_seconds = r_dur;
+        row.active = r_active; row.pardoned = r_pardoned;
+        row.pardoned_by = r_pardoned_by;
+        row.pardoned_reason = std::string(r_pardon_reason, r_pardon_reason_len);
+        row.metadata = std::string(r_meta, r_meta_len);
+        if (!r_expires_null) row.expires_at = mysql_time_to_tp(r_expires);
+        if (!r_pardoned_at_null) row.pardoned_at = mysql_time_to_tp(r_pardoned_at);
+        row.created_at = mysql_time_to_tp(r_created);
+        out.push_back(row);
+    }
+
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// update_infraction_reason
+// ---------------------------------------------------------------------------
+bool Database::update_infraction_reason(uint64_t guild_id, uint32_t case_number, const std::string& reason) {
+    auto conn = pool_->acquire();
+    const char* q = "UPDATE guild_infractions SET reason = ? WHERE guild_id = ? AND case_number = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        last_error_ = mysql_stmt_error(stmt); log_error("update_infraction_reason prepare");
+        mysql_stmt_close(stmt); pool_->release(conn); return false;
+    }
+
+    unsigned long reason_len = (unsigned long)reason.size();
+    MYSQL_BIND bp[3]; memset(bp, 0, sizeof(bp));
+    bp[0].buffer_type = MYSQL_TYPE_STRING; bp[0].buffer = (char*)reason.c_str(); bp[0].buffer_length = reason.size(); bp[0].length = &reason_len;
+    bp[1].buffer_type = MYSQL_TYPE_LONGLONG; bp[1].buffer = (char*)&guild_id; bp[1].is_unsigned = 1;
+    bp[2].buffer_type = MYSQL_TYPE_LONG; bp[2].buffer = (char*)&case_number; bp[2].is_unsigned = 1;
+    mysql_stmt_bind_param(stmt, bp);
+
+    bool ok = (mysql_stmt_execute(stmt) == 0);
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
 // expire_infractions
 // ---------------------------------------------------------------------------
 int Database::expire_infractions() {
@@ -810,6 +918,14 @@ int pardon_user_type(Database* db, uint64_t guild_id, uint64_t user_id, const st
 
 int expire_infractions(Database* db) {
     return db->expire_infractions();
+}
+
+std::vector<InfractionRow> get_active_timed_infractions(Database* db) {
+    return db->get_active_timed_infractions();
+}
+
+bool update_infraction_reason(Database* db, uint64_t guild_id, uint32_t case_number, const std::string& reason) {
+    return db->update_infraction_reason(guild_id, case_number, reason);
 }
 
 } // namespace infraction_operations

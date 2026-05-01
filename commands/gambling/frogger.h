@@ -11,22 +11,24 @@
 #include <sstream>
 
 using namespace bronx::db;
-using namespace bronx::db::history_operations;
 
 namespace commands {
 namespace gambling {
+
+using namespace bronx::db::gambling_verification;
+using namespace commands::gambling;
 
 inline Command* get_frogger_command(Database* db) {
     static Command* frogger = new Command("frogger", "play frogger - hop across logs without falling!", "gambling", {"frog"}, true,
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             // Anti-spam cooldown (3 seconds) - prevents double-tap exploit
             if (!db->try_claim_cooldown(event.msg.author.id, "frogger", 3)) {
-                bronx::send_message(bot, event, bronx::error("slow down! wait a few seconds between games"));
+                ::bronx::send_message(bot, event, ::bronx::error("slow down! wait a few seconds between games"));
                 return;
             }
             
             if (args.size() < 2) {
-                bronx::send_message(bot, event, bronx::error("usage: frogger <easy|medium|hard> <amount>"));
+                ::bronx::send_message(bot, event, ::bronx::error("usage: frogger <easy|medium|hard> <amount>"));
                 return;
             }
             
@@ -44,22 +46,22 @@ inline Command* get_frogger_command(Database* db) {
             try {
                 bet = parse_amount(args[1], user->wallet);
             } catch (const std::exception& e) {
-                bronx::send_message(bot, event, bronx::error("invalid bet amount"));
+                ::bronx::send_message(bot, event, ::bronx::error("invalid bet amount"));
                 return;
             }
             
             if (bet < 100) {
-                bronx::send_message(bot, event, bronx::error("minimum bet is $100"));
+                ::bronx::send_message(bot, event, ::bronx::error("minimum bet is $100"));
                 return;
             }
             
-            if (bet > MAX_BET) {
-                bronx::send_message(bot, event, bronx::error("maximum bet is $2,000,000,000"));
+            if (bet > ::commands::gambling::MAX_BET) {
+                ::bronx::send_message(bot, event, ::bronx::error("maximum bet is $2,000,000,000"));
                 return;
             }
             
             if (bet > user->wallet) {
-                bronx::send_message(bot, event, bronx::error("you don't have that much"));
+                ::bronx::send_message(bot, event, ::bronx::error("you don't have that much"));
                 return;
             }
             
@@ -74,7 +76,7 @@ inline Command* get_frogger_command(Database* db) {
             // Crack chances: easy 20%, medium 35%, hard 45% (was 50%)
             int crack_chance = (difficulty == 1) ? 20 : (difficulty == 2) ? 35 : 45;
             
-            FroggerGame game;
+            ::commands::gambling::FroggerGame game;
             game.user_id = event.msg.author.id;
             game.initial_bet = bet;
             game.logs_hopped = 0;
@@ -125,7 +127,7 @@ inline Command* get_frogger_command(Database* db) {
             description += "\n**choose a lane to hop!**\n";
             description += "💰 current payout: **$" + format_number((int64_t)(bet * multiplier)) + "**";
             
-            auto embed = bronx::create_embed(description);
+            auto embed = ::bronx::create_embed(description);
             embed.set_title(title);
             embed.set_color(0x2ECC71);
             
@@ -173,14 +175,14 @@ inline Command* get_frogger_command(Database* db) {
                 if (!callback.is_error()) {
                     auto sent_msg = ::std::get<dpp::message>(callback.value);
                     game.message_id = sent_msg.id;
-                    active_frogger_games[event.msg.author.id] = game;
+                    ::commands::gambling::active_frogger_games[event.msg.author.id] = game;
                 }
             });
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
             // Anti-spam cooldown (3 seconds) - prevents double-tap exploit
             if (!db->try_claim_cooldown(event.command.get_issuing_user().id, "frogger", 3)) {
-                event.reply(dpp::message().add_embed(bronx::error("slow down! wait a few seconds between games")));
+                event.reply(dpp::message().add_embed(::bronx::error("slow down! wait a few seconds between games")));
                 return;
             }
             
@@ -189,7 +191,7 @@ inline Command* get_frogger_command(Database* db) {
             if (std::holds_alternative<std::string>(diff_param)) {
                 diff_str = std::get<std::string>(diff_param);
             } else {
-                event.reply(dpp::message().add_embed(bronx::error("please provide a difficulty")));
+                event.reply(dpp::message().add_embed(::bronx::error("please provide a difficulty")));
                 return;
             }
             auto amount_param = event.get_parameter("amount");
@@ -199,7 +201,7 @@ inline Command* get_frogger_command(Database* db) {
             } else if (std::holds_alternative<int64_t>(amount_param)) {
                 amount_str = std::to_string(std::get<int64_t>(amount_param));
             } else {
-                event.reply(dpp::message().add_embed(bronx::error("please provide a bet amount")));
+                event.reply(dpp::message().add_embed(::bronx::error("please provide a bet amount")));
                 return;
             }
             
@@ -209,7 +211,7 @@ inline Command* get_frogger_command(Database* db) {
             
             auto user = db->get_user(event.command.get_issuing_user().id);
             if (!user) {
-                event.reply(dpp::message().add_embed(bronx::error("user not found")));
+                event.reply(dpp::message().add_embed(::bronx::error("user not found")));
                 return;
             }
             
@@ -217,22 +219,22 @@ inline Command* get_frogger_command(Database* db) {
             try {
                 bet = parse_amount(amount_str, user->wallet);
             } catch (const std::exception& e) {
-                event.reply(dpp::message().add_embed(bronx::error("invalid bet amount")));
+                event.reply(dpp::message().add_embed(::bronx::error("invalid bet amount")));
                 return;
             }
             
             if (bet < 100) {
-                event.reply(dpp::message().add_embed(bronx::error("minimum bet is $100")));
+                event.reply(dpp::message().add_embed(::bronx::error("minimum bet is $100")));
                 return;
             }
             
-            if (bet > MAX_BET) {
-                event.reply(dpp::message().add_embed(bronx::error("maximum bet is $2,000,000,000")));
+            if (bet > ::commands::gambling::MAX_BET) {
+                event.reply(dpp::message().add_embed(::bronx::error("maximum bet is $2,000,000,000")));
                 return;
             }
             
             if (bet > user->wallet) {
-                event.reply(dpp::message().add_embed(bronx::error("you don't have that much")));
+                event.reply(dpp::message().add_embed(::bronx::error("you don't have that much")));
                 return;
             }
             
@@ -245,7 +247,7 @@ inline Command* get_frogger_command(Database* db) {
             
             int crack_chance = (difficulty == 1) ? 20 : (difficulty == 2) ? 35 : 45;
             
-            FroggerGame game;
+            ::commands::gambling::FroggerGame game;
             game.user_id = event.command.get_issuing_user().id;
             game.initial_bet = bet;
             game.logs_hopped = 0;
@@ -293,7 +295,7 @@ inline Command* get_frogger_command(Database* db) {
             description += "\n**choose a lane to hop!**\n";
             description += "💰 current payout: **$" + format_number((int64_t)(bet * multiplier)) + "**";
             
-            auto embed = bronx::create_embed(description);
+            auto embed = ::bronx::create_embed(description);
             embed.set_title(title);
             embed.set_color(0x2ECC71);
             
@@ -340,7 +342,7 @@ inline Command* get_frogger_command(Database* db) {
             event.reply(msg, [game, event](const dpp::confirmation_callback_t& callback) mutable {
                 if (!callback.is_error()) {
                     // Store game state
-                    active_frogger_games[event.command.get_issuing_user().id] = game;
+                    ::commands::gambling::active_frogger_games[event.command.get_issuing_user().id] = game;
                 }
             });
         },
@@ -371,17 +373,17 @@ inline void register_gambling_interactions(dpp::cluster& bot, Database* db) {
         
         uint64_t user_id = event.command.get_issuing_user().id;
         
-        if (active_frogger_games.find(user_id) == active_frogger_games.end()) {
+        if (::commands::gambling::active_frogger_games.find(user_id) == ::commands::gambling::active_frogger_games.end()) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
             return;
         }
         
-        FroggerGame& game = active_frogger_games[user_id];
+        ::commands::gambling::FroggerGame& game = ::commands::gambling::active_frogger_games[user_id];
         
         if (!game.active) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game is not active")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game is not active")).set_flags(dpp::m_ephemeral));
             return;
         }
         
@@ -396,7 +398,7 @@ inline void register_gambling_interactions(dpp::cluster& bot, Database* db) {
             db->increment_stat(user_id, "gambling_losses", game.initial_bet);
             
             // Track milestone (loss)
-            track_gambling_result(bot, db, event.command.channel_id, user_id, false);
+            ::commands::gambling::track_gambling_result(bot, db, event.command.channel_id, user_id, false);
             
             log_gambling(db, user_id, "lost frogger for $" + format_number(game.initial_bet));
             
@@ -405,11 +407,11 @@ inline void register_gambling_interactions(dpp::cluster& bot, Database* db) {
             description += "logs hopped: **" + ::std::to_string(game.logs_hopped) + "**\n";
             description += "lost: **$" + format_number(game.initial_bet) + "**";
             
-            auto embed = bronx::error(description);
+            auto embed = ::bronx::error(description);
             embed.set_title("🐸 FROGGER - FAILED");
             
             event.reply(dpp::ir_update_message, dpp::message().add_embed(embed));
-            active_frogger_games.erase(user_id);
+            ::commands::gambling::active_frogger_games.erase(user_id);
             return;
         }
         
@@ -465,7 +467,7 @@ inline void register_gambling_interactions(dpp::cluster& bot, Database* db) {
         description += "\n**choose a lane to hop!**\n";
         description += "💰 current payout: **$" + format_number((int64_t)(game.initial_bet * multiplier)) + "**";
         
-        auto embed = bronx::create_embed(description);
+        auto embed = ::bronx::create_embed(description);
         embed.set_title(title);
         embed.set_color(0x2ECC71);
         
@@ -518,17 +520,17 @@ inline void register_gambling_interactions(dpp::cluster& bot, Database* db) {
         
         uint64_t user_id = event.command.get_issuing_user().id;
         
-        if (active_frogger_games.find(user_id) == active_frogger_games.end()) {
+        if (::commands::gambling::active_frogger_games.find(user_id) == ::commands::gambling::active_frogger_games.end()) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
             return;
         }
         
-        FroggerGame& game = active_frogger_games[user_id];
+        ::commands::gambling::FroggerGame& game = ::commands::gambling::active_frogger_games[user_id];
         
         if (!game.active) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game is not active")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game is not active")).set_flags(dpp::m_ephemeral));
             return;
         }
         
@@ -547,26 +549,26 @@ inline void register_gambling_interactions(dpp::cluster& bot, Database* db) {
         if (profit > 0) {
             db->increment_stat(user_id, "gambling_profit", profit);
             // Check gambling profit achievements
-            track_gambling_profit(bot, db, event.command.channel_id, user_id);
+            ::commands::gambling::track_gambling_profit(bot, db, event.command.channel_id, user_id);
         }
         
         // Track milestone (win if profit > 0)
-        track_gambling_result(bot, db, event.command.channel_id, user_id, profit > 0, profit);
+        ::commands::gambling::track_gambling_result(bot, db, event.command.channel_id, user_id, profit > 0, profit);
         
         log_gambling(db, user_id, "won frogger for $" + format_number(profit) + " (" + ::std::to_string(game.logs_hopped) + " logs)");
         
-        ::std::string description = bronx::EMOJI_CHECK + " **CASHED OUT!**\n\n";
+        ::std::string description = ::bronx::EMOJI_CHECK + " **CASHED OUT!**\n\n";
         description += "logs hopped: **" + ::std::to_string(game.logs_hopped) + "**\n";
         description += "multiplier: **" + ::std::to_string((int)(multiplier * 100)) + "%**\n\n";
         description += "bet: **$" + format_number(game.initial_bet) + "**\n";
         description += "payout: **$" + format_number(payout) + "**\n";
         description += "profit: **$" + format_number(payout - game.initial_bet) + "**";
         
-        auto embed = bronx::success(description);
+        auto embed = ::bronx::success(description);
         embed.set_title("🐸 FROGGER - CASHED OUT");
         
         event.reply(dpp::ir_update_message, dpp::message().add_embed(embed));
-        active_frogger_games.erase(user_id);
+        ::commands::gambling::active_frogger_games.erase(user_id);
     });
     
     // Roulette interactions - need to be in a separate header since roulette.h declares them

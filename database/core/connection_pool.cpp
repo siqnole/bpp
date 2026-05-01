@@ -1,5 +1,6 @@
 #include "connection_pool.h"
 #include <iostream>
+#include "../../utils/logger.h"
 #include <cstring>
 
 namespace bronx {
@@ -25,13 +26,13 @@ static bool g_verbose_logging = false;
 // Returns nullptr on failure.
 static MYSQL* make_new_connection() {
     if (!is_printable(g_config.host)) {
-        std::cerr << "ConnectionPool: invalid host string, resetting to 'localhost'\n";
+        bronx::logger::warn("database pool", "invalid host string, resetting to 'localhost'");
         g_config.host = "localhost";
     }
 
     MYSQL* mysql = mysql_init(nullptr);
     if (!mysql) {
-        std::cerr << "Failed to initialize MySQL connection\n";
+        bronx::logger::error("database pool", "failed to initialize MySQL connection");
         return nullptr;
     }
 
@@ -50,14 +51,13 @@ static MYSQL* make_new_connection() {
     }
 
     if (g_verbose_logging) {
-        std::cerr << "  connecting to host '" << g_config.host
-                  << "' port " << g_config.port << "\n";
+        bronx::logger::debug("database pool", "connecting to host '" + g_config.host + "' port " + std::to_string(g_config.port));
     }
 
     if (!mysql_real_connect(mysql, g_config.host.c_str(), g_config.user.c_str(),
                            g_config.password.c_str(), g_config.database.c_str(),
                            g_config.port, nullptr, CLIENT_MULTI_STATEMENTS)) {
-        std::cerr << "Failed to connect to database: " << mysql_error(mysql) << "\n";
+        bronx::logger::error("database pool", "failed to connect to database: " + std::string(mysql_error(mysql)));
         mysql_close(mysql);
         return nullptr;
     }
@@ -86,8 +86,7 @@ ConnectionPool::ConnectionPool(const DatabaseConfig& config)
         }
     }
     if (g_verbose_logging || true) {
-        std::cout << "ConnectionPool: pre-created " << pool_.size()
-                  << " connections (max " << max_connections_ << ")\n";
+        bronx::logger::info("database pool", "pre-created " + std::to_string(pool_.size()) + " connections (max " + std::to_string(max_connections_) + ")");
     }
 }
 
@@ -134,8 +133,8 @@ std::shared_ptr<Connection> ConnectionPool::acquire() {
 
             if (!alive) {
                 if (g_verbose_logging) {
-                    std::cerr << "ConnectionPool::acquire() dropped stale connection (failed ping after "
-                              << std::chrono::duration_cast<std::chrono::seconds>(idle_time).count() << "s idle)\n";
+                    bronx::logger::warn("database pool", "acquire() dropped stale connection (failed ping after " + 
+                                       std::to_string(std::chrono::duration_cast<std::chrono::seconds>(idle_time).count()) + "s idle)");
                 }
                 total_connections_ = (total_connections_ > 0 ? total_connections_ - 1 : 0);
                 continue;
@@ -144,8 +143,7 @@ std::shared_ptr<Connection> ConnectionPool::acquire() {
 
         conn->touch();
         if (g_verbose_logging) {
-            std::cerr << "ConnectionPool::acquire() reused pooled connection"
-                      << (needs_ping ? " (pinged)" : " (fast)") << "\n";
+            bronx::logger::debug("database pool", "acquire() reused pooled connection" + std::string(needs_ping ? " (pinged)" : " (fast)"));
         }
         return conn;
     }
@@ -153,8 +151,7 @@ std::shared_ptr<Connection> ConnectionPool::acquire() {
     // Pool empty — create a new connection if we haven't hit the limit.
     // Even if we're at max, we still create one (to avoid deadlock), but log a warning.
     if (total_connections_ >= max_connections_) {
-        std::cerr << "ConnectionPool: at max connections (" << max_connections_
-                  << "), creating overflow connection\n";
+        bronx::logger::warn("database pool", "at max connections (" + std::to_string(max_connections_) + "), creating overflow connection");
     }
     lock.unlock();  // don't hold mutex during network I/O
 
@@ -180,14 +177,13 @@ void ConnectionPool::release(std::shared_ptr<Connection> conn) {
     if (pool_.size() < max_connections_) {
         pool_.push(std::move(conn));
         if (g_verbose_logging) {
-            std::cerr << "ConnectionPool::release() returned to pool (size "
-                      << pool_.size() << ")\n";
+            bronx::logger::debug("database pool", "release() returned to pool (size " + std::to_string(pool_.size()) + ")");
         }
     } else {
         // Over capacity — let shared_ptr destructor close it
         total_connections_ = (total_connections_ > 0 ? total_connections_ - 1 : 0);
         if (g_verbose_logging) {
-            std::cerr << "ConnectionPool::release() pool full, closing connection\n";
+            bronx::logger::debug("database pool", "release() pool full, closing connection");
         }
     }
 }

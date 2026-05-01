@@ -20,6 +20,7 @@
 #include <condition_variable>
 #include <iostream>
 #include <algorithm>
+#include "../utils/logger.h"
 
 namespace bronx {
 namespace snipe {
@@ -244,8 +245,7 @@ private:
             if (now - last_purge > PURGE_INTERVAL) {
                 last_purge = now;
                 bronx::db::snipe_operations::purge_old_deleted_messages(db_, RETENTION_DAYS);
-                std::cout << "\033[2m[snipe_cache]\033[0m purged deleted messages older than "
-                          << RETENTION_DAYS << " days\n";
+                bronx::logger::debug("snipe cache", "purged deleted messages older than " + std::to_string(RETENTION_DAYS) + " days");
             }
         }
     }
@@ -284,8 +284,7 @@ private:
 
         bool ok = bronx::db::snipe_operations::save_deleted_messages_batch(db_, rows);
         if (!ok) {
-            std::cerr << "\033[31m[snipe_cache]\033[0m failed to flush "
-                      << rows.size() << " deleted messages to DB\n";
+            bronx::logger::error("snipe cache", "failed to flush " + std::to_string(rows.size()) + " deleted messages to DB");
         }
     }
 

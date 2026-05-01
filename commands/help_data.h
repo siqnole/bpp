@@ -27,7 +27,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         if (it != lookup.end()) fn(it->second);
     };
 
-    // ── economy ────────────────────────────────────────────────────────
+    // ── economy // // ──────────────────────────────────────────────────────────────────
 
     set("balance", [](Command* c) {
         c->extended_description =
@@ -195,7 +195,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->examples = {".market", ".market edit add name=\"rare gem\" price=7500 limit=10"};
     });
 
-    // ── fishing ────────────────────────────────────────────────────────
+    // ── fishing // // ──────────────────────────────────────────────────────────────────
 
     set("fish", [](Command* c) {
         c->extended_description =
@@ -310,7 +310,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "effect can be: none, xp_boost, money_boost, luck, etc. effect_% is the proc chance (0-100).";
     });
 
-    // ── mining ─────────────────────────────────────────────────────────
+    // ── mining // // ───────────────────────────────────────────────────────────────────
 
     set("mine", [](Command* c) {
         c->extended_description =
@@ -339,7 +339,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->examples = {".sellore 5", ".sellore all"};
     });
 
-    // ── gambling ───────────────────────────────────────────────────────
+    // ── gambling // // ─────────────────────────────────────────────────────────────────
 
     set("blackjack", [](Command* c) {
         c->extended_description =
@@ -474,7 +474,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "jackpot pool grows with every spin. use `.jackpot` to view it.";
     });
 
-    // ── games ──────────────────────────────────────────────────────────
+    // ── games // // ────────────────────────────────────────────────────────────────────
 
     set("heist", [](Command* c) {
         c->extended_description =
@@ -517,7 +517,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->examples = {".ttt @User", ".ttt @User 2000"};
     });
 
-    // ── passive ────────────────────────────────────────────────────────
+    // ── passive // // ──────────────────────────────────────────────────────────────────
 
     set("claim", [](Command* c) {
         c->extended_description =
@@ -573,7 +573,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->examples = {".cmarket", ".cmarket sell iron ore"};
     });
 
-    // ── leveling ───────────────────────────────────────────────────────
+    // ── leveling // // ─────────────────────────────────────────────────────────────────
 
     set("levelconfig", [](Command* c) {
         c->extended_description =
@@ -615,7 +615,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->examples = {".xpblacklist channel add #bot-spam", ".xpbl role add @Muted", ".xpbl user list"};
     });
 
-    // ── cosmetics ──────────────────────────────────────────────────────
+    // ── cosmetics // ───────────────────────────────────────────────────────────
 
     set("title", [](Command* c) {
         c->extended_description =
@@ -630,7 +630,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->examples = {".title", ".title equip 14", ".title remove"};
     });
 
-    // ── utility ───────────────────────────────────────────────────────
+    // ── utility // // ─────────────────────────────────────────────────────────────────
 
     set("ping", [](Command* c) {
         c->extended_description =
@@ -805,7 +805,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "use `^` to target the message directly above the command.";
     });
 
-    // ── moderation ─────────────────────────────────────────────────────
+    // ── moderation // ──────────────────────────────────────────────────────────
 
     set("mod", [](Command* c) {
         c->extended_description =
@@ -837,7 +837,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "all actions are logged and auditable. expired timeouts are automatically removed.";
     });
 
-    // ── owner ──────────────────────────────────────────────────────────
+    // ── owner // // ────────────────────────────────────────────────────────────────────
 
     set("givemoney", [](Command* c) {
         c->extended_description =
@@ -878,7 +878,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->examples = {".whitelist add -u @Trusted -r beta tester", ".whitelist list"};
     });
 
-    // ── pets ───────────────────────────────────────────────────────────
+    // ── pets // // ─────────────────────────────────────────────────────────────────────
 
     set("pets", [](Command* c) {
         c->extended_description =
@@ -899,7 +899,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "each pet species grants a unique bonus. pets are equipped via `.equip`. pets gain xp when their bonus is active.";
     });
 
-    // ── skill tree ──────────────────────────────────────────────────────
+    // ── skill tree // ───────────────────────────────────────────────────────────
 
     set("skills", [](Command* c) {
         c->extended_description =
@@ -915,7 +915,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "aliases: skilltree, skill. skill points cap at 100. reset your tree with `.reset-skills` (costs money).";
     });
 
-    // ── mastery ─────────────────────────────────────────────────────────
+    // ── mastery // // ───────────────────────────────────────────────────────────────────
 
     set("mastery", [](Command* c) {
         c->extended_description =
@@ -931,7 +931,7 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->notes = "mastery tiers unlock exclusive cosmetics and titles. catch/mine 1000+ of a species/ore to reach prestige.";
     });
 
-    // ── leaderboard ────────────────────────────────────────────────────
+    // ── leaderboard // ─────────────────────────────────────────────────────────
 
     set("leaderboard", [](Command* c) {
         c->extended_description =
@@ -940,6 +940,24 @@ inline void populate_extended_help(CommandHandler* handler) {
         c->detailed_usage = ".leaderboard [category] [global]";
         c->examples = {".lb", ".lb fish", ".lb xp global", ".top mining"};
     });
+ // ─────────────────────────────────────────────────────────
+    set("antinuke", [](Command* c) {
+        c->extended_description = "anti-nuke protection: monitors and blocks large-scale destructive actions like mass channel deletions, role removals, or server-wide bans.";
+        c->detailed_usage = ".antinuke [status|enable|disable] [options]";
+        c->examples = {".antinuke status", ".antinuke enable", ".antinuke disable"};
+        c->notes = "requires admin permission. logs attempts in the anti‑nuke channel.";
+    });
+    set("antiraid", [](Command* c) {
+        c->extended_description = "anti‑raid system: detects rapid joins, mass @everyone mentions, and suspicious bot activity, applying temporary mute or kick.";
+        c->detailed_usage = ".antiraid [status|enable|disable] [options]";
+        c->examples = {".antiraid status", ".antiraid enable", ".antiraid disable"};
+        c->notes = "configurable thresholds in `.settings`.";
+    });
+    set("filter", [](Command* c) {
+        c->extended_description = "text and reaction filter configuration command.";
+        c->detailed_usage = ".filter [text|reaction] [subcommand] [args...]";
+        c->examples = {".filter text enable", ".filter reaction list"};
+        c->notes = "see setup help for detailed usage.";
+    });
 }
-
 } // namespace commands

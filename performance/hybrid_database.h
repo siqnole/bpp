@@ -21,6 +21,7 @@
 #include "api_cache_client.h"
 #include <memory>
 #include <iostream>
+#include "../utils/logger.h"
 
 namespace bronx {
 namespace hybrid {
@@ -758,7 +759,7 @@ public:
                 }
             }
         } catch (const std::exception& e) {
-            std::cerr << "[hybrid_db] Settings sync error: " << e.what() << "\n";
+            bronx::logger::error("hybrid_db", "Settings sync error: " + std::string(e.what()));
         }
     }
 

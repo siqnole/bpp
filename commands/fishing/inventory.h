@@ -30,9 +30,9 @@ inline Command* get_finv_command(Database* db) {
                 description += "you haven't caught any fish yet!\n";
                 description += "use `fish` to start catching fish";
                 
-                auto embed = bronx::create_embed(description);
-                bronx::add_invoker_footer(embed, event.msg.author);
-                bronx::send_message(bot, event, embed);
+                auto embed = ::bronx::create_embed(description);
+                ::bronx::add_invoker_footer(embed, event.msg.author);
+                ::bronx::send_message(bot, event, embed);
                 return;
             }
             
@@ -194,13 +194,13 @@ inline Command* get_finv_command(Database* db) {
                 }
 
                 dpp::message msg;
-                msg.add_embed(bronx::create_embed(description));
+                msg.add_embed(::bronx::create_embed(description));
                 for (auto &r : rows) msg.add_component(r);
 
                 if (update) {
                     event.reply(msg);
                 } else {
-                    bronx::send_message(bot, event, msg);
+                    ::bronx::send_message(bot, event, msg);
                 }
             };
 
@@ -225,8 +225,8 @@ inline Command* get_finv_command(Database* db) {
                 description += "you haven't caught any fish yet!\n";
                 description += "use `/fish` to start catching fish";
                 
-                auto embed = bronx::create_embed(description);
-                bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+                auto embed = ::bronx::create_embed(description);
+                ::bronx::add_invoker_footer(embed, event.command.get_issuing_user());
                 event.reply(dpp::message().add_embed(embed));
                 return;
             }
@@ -285,8 +285,8 @@ inline Command* get_finv_command(Database* db) {
             description += "\n\nuse `/lockfish <ID>` to favorite a fish";
             description += "\nuse `/sellfish <ID|all>` to sell fish";
             
-            auto embed = bronx::create_embed(description);
-            bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+            auto embed = ::bronx::create_embed(description);
+            ::bronx::add_invoker_footer(embed, event.command.get_issuing_user());
             event.reply(dpp::message().add_embed(embed));
         });
     
@@ -308,7 +308,7 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
         std::string dir = parts[4];
         if (event.command.get_issuing_user().id != uid) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("these buttons aren't for you")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("these buttons aren't for you")).set_flags(dpp::m_ephemeral));
             return;
         }
         auto inventory = db->get_inventory(uid);
@@ -425,7 +425,7 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
             }
         }
         dpp::message msg;
-        msg.add_embed(bronx::create_embed(description));
+        msg.add_embed(::bronx::create_embed(description));
         for (auto &r : rows) msg.add_component(r);
         // edit the original message instead of sending a new one to prevent spam
         event.reply(dpp::ir_update_message, msg);
@@ -447,7 +447,7 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
 
         if (event.command.get_issuing_user().id != uid) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("this menu isn't for you")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("this menu isn't for you")).set_flags(dpp::m_ephemeral));
             return;
         }
 
@@ -605,15 +605,15 @@ inline void register_finv_interactions(dpp::cluster& bot, Database* db) {
             }
 
             dpp::message ret;
-            ret.add_embed(bronx::create_embed(description));
+            ret.add_embed(::bronx::create_embed(description));
             for (auto &r : rows) ret.add_component(r);
             event.reply(dpp::ir_update_message, ret);
 
-            auto embed = bronx::success("sold " + std::to_string(sold_count) + " fish for $" + format_number(total_value));
+            auto embed = ::bronx::success("sold " + std::to_string(sold_count) + " fish for $" + format_number(total_value));
             event.reply(dpp::ir_channel_message_with_source, dpp::message().add_embed(embed).set_flags(dpp::m_ephemeral));
         } else {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("no fish were sold (maybe they were locked or already gone)")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("no fish were sold (maybe they were locked or already gone)")).set_flags(dpp::m_ephemeral));
         }
     });
 }

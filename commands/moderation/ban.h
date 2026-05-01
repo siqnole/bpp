@@ -11,16 +11,6 @@
 namespace commands {
 namespace moderation {
 
-// parse @mention or raw snowflake
-inline uint64_t ban_parse_mention(const std::string& s) {
-    if (s.size() > 2 && s[0] == '<' && s[1] == '@') {
-        std::string stripped = s.substr(2, s.size() - 3);
-        if (!stripped.empty() && stripped[0] == '!') stripped = stripped.substr(1);
-        try { return std::stoull(stripped); } catch (...) { return 0; }
-    }
-    try { return std::stoull(s); } catch (...) { return 0; }
-}
-
 inline Command* get_ban_command(bronx::db::Database* db) {
     static Command* cmd = nullptr;
     static bool initialized = false;
@@ -51,7 +41,7 @@ inline Command* get_ban_command(bronx::db::Database* db) {
                 return;
             }
 
-            uint64_t target_id = ban_parse_mention(args[0]);
+            uint64_t target_id = parse_mention(args[0]);
             if (target_id == 0) {
                 bronx::send_message(bot, event, bronx::error("invalid user mention"));
                 return;
@@ -141,50 +131,25 @@ inline Command* get_ban_command(bronx::db::Database* db) {
             // dpp::guild_ban_add takes delete_message_seconds, not days
             uint32_t delete_message_seconds = delete_days * 86400;
 
-            // ban member
-            bot.guild_ban_add(guild_id, target_id, delete_message_seconds,
-                [&bot, db, guild_id, target_id, mod_id, duration, reason, config, guild_name, &event](const dpp::confirmation_callback_t& cb) {
-                    if (cb.is_error()) {
-                        bronx::send_message(bot, event, bronx::error("failed to ban user: " + cb.get_error().message));
-                        return;
-                    }
-
-                    // create infraction
-                    auto inf = bronx::db::infraction_operations::create_infraction(
-                        db, guild_id, target_id, mod_id,
-                        "ban", reason, config.value().point_ban,
-                        duration);
-
-                    if (!inf.has_value()) {
-                        bronx::send_message(bot, event, bronx::error("user banned but failed to create infraction record"));
-                        return;
-                    }
-
-                    // schedule unban if tempban (duration > 0)
-                    if (duration > 0) {
-                        schedule_punishment_expiry(bot, db, guild_id, inf->case_number, "ban", target_id, duration);
-                    }
-
-                    // check escalation
-                    check_and_escalate(bot, db, guild_id, target_id, guild_name);
-
-                    // send mod log
-                    send_mod_log(bot, db, guild_id, inf.value());
-
-                    // reply success
-                    bool is_temp = duration > 0 && duration < 15552000; // less than 180 days = tempban
+            // apply ban
+            apply_ban_internal(bot, db, guild_id, target_id, mod_id, duration, delete_message_seconds, reason, config.value(),
+                [&bot, &event, target_id](const bronx::db::InfractionRow& inf, bool quiet) {
+                    bool is_temp = inf.duration_seconds > 0 && inf.duration_seconds < 15552000;
                     std::string desc = bronx::EMOJI_CHECK + " **banned** <@" + std::to_string(target_id) + ">";
                     if (is_temp) {
-                        desc += "\n**duration:** " + format_duration(duration);
+                        desc += "\n**duration:** " + format_duration(inf.duration_seconds);
                     } else {
                         desc += "\n**duration:** permanent";
                     }
-                    desc += "\n**case:** #" + std::to_string(inf->case_number);
-                    if (!reason.empty()) desc += "\n**reason:** " + reason;
+                    desc += "\n**case:** #" + std::to_string(inf.case_number);
+                    if (!inf.reason.empty()) desc += "\n**reason:** " + inf.reason;
 
                     auto embed = bronx::create_embed(desc, get_action_color("ban"));
                     bronx::add_invoker_footer(embed, event.msg.author);
                     bronx::send_message(bot, event, embed);
+                },
+                [&bot, &event](const std::string& error_msg) {
+                    bronx::send_message(bot, event, bronx::error(error_msg));
                 });
         },
         // slash handler
@@ -238,13 +203,14 @@ inline Command* get_ban_command(bronx::db::Database* db) {
             auto config = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
 
             // parse optional duration
+            bool duration_provided = false;
             uint32_t duration = 0;
+            std::string duration_str;
             auto dur_param = event.get_parameter("duration");
             if (std::holds_alternative<std::string>(dur_param)) {
-                duration = parse_duration(std::get<std::string>(dur_param));
-            }
-            if (duration == 0) {
-                duration = config.value().default_duration_ban;
+                duration_str = std::get<std::string>(dur_param);
+                duration = parse_duration(duration_str);
+                duration_provided = true;
             }
 
             // parse optional delete_messages (days)
@@ -256,10 +222,40 @@ inline Command* get_ban_command(bronx::db::Database* db) {
             }
 
             // parse optional reason
+            bool reason_provided = false;
             std::string reason;
             auto reason_param = event.get_parameter("reason");
             if (std::holds_alternative<std::string>(reason_param)) {
                 reason = std::get<std::string>(reason_param);
+                reason_provided = !reason.empty();
+            }
+
+            // if either is missing, show a modal
+            if (!duration_provided || !reason_provided) {
+                dpp::interaction_modal_response modal("mod_ban_modal_" + std::to_string(target_id) + "_" + std::to_string(delete_days), "Ban User");
+                modal.add_row();
+                modal.add_component(dpp::component()
+                    .set_label("Duration (e.g. 7d, 30d, 0 for perm)")
+                    .set_id("duration")
+                    .set_type(dpp::cot_text)
+                    .set_placeholder("Enter duration (0 = permanent)")
+                    .set_default_value(duration_provided ? duration_str : "0")
+                    .set_min_length(1)
+                    .set_max_length(20)
+                    .set_text_style(dpp::text_short));
+                modal.add_row();
+                modal.add_component(dpp::component()
+                    .set_label("Reason")
+                    .set_id("reason")
+                    .set_type(dpp::cot_text)
+                    .set_placeholder("Enter reason for ban...")
+                    .set_default_value(reason_provided ? reason : "")
+                    .set_min_length(1)
+                    .set_max_length(512)
+                    .set_text_style(dpp::text_paragraph));
+                
+                event.dialog(modal);
+                return;
             }
 
             std::string guild_name = guild ? guild->name : "unknown server";
@@ -272,50 +268,30 @@ inline Command* get_ban_command(bronx::db::Database* db) {
             // dpp::guild_ban_add takes delete_message_seconds
             uint32_t delete_message_seconds = delete_days * 86400;
 
-            // ban member
-            bot.guild_ban_add(guild_id, target_id, delete_message_seconds,
-                [&bot, db, guild_id, target_id, mod_id, duration, reason, config, guild_name, event](const dpp::confirmation_callback_t& cb) {
-                    if (cb.is_error()) {
-                        event.reply(dpp::message().add_embed(bronx::error("failed to ban user: " + cb.get_error().message)).set_flags(dpp::m_ephemeral));
-                        return;
-                    }
-
-                    // create infraction
-                    auto inf = bronx::db::infraction_operations::create_infraction(
-                        db, guild_id, target_id, mod_id,
-                        "ban", reason, config.value().point_ban,
-                        duration);
-
-                    if (!inf.has_value()) {
-                        event.reply(dpp::message().add_embed(bronx::error("user banned but failed to create infraction record")).set_flags(dpp::m_ephemeral));
-                        return;
-                    }
-
-                    // schedule unban if tempban
-                    if (duration > 0) {
-                        schedule_punishment_expiry(bot, db, guild_id, inf->case_number, "ban", target_id, duration);
-                    }
-
-                    // check escalation
-                    check_and_escalate(bot, db, guild_id, target_id, guild_name);
-
-                    // send mod log
-                    send_mod_log(bot, db, guild_id, inf.value());
-
-                    // reply success
-                    bool is_temp = duration > 0 && duration < 15552000;
-                    std::string desc = bronx::EMOJI_CHECK + " **banned** <@" + std::to_string(target_id) + ">";
+            // apply ban
+            apply_ban_internal(bot, db, guild_id, target_id, mod_id, duration, delete_message_seconds, reason, config.value(),
+                [event](const bronx::db::InfractionRow& inf, bool quiet) {
+                    bool is_temp = inf.duration_seconds > 0 && inf.duration_seconds < 15552000;
+                    std::string desc = bronx::EMOJI_CHECK + " **banned** <@" + std::to_string(inf.user_id) + ">";
                     if (is_temp) {
-                        desc += "\n**duration:** " + format_duration(duration);
+                        desc += "\n**duration:** " + format_duration(inf.duration_seconds);
                     } else {
                         desc += "\n**duration:** permanent";
                     }
-                    desc += "\n**case:** #" + std::to_string(inf->case_number);
-                    if (!reason.empty()) desc += "\n**reason:** " + reason;
+                    desc += "\n**case:** #" + std::to_string(inf.case_number);
+                    if (!inf.reason.empty()) desc += "\n**reason:** " + inf.reason;
 
                     auto embed = bronx::create_embed(desc, get_action_color("ban"));
                     bronx::add_invoker_footer(embed, event.command.get_issuing_user());
-                    event.reply(dpp::message().add_embed(embed));
+
+                    dpp::message msg;
+                    msg.add_embed(embed);
+                    if (quiet) msg.set_flags(dpp::m_ephemeral);
+                    
+                    event.reply(msg);
+                },
+                [event](const std::string& error_msg) {
+                    event.reply(dpp::message().add_embed(bronx::error(error_msg)).set_flags(dpp::m_ephemeral));
                 });
         },
         // options

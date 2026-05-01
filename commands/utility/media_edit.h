@@ -63,10 +63,7 @@ static const std::map<std::string, MediaEffect> EFFECT_REGISTRY = {
     {"jpeg", {"jpeg crush", "applies heavy compression artifacts", "format=yuv420p,scale=iw/4:-1,scale=iw*4:-1:flags=neighbor", false, false}}
 };
 
-// ---------------------------------------------------------------------------
-// Lightweight source descriptor — avoids dpp::attachment's non-default ctor
-// ---------------------------------------------------------------------------
-// Moved to media.h
+// MediaSource and resolve_media_source are now centrally defined in media.h
 
 // ---------------------------------------------------------------------------
 // Core processing — now uses MediaSource instead of dpp::attachment

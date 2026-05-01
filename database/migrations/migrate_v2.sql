@@ -379,15 +379,19 @@ CREATE TABLE IF NOT EXISTS guild_autopurges (
 -- 2.6 Guild deleted messages (renamed)
 CREATE TABLE IF NOT EXISTS guild_deleted_messages (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    message_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
     guild_id BIGINT UNSIGNED NOT NULL,
     channel_id BIGINT UNSIGNED NOT NULL,
-    user_id BIGINT UNSIGNED NOT NULL,
+    author_id BIGINT UNSIGNED NOT NULL,
+    author_tag VARCHAR(256) NOT NULL DEFAULT '',
+    author_avatar VARCHAR(1024) NOT NULL DEFAULT '',
     content TEXT NULL,
-    attachments TEXT NULL,
+    attachment_urls TEXT NULL,
     embeds_summary TEXT NULL,
     deleted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_guild_channel (guild_id, channel_id),
-    INDEX idx_deleted_at (deleted_at)
+    INDEX idx_deleted_at (deleted_at),
+    INDEX idx_message_id (message_id)
 ) ENGINE=InnoDB;
 
 -- 2.6 Analytics — fix column types from VARCHAR(20) to BIGINT UNSIGNED

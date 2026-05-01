@@ -285,7 +285,10 @@ inline Command* get_say_command() {
             // Delete the original message if possible to make it look like the bot is speaking
             bot.message_delete(event.msg.id, event.msg.channel_id);
             
-            bot.message_create(dpp::message(event.msg.channel_id, text));
+            // send as embed to show who said it
+auto embed = bronx::create_embed(text).set_description("");
+bronx::add_invoker_footer(embed, event.msg.author);
+bot.message_create(dpp::message(event.msg.channel_id, embed));
         },
         // SLASH HANDLER
         [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
@@ -297,13 +300,28 @@ inline Command* get_say_command() {
                 channel_id = ::std::get<dpp::snowflake>(channel_param);
             }
             
-            bot.message_create(dpp::message(channel_id, message), [&bot, event, channel_id](const dpp::confirmation_callback_t& cb) {
-                if (cb.is_error()) {
-                    event.reply(dpp::message().set_content(bronx::EMOJI_DENY + " failed to send message — do i have permissions in <#" + ::std::to_string(channel_id) + ">?").set_flags(dpp::m_ephemeral));
-                } else {
-                    event.reply(dpp::message().set_content(bronx::EMOJI_CHECK + " message sent!").set_flags(dpp::m_ephemeral));
-                }
-            });
+                // Build embed with who-sent button
+                auto embed = bronx::create_embed(message);
+                dpp::message msg(channel_id, embed);
+                msg.add_component(
+                    dpp::component()
+                        .set_type(dpp::cot_action_row)
+                        .add_component(
+                            dpp::component()
+                                .set_type(dpp::cot_button)
+                                .set_label("who sent?")
+                                .set_style(dpp::cos_primary)
+                                .set_id("who_sent_" + std::to_string(event.command.get_issuing_user().id))
+                        )
+                );
+                bronx::add_invoker_footer(embed, event.command.usr);
+                bot.message_create(msg, [&bot, event, channel_id](const dpp::confirmation_callback_t& cb) {
+                    if (cb.is_error()) {
+                        event.reply(dpp::message().set_content(bronx::EMOJI_DENY + " failed to send message — do i have permissions in <#" + ::std::to_string(channel_id) + ">?").set_flags(dpp::m_ephemeral));
+                    } else {
+                        event.reply(dpp::message().set_content(bronx::EMOJI_CHECK + " message sent!").set_flags(dpp::m_ephemeral));
+                    }
+                });
         },
         {
             dpp::command_option(dpp::co_string, "message", "the message to echo", true),

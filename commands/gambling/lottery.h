@@ -8,7 +8,6 @@
 #include <random>
 
 using namespace bronx::db;
-using namespace bronx::db::history_operations;
 
 namespace commands {
 namespace gambling {
@@ -46,9 +45,9 @@ inline Command* get_lottery_command(Database* db) {
                 oss << "Total tickets: **" << tickets << "**\n";
                 oss << "Avg share per ticket: **" << std::fixed << std::setprecision(4) << avg_share << "%**\n";
                 oss << "Ticket price range: **$300–$1,000**";
-                auto embed = bronx::create_embed(oss.str());
-                bronx::add_invoker_footer(embed, event.msg.author);
-                bronx::send_message(bot, event, embed);
+                auto embed = ::bronx::create_embed(oss.str());
+                ::bronx::add_invoker_footer(embed, event.msg.author);
+                ::bronx::send_message(bot, event, embed);
                 return;
             }
 
@@ -61,13 +60,13 @@ inline Command* get_lottery_command(Database* db) {
                     try {
                         count = std::stoll(args[0]);
                     } catch (...) {
-                        bronx::send_message(bot, event, bronx::error("invalid ticket count"));
+                        ::bronx::send_message(bot, event, ::bronx::error("invalid ticket count"));
                         return;
                     }
                 }
             }
             if (count < 1) {
-                bronx::send_message(bot, event, bronx::error("ticket count must be at least 1"));
+                ::bronx::send_message(bot, event, ::bronx::error("ticket count must be at least 1"));
                 return;
             }
 
@@ -90,13 +89,13 @@ inline Command* get_lottery_command(Database* db) {
             }
 
             if (tickets_bought == 0) {
-                bronx::send_message(bot, event, bronx::error("you can't afford any tickets (each ticket costs between $300 and $1,000)"));
+                ::bronx::send_message(bot, event, ::bronx::error("you can't afford any tickets (each ticket costs between $300 and $1,000)"));
                 return;
             }
 
             // apply changes
             db->update_wallet(event.msg.author.id, -total_spent);
-            log_gambling(db, event.msg.author.id, "bought " + ::std::to_string(tickets_bought) + " lottery ticket(s) for $" + format_number(total_spent));
+            ::bronx::db::history_operations::log_gambling(db, event.msg.author.id, "bought " + ::std::to_string(tickets_bought) + " lottery ticket(s) for $" + format_number(total_spent));
             db->update_lottery_tickets(event.msg.author.id, tickets_bought);
             int64_t pool = read_pool();
             pool += pool_added;
@@ -108,14 +107,14 @@ inline Command* get_lottery_command(Database* db) {
             desc += "30% of the ticket cost ($" + format_number(pool_added) + ") was added to the pool.\n";
             desc += "\n**current pool:** $" + format_number(pool);
 
-            auto embed = bronx::success(desc);
-            bronx::add_invoker_footer(embed, event.msg.author);
-            bronx::send_message(bot, event, embed);
+            auto embed = ::bronx::success(desc);
+            ::bronx::add_invoker_footer(embed, event.msg.author);
+            ::bronx::send_message(bot, event, embed);
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
             auto user = db->get_user(event.command.get_issuing_user().id);
             if (!user) {
-                event.reply(dpp::message().add_embed(bronx::error("user not found")));
+                event.reply(dpp::message().add_embed(::bronx::error("user not found")));
                 return;
             }
 
@@ -146,8 +145,8 @@ inline Command* get_lottery_command(Database* db) {
                 oss << "Avg share per ticket: **" << std::fixed << std::setprecision(4) << avg_share << "%** (chance per ticket)\n";
                 oss << "Avg share per user: **" << std::fixed << std::setprecision(4) << avg_user_share << "%**\n";
                 oss << "Ticket price range: **$300–$1,000**";
-                auto embed = bronx::create_embed(oss.str());
-                bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+                auto embed = ::bronx::create_embed(oss.str());
+                ::bronx::add_invoker_footer(embed, event.command.get_issuing_user());
                 event.reply(dpp::message().add_embed(embed));
                 return;
             }
@@ -157,7 +156,7 @@ inline Command* get_lottery_command(Database* db) {
                 count = std::get<int64_t>(event.get_parameter("count"));
             }
             if (count < 1) {
-                event.reply(dpp::message().add_embed(bronx::error("ticket count must be at least 1")));
+                event.reply(dpp::message().add_embed(::bronx::error("ticket count must be at least 1")));
                 return;
             }
 
@@ -180,12 +179,12 @@ inline Command* get_lottery_command(Database* db) {
             }
 
             if (tickets_bought == 0) {
-                event.reply(dpp::message().add_embed(bronx::error("you can't afford any tickets (each ticket costs between $300 and $1,000)")));
+                event.reply(dpp::message().add_embed(::bronx::error("you can't afford any tickets (each ticket costs between $300 and $1,000)")));
                 return;
             }
 
             db->update_wallet(event.command.get_issuing_user().id, -total_spent);
-            log_gambling(db, event.command.get_issuing_user().id, "bought " + ::std::to_string(tickets_bought) + " lottery ticket(s) for $" + format_number(total_spent));
+            ::bronx::db::history_operations::log_gambling(db, event.command.get_issuing_user().id, "bought " + ::std::to_string(tickets_bought) + " lottery ticket(s) for $" + format_number(total_spent));
             db->update_lottery_tickets(event.command.get_issuing_user().id, tickets_bought);
             int64_t pool = read_pool();
             pool += pool_added;
@@ -197,8 +196,8 @@ inline Command* get_lottery_command(Database* db) {
             desc += "30% of the ticket cost ($" + format_number(pool_added) + ") was added to the pool.\n";
             desc += "\n**current pool:** $" + format_number(pool);
 
-            auto embed = bronx::success(desc);
-            bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+            auto embed = ::bronx::success(desc);
+            ::bronx::add_invoker_footer(embed, event.command.get_issuing_user());
             event.reply(dpp::message().add_embed(embed));
         },
         {

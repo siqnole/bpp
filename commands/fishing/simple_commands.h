@@ -6,6 +6,7 @@
 #include "../titles.h"
 #include <dpp/dpp.h>
 #include <algorithm>
+#include "../../utils/logger.h"
 
 using namespace bronx::db;
 
@@ -412,8 +413,7 @@ inline Command* get_inv_command(Database* db) {
             
             bot.message_create(msg, [ch = event.msg.channel_id, gid = event.msg.guild_id](const dpp::confirmation_callback_t& cb) {
                 if (cb.is_error()) {
-                    std::cerr << "[fishing:inventory] failed to send inventory in channel " << ch
-                              << " (guild " << gid << "): " << cb.get_error().code << " - " << cb.get_error().message << "\n";
+                    bronx::logger::error("fishing", "[inventory] failed to send inventory in channel " + std::to_string(ch) + " (guild " + std::to_string(gid) + "): " + std::to_string(cb.get_error().code) + " - " + cb.get_error().message);
                 }
             });
         },

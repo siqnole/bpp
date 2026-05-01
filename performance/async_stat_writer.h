@@ -12,6 +12,8 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include "../utils/logger.h"
+#include "../utils/logger.h"
 #include <mariadb/mysql.h>
 
 // JSON parsing helper for config
@@ -30,8 +32,8 @@ public:
 
     bool connect_from_config(const std::string& config_path) {
         std::ifstream file(config_path);
-        if (!file.is_open()) {
-            std::cerr << "[remote_stats] Cannot open config: " << config_path << "\n";
+        if (!file) {
+            bronx::logger::error("remote stats", "cannot open config: " + config_path);
             return false;
         }
         
@@ -65,7 +67,7 @@ public:
         password_ = get_value("password");
         
         if (host_.empty() || host_ == "localhost" || host_ == "127.0.0.1") {
-            std::cerr << "[remote_stats] Skipping - config points to localhost\n";
+            bronx::logger::warn("remote stats", "skipping - config points to localhost");
             return false;
         }
         
@@ -77,7 +79,7 @@ public:
         
         conn_ = mysql_init(nullptr);
         if (!conn_) {
-            std::cerr << "[remote_stats] mysql_init failed\n";
+            bronx::logger::error("remote stats", "mysql_init failed");
             return false;
         }
         
@@ -94,13 +96,13 @@ public:
         // Use CLIENT_SSL flag to force SSL connection
         if (!mysql_real_connect(conn_, host_.c_str(), user_.c_str(), password_.c_str(),
                                 database_.c_str(), port_, nullptr, CLIENT_SSL)) {
-            std::cerr << "[remote_stats] Connection failed: " << mysql_error(conn_) << "\n";
+            bronx::logger::error("remote stats", "connection failed: " + std::string(mysql_error(conn_)));
             mysql_close(conn_);
             conn_ = nullptr;
             return false;
         }
         
-        std::cout << "[remote_stats] Connected to " << host_ << ":" << port_ << "/" << database_ << "\n";
+        bronx::logger::success("remote stats", "connected to " + host_ + ":" + std::to_string(port_) + "/" + database_);
         ensure_tables();
         return true;
     }
@@ -118,7 +120,7 @@ public:
     void ping() {
         if (!conn_) return;
         if (mysql_ping(conn_) != 0) {
-            std::cerr << "[remote_stats] Keep-alive ping failed, reconnecting...\n";
+            bronx::logger::warn("remote stats", "keep-alive ping failed, reconnecting...");
             disconnect();
             connect();
         }
@@ -130,12 +132,12 @@ public:
         }
         
         if (mysql_query(conn_, sql.c_str()) != 0) {
-            std::cerr << "[remote_stats] Query failed: " << mysql_error(conn_) << "\n";
+            bronx::logger::error("remote stats", "query failed: " + std::string(mysql_error(conn_)));
             // Try to reconnect once
             disconnect();
             if (!connect()) return false;
             if (mysql_query(conn_, sql.c_str()) != 0) {
-                std::cerr << "[remote_stats] Query failed after reconnect: " << mysql_error(conn_) << "\n";
+                bronx::logger::error("remote stats", "query failed after reconnect: " + std::string(mysql_error(conn_)));
                 return false;
             }
         }
@@ -216,7 +218,7 @@ private:
                 unsigned int err = mysql_errno(conn_);
                 // 1060 = Duplicate column name - that's fine, column already exists
                 if (err != 1060) {
-                    std::cerr << "[remote_stats] Migration warning: " << mysql_error(conn_) << "\n";
+                    bronx::logger::warn("remote stats", "migration warning: " + std::string(mysql_error(conn_)));
                 }
             }
         };
@@ -249,6 +251,11 @@ private:
             bank_limit BIGINT NOT NULL DEFAULT 5000,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ))");
+
+        // Migration: add column for daily voice tracking
+        if (mysql_query(conn_, "ALTER TABLE users ADD COLUMN daily_voice_minutes BIGINT DEFAULT 0")) {
+            // Error is fine if it already exists
+        }
 
         // Guild activity log — tracks settings changes from Dashboard (DB) and Discord (DC)
         execute(R"(CREATE TABLE IF NOT EXISTS guild_activity_log (
@@ -301,7 +308,7 @@ public:
         // Optionally connect to remote database for stats replication
         if (!remote_config_path.empty()) {
             if (remote_stats_.connect_from_config(remote_config_path)) {
-                std::cout << "[async_stat] Remote stats replication enabled\n";
+                bronx::logger::info("async stat", "remote stats replication enabled");
             }
         }
     }
@@ -355,8 +362,7 @@ public:
     // Buffer a guild member event (join / leave)
     void enqueue_member_event(uint64_t guild_id, uint64_t user_id, const std::string& event_type) {
         if (verbose_) {
-            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[35m+member\033[0m "
-                      << event_type << " guild=" << guild_id << " user=" << user_id << "\n";
+            bronx::logger::debug("stats", "member event: " + event_type + " guild=" + std::to_string(guild_id) + " user=" + std::to_string(user_id));
         }
         std::lock_guard<std::mutex> lk(member_mutex_);
         pending_member_events_.push_back({guild_id, user_id, event_type});
@@ -365,9 +371,7 @@ public:
     // Buffer a guild message event (message / edit / delete)
     void enqueue_message_event(uint64_t guild_id, uint64_t user_id, uint64_t channel_id, const std::string& event_type) {
         if (verbose_) {
-            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[36m+msg\033[0m "
-                      << event_type << " guild=" << guild_id << " user=" << user_id
-                      << " ch=" << channel_id << "\n";
+            bronx::logger::debug("stats", "message event: " + event_type + " guild=" + std::to_string(guild_id) + " user=" + std::to_string(user_id) + " ch=" + std::to_string(channel_id));
         }
         std::lock_guard<std::mutex> lk(message_mutex_);
         pending_message_events_.push_back({guild_id, user_id, channel_id, event_type});
@@ -376,9 +380,7 @@ public:
     // Buffer a guild voice event (join / leave) + track session duration
     void enqueue_voice_event(uint64_t guild_id, uint64_t user_id, uint64_t channel_id, const std::string& event_type) {
         if (verbose_) {
-            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[34m+voice\033[0m "
-                      << event_type << " guild=" << guild_id << " user=" << user_id
-                      << " ch=" << channel_id << "\n";
+            bronx::logger::debug("stats", "voice event: " + event_type + " guild=" + std::to_string(guild_id) + " user=" + std::to_string(user_id) + " ch=" + std::to_string(channel_id));
         }
         // Track voice sessions for duration computation
         {
@@ -414,7 +416,7 @@ public:
                 try {
                     bronx::db::stats_operations::add_user_daily_voice_minutes(db_, key.first, key.second, minutes);
                 } catch (const std::exception& e) {
-                    std::cerr << "[async_stat] flush_voice_sessions failed: " << e.what() << "\n";
+                    bronx::logger::error("async stat", "flush_voice_sessions failed: " + std::string(e.what()));
                 }
             }
         }
@@ -424,9 +426,7 @@ public:
     // Buffer a guild boost event (boost / unboost)
     void enqueue_boost_event(uint64_t guild_id, uint64_t user_id, const std::string& event_type, const std::string& boost_id = "") {
         if (verbose_) {
-            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[35m+boost\033[0m "
-                      << event_type << " guild=" << guild_id << " user=" << user_id
-                      << " boost_id=" << boost_id << "\n";
+            bronx::logger::debug("stats", "boost event: " + event_type + " guild=" + std::to_string(guild_id) + " user=" + std::to_string(user_id) + " boost_id=" + boost_id);
         }
         std::lock_guard<std::mutex> lk(boost_mutex_);
         pending_boost_events_.push_back({guild_id, user_id, event_type, boost_id});
@@ -435,8 +435,7 @@ public:
     // Buffer a guild command usage increment
     void enqueue_command_usage(uint64_t guild_id, const std::string& command_name, uint64_t channel_id) {
         if (verbose_) {
-            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[33m+cmd\033[0m "
-                      << command_name << " guild=" << guild_id << " ch=" << channel_id << "\n";
+            bronx::logger::debug("stats", "command usage: " + command_name + " guild=" + std::to_string(guild_id) + " ch=" + std::to_string(channel_id));
         }
         std::lock_guard<std::mutex> lk(cmd_usage_mutex_);
         auto key = std::to_string(guild_id) + ":" + command_name + ":" + std::to_string(channel_id);
@@ -450,8 +449,7 @@ public:
                               const std::string& action, const std::string& old_value = "",
                               const std::string& new_value = "") {
         if (verbose_) {
-            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[32m+activity\033[0m "
-                      << action << " guild=" << guild_id << " user=" << user_name << "\n";
+            bronx::logger::debug("stats", "activity log: " + action + " guild=" + std::to_string(guild_id) + " user=" + user_name);
         }
         std::lock_guard<std::mutex> lk(activity_mutex_);
         pending_activity_logs_.push_back({guild_id, user_id, user_name, action, old_value, new_value});
@@ -667,17 +665,6 @@ private:
             && voice_events.empty() && boost_events.empty() && cmd_usage.empty() && voice_mins.empty()
             && activity_logs.empty()) return;
 
-        if (verbose_) {
-            std::cout << "\033[2m[\033[35mSTATS\033[2m]\033[0m \033[1mflush\033[0m"
-                      << " logs=" << logs.size()
-                      << " stats=" << stats.size()
-                      << " members=" << member_events.size()
-                      << " msgs=" << msg_events.size()
-                      << " voice=" << voice_events.size()
-                      << " boosts=" << boost_events.size()
-                      << " cmds=" << cmd_usage.size() << "\n";
-        }
-
         // Collect unique user IDs that need ensure_user_exists
         std::unordered_set<uint64_t> users_to_ensure;
         for (const auto& log : logs) {
@@ -697,7 +684,7 @@ private:
                 db_->ensure_user_exists(uid);
                 mark_user_known(uid);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] ensure_user_exists failed for " << uid << ": " << e.what() << "\n";
+                bronx::logger::error("async stat", "ensure_user_exists failed for " + std::to_string(uid) + ": " + std::string(e.what()));
             }
         }
 
@@ -706,7 +693,7 @@ private:
             try {
                 db_->log_history(log.user_id, "CMD", "ran ." + log.command);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] log_history failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "log_history failed: " + std::string(e.what()));
             }
         }
 
@@ -717,7 +704,7 @@ private:
                 // (we already ensured above in batch)
                 db_->increment_stat(key.first, key.second, amount);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] increment_stat failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "increment_stat failed: " + std::string(e.what()));
             }
         }
 
@@ -726,7 +713,7 @@ private:
             try {
                 bronx::db::stats_operations::log_member_event(db_, ev.guild_id, ev.user_id, ev.event_type);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] log_member_event failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "log_member_event failed: " + std::string(e.what()));
             }
             // Replicate to Aiven for dashboard
             if (remote_stats_.is_connected()) {
@@ -745,7 +732,7 @@ private:
                     bronx::db::stats_operations::increment_user_daily_messages(db_, ev.guild_id, ev.user_id, ev.event_type);
                 }
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] log_message_event failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "log_message_event failed: " + std::string(e.what()));
             }
             // Replicate to Aiven for dashboard
             if (remote_stats_.is_connected()) {
@@ -761,7 +748,7 @@ private:
             try {
                 bronx::db::stats_operations::log_voice_event(db_, ev.guild_id, ev.user_id, ev.channel_id, ev.event_type);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] log_voice_event failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "log_voice_event failed: " + std::string(e.what()));
             }
             if (remote_stats_.is_connected()) {
                 std::string sql = "INSERT INTO guild_voice_events (guild_id, user_id, channel_id, event_type) VALUES ("
@@ -776,7 +763,7 @@ private:
             try {
                 bronx::db::stats_operations::add_user_daily_voice_minutes(db_, vm.guild_id, vm.user_id, vm.minutes);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] add_user_daily_voice_minutes failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "add_user_daily_voice_minutes failed: " + std::string(e.what()));
             }
         }
 
@@ -785,7 +772,7 @@ private:
             try {
                 bronx::db::stats_operations::log_boost_event(db_, ev.guild_id, ev.user_id, ev.event_type, ev.boost_id);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] log_boost_event failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "log_boost_event failed: " + std::string(e.what()));
             }
             if (remote_stats_.is_connected()) {
                 std::string sql = "INSERT INTO guild_boost_events (guild_id, user_id, event_type, boost_id) VALUES ("
@@ -804,7 +791,7 @@ private:
             try {
                 db_->execute(sql);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] increment_command_usage failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "increment_command_usage failed: " + std::string(e.what()));
             }
             // Replicate to Aiven for dashboard
             if (remote_stats_.is_connected()) {
@@ -837,7 +824,7 @@ private:
             try {
                 db_->execute(sql);
             } catch (const std::exception& e) {
-                std::cerr << "[async_stat] activity_log insert failed: " << e.what() << "\n";
+                bronx::logger::error("async stat", "activity_log insert failed: " + std::string(e.what()));
             }
             // Replicate to Aiven for dashboard (where the web UI queries from)
             if (remote_stats_.is_connected()) {
@@ -850,13 +837,13 @@ private:
             // Only log occasionally to avoid spam
             static std::atomic<uint64_t> flush_count{0};
             if (++flush_count % 20 == 1) {
-                std::cerr << "[async_stat] flushed " << logs.size() << " logs, "
-                          << stats.size() << " stat updates, "
-                          << member_events.size() << " member events, "
-                          << msg_events.size() << " msg events, "
-                          << voice_events.size() << " voice events, "
-                          << boost_events.size() << " boost events, "
-                          << cmd_usage.size() << " cmd usage\n";
+                bronx::logger::debug("async stat", "flushed " + std::to_string(logs.size()) + " logs, " +
+                                   std::to_string(stats.size()) + " stat updates, " +
+                                   std::to_string(member_events.size()) + " member events, " +
+                                   std::to_string(msg_events.size()) + " msg events, " +
+                                   std::to_string(voice_events.size()) + " voice events, " +
+                                   std::to_string(boost_events.size()) + " boost events, " +
+                                   std::to_string(cmd_usage.size()) + " cmd usage");
             }
         }
     }

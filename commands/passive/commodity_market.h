@@ -29,44 +29,6 @@ namespace passive {
 // `/market history <item>` — show price history
 // ============================================================================
 
-// Table creation
-static bool g_market_tables_created = false;
-static std::mutex g_market_mutex;
-
-static void ensure_market_tables(Database* db) {
-    if (g_market_tables_created) return;
-    std::lock_guard<std::mutex> lock(g_market_mutex);
-    if (g_market_tables_created) return;
-    
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS commodity_prices ("
-        "  commodity_name VARCHAR(100) NOT NULL,"
-        "  commodity_type ENUM('fish','ore') NOT NULL DEFAULT 'ore',"
-        "  base_price INT NOT NULL DEFAULT 100,"
-        "  current_price INT NOT NULL DEFAULT 100,"
-        "  price_modifier DECIMAL(5,2) NOT NULL DEFAULT 1.00,"
-        "  trend DECIMAL(5,2) NOT NULL DEFAULT 0.00,"
-        "  last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        "  PRIMARY KEY (commodity_name, commodity_type),"
-        "  INDEX idx_type (commodity_type)"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS commodity_price_history ("
-        "  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
-        "  commodity_name VARCHAR(100) NOT NULL,"
-        "  commodity_type ENUM('fish','ore') NOT NULL DEFAULT 'ore',"
-        "  price INT NOT NULL,"
-        "  recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        "  INDEX idx_commodity (commodity_name, commodity_type),"
-        "  INDEX idx_recorded (recorded_at)"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    g_market_tables_created = true;
-}
-
 // ── Market data structures ──────────────────────────────────────────────────
 
 struct CommodityPrice {
@@ -179,7 +141,6 @@ static std::vector<PriceHistory> get_price_history(Database* db, const std::stri
 // ── Price fluctuation engine (call daily via timer) ─────────────────────────
 
 static void initialize_market_prices(Database* db) {
-    ensure_market_tables(db);
     auto conn = db->get_pool()->acquire();
     if (!conn) return;
     
@@ -229,7 +190,6 @@ static void initialize_market_prices(Database* db) {
 
 // Called by daily timer — fluctuates all prices ±10-30%
 inline void fluctuate_market_prices(Database* db) {
-    ensure_market_tables(db);
     auto conn = db->get_pool()->acquire();
     if (!conn) return;
     
@@ -315,7 +275,6 @@ inline Command* get_market_overview_command(Database* db) {
         true,
         // text handler
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
-            ensure_market_tables(db);
             initialize_market_prices(db);
             
             std::string sub = args.empty() ? "view" : args[0];
@@ -450,7 +409,6 @@ inline Command* get_market_overview_command(Database* db) {
         },
         // slash handler
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
-            ensure_market_tables(db);
             initialize_market_prices(db);
             
             std::string sub = "view";

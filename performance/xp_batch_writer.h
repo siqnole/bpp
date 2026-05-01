@@ -1,5 +1,6 @@
 #pragma once
 #include "../database/core/database.h"
+#include "../utils/logger.h"
 #include "../database/operations/leveling/leveling_operations.h"
 #include <atomic>
 #include <chrono>
@@ -171,7 +172,7 @@ private:
             if (levelup_cb_) {
                 try { levelup_cb_(level_ups); }
                 catch (const std::exception& e) {
-                    std::cerr << "[xp_batch] levelup callback error: " << e.what() << "\n";
+                    bronx::logger::error("leveling", "levelup callback error: " + std::string(e.what()));
                 }
             }
         }

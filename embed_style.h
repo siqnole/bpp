@@ -4,11 +4,12 @@
 #include <vector>
 #include <random>
 #include <iostream>
+#include "commands/economy/helpers.h"
 #include <atomic>
 #include <chrono>
 #include <mutex>
 #include <array>
-#include <string_view>
+inline std::string format_number(int64_t num) { return ::commands::economy::format_number(num); }
 
 namespace bronx {
 

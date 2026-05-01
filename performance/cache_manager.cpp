@@ -1,6 +1,7 @@
 #include "cache_manager.h"
 #include <iostream>
 #include <memory>
+#include "../utils/logger.h"
 
 namespace bronx {
 namespace cache {
@@ -11,19 +12,19 @@ std::unique_ptr<CacheManager> global_cache = nullptr;
 void initialize_cache() {
     if (!global_cache) {
         global_cache = std::make_unique<CacheManager>();
-        std::cout << "Cache system initialized successfully\n";
+        bronx::logger::success("system cache", "cache system initialized successfully");
     }
 }
 
 void shutdown_cache() {
     if (global_cache) {
         auto stats = global_cache->get_stats();
-        std::cout << "Cache shutdown - Final stats:\n";
-        std::cout << "  Total cached entries: " << stats.total_entries << "\n";
-        std::cout << "  Blacklist entries: " << stats.blacklist_entries << "\n";
-        std::cout << "  Whitelist entries: " << stats.whitelist_entries << "\n";
-        std::cout << "  Cooldown entries: " << stats.cooldown_entries << "\n";
-        std::cout << "  Balance entries: " << (stats.wallet_entries + stats.bank_entries) << "\n";
+        bronx::logger::info("system cache", "cache shutdown - final stats:");
+        bronx::logger::info("system cache", "  total cached entries: " + std::to_string(stats.total_entries));
+        bronx::logger::info("system cache", "  blacklist entries: " + std::to_string(stats.blacklist_entries));
+        bronx::logger::info("system cache", "  whitelist entries: " + std::to_string(stats.whitelist_entries));
+        bronx::logger::info("system cache", "  cooldown entries: " + std::to_string(stats.cooldown_entries));
+        bronx::logger::info("system cache", "  balance entries: " + std::to_string(stats.wallet_entries + stats.bank_entries));
         global_cache.reset();
     }
 }

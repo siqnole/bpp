@@ -20,6 +20,7 @@
 #include <optional>
 #include <iostream>
 #include <mutex>
+#include "../utils/logger.h"
 #include <chrono>
 #include <functional>
 
@@ -166,8 +167,7 @@ private:
         if (res != CURLE_OK || http_code != 200) {
             static std::atomic<uint64_t> error_count{0};
             if (++error_count % 50 == 1) {
-                std::cerr << "[api_cache] HTTP " << http_code << " from " << url
-                          << " (curl: " << curl_easy_strerror(res) << ")\n";
+                bronx::logger::error("api_cache", "HTTP " + std::to_string(http_code) + " from " + url + " (curl: " + curl_easy_strerror(res) + ")");
             }
             return std::nullopt;
         }

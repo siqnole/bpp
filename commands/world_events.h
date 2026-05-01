@@ -9,6 +9,7 @@
 #include <random>
 #include <chrono>
 #include <iostream>
+#include "../utils/logger.h"
 
 using namespace bronx::db;
 
@@ -182,9 +183,10 @@ inline std::optional<WorldEventData> try_spawn_random_event(Database* db, bool f
                                      tmpl.emoji, tmpl.bonus_type, tmpl.bonus_value, duration);
 
     if (ok) {
-        std::cout << "\033[35m[world event]\033[0m " << tmpl.emoji << " " << tmpl.event_name
-                  << " started (bonus: " << tmpl.bonus_type << " +" << (tmpl.bonus_value * 100) << "%, "
-                  << duration << " min)\n";
+        bronx::logger::success("world event", tmpl.emoji + " " + tmpl.event_name + 
+                               " started (bonus: " + tmpl.bonus_type + " +" + 
+                               std::to_string((int)(tmpl.bonus_value * 100)) + "%, " + 
+                               std::to_string(duration) + " min)");
         
         // Return the newly created event data
         return db->get_active_world_event();

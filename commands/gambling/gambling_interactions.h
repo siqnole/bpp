@@ -12,9 +12,7 @@
 #include "../../log.h"
 #include <thread>
 #include <chrono>
-
-using namespace bronx::db;
-using namespace bronx::db::history_operations;
+#include "../../utils/logger.h"
 
 namespace commands {
 namespace gambling {
@@ -42,8 +40,7 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
         // from malformed custom_id values (e.g. stoull throwing std::invalid_argument)
         try {
         
-        std::cout << DBG_GAMB "button_click user=" << event.command.get_issuing_user().id \
-                  << " custom_id=" << custom_id << "\n";
+        bronx::logger::debug("gambling 🎰", "button_click user=" + std::to_string(event.command.get_issuing_user().id) + " custom_id=" + custom_id);
         
         // Check for roulette bet buttons
         if (custom_id.find("roulette_bet_") == 0) {
@@ -51,10 +48,10 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             size_t last_underscore = custom_id.rfind('_');
             uint64_t game_id = ::std::stoull(custom_id.substr(last_underscore + 1));
             
-            auto it = active_roulette_games.find(game_id);
-            if (it == active_roulette_games.end() || !it->second.active) {
+            auto it = ::commands::gambling::active_roulette_games.find(game_id);
+            if (it == ::commands::gambling::active_roulette_games.end() || !it->second.active) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("this roulette game is no longer active")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("this roulette game is no longer active")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
@@ -113,7 +110,7 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             size_t last_underscore = custom_id.rfind('_');
             uint64_t game_id = ::std::stoull(custom_id.substr(last_underscore + 1));
             
-            handle_roulette_spin(bot, db, event, game_id);
+            ::commands::gambling::handle_roulette_spin(bot, db, event, game_id);
         }
         
         // Roulette cancel button
@@ -121,7 +118,7 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             size_t last_underscore = custom_id.rfind('_');
             uint64_t game_id = ::std::stoull(custom_id.substr(last_underscore + 1));
             
-            handle_roulette_cancel(bot, db, event, game_id);
+            ::commands::gambling::handle_roulette_cancel(bot, db, event, game_id);
         }
         
         // Roulette pagination buttons
@@ -129,10 +126,10 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             size_t last_underscore = custom_id.rfind('_');
             uint64_t game_id = ::std::stoull(custom_id.substr(last_underscore + 1));
             
-            auto game_it = active_roulette_games.find(game_id);
-            if (game_it == active_roulette_games.end()) {
+            auto game_it = ::commands::gambling::active_roulette_games.find(game_id);
+            if (game_it == ::commands::gambling::active_roulette_games.end()) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("This game session has expired.")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("This game session has expired.")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
@@ -140,16 +137,16 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             // Only author can navigate
             if (event.command.get_issuing_user().id != game_it->second.author_id) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("Only the game author can navigate pages!")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("Only the game author can navigate pages!")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             
             // Get pagination data
-            auto data_it = roulette_pagination_data.find(game_id);
-            if (data_it == roulette_pagination_data.end()) {
+            auto data_it = ::commands::gambling::roulette_pagination_data.find(game_id);
+            if (data_it == ::commands::gambling::roulette_pagination_data.end()) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("Pagination data not found.")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("Pagination data not found.")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
@@ -172,15 +169,15 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             }
             
             // Update embed
-            ::std::string wheel_display = get_roulette_display(result_num, 0);
-            bool is_red = red_numbers.count(result_num);
+            ::std::string wheel_display = ::commands::gambling::get_roulette_display(result_num, 0);
+            bool is_red = ::commands::gambling::red_numbers.count(result_num);
             bool is_green = (result_num == 0 || result_num == 37);
             
             dpp::embed result_embed = dpp::embed()
                 .set_color(is_green ? 0x00FF00 : (is_red ? 0xFF0000 : 0x000000))
                 .set_title("🎰 ROULETTE RESULTS");
             
-            result_embed.set_description(get_paginated_results(results, current_page, result_num, wheel_display));
+            result_embed.set_description(::commands::gambling::get_paginated_results(results, current_page, result_num, wheel_display));
             
             dpp::message result_msg;
             result_msg.add_embed(result_embed);
@@ -213,11 +210,11 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             
             if (event.command.get_issuing_user().id != user_id) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
-            handle_blackjack_hit(bot, db, event, user_id);
+            ::commands::gambling::handle_blackjack_hit(bot, db, event, user_id);
         }
         
         // Blackjack stand button
@@ -227,11 +224,11 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             
             if (event.command.get_issuing_user().id != user_id) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
-            handle_blackjack_stand(bot, db, event, user_id);
+            ::commands::gambling::handle_blackjack_stand(bot, db, event, user_id);
         }
         
         // Blackjack double down button
@@ -241,11 +238,11 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             
             if (event.command.get_issuing_user().id != user_id) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
-            handle_blackjack_double(bot, db, event, user_id);
+            ::commands::gambling::handle_blackjack_double(bot, db, event, user_id);
         }
 
         // Blackjack split button
@@ -255,52 +252,51 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             
             if (event.command.get_issuing_user().id != user_id) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
-            handle_blackjack_split(bot, db, event, user_id);
+            ::commands::gambling::handle_blackjack_split(bot, db, event, user_id);
         }
         
         // ── Russian Roulette lobby buttons ──
         if (custom_id.find("russian_roulette_join_") == 0) {
             size_t last_underscore = custom_id.rfind('_');
             uint64_t game_id = ::std::stoull(custom_id.substr(last_underscore + 1));
-            handle_russian_roulette_join(bot, db, event, game_id);
+            ::commands::gambling::handle_russian_roulette_join(bot, db, event, game_id);
             return;
         }
 
         if (custom_id.find("russian_roulette_start_") == 0) {
             size_t last_underscore = custom_id.rfind('_');
             uint64_t game_id = ::std::stoull(custom_id.substr(last_underscore + 1));
-            handle_russian_roulette_start(bot, event, game_id);
+            ::commands::gambling::handle_russian_roulette_start(bot, event, game_id);
             return;
         }
 
         // ── Russian Roulette game buttons ──
         if (custom_id.find("rr_shoot_") == 0) {
             uint64_t game_id = ::std::stoull(custom_id.substr(9));
-            handle_rr_shoot(bot, db, event, game_id);
+            ::commands::gambling::handle_rr_shoot(bot, db, event, game_id);
             return;
         }
 
         if (custom_id.find("rr_spin_") == 0) {
             uint64_t game_id = ::std::stoull(custom_id.substr(8));
-            handle_rr_spin(bot, event, game_id);
+            ::commands::gambling::handle_rr_spin(bot, event, game_id);
             return;
         }
 
         } catch (const ::std::exception& e) {
-            std::cerr << "\033[31m✘ gambling button handler exception: " << e.what()
-                      << " (custom_id=" << event.custom_id << ")\033[0m\n";
+            bronx::logger::error("gambling 🎰", "button handler exception: " + std::string(e.what()) + " (custom_id=" + event.custom_id + ")");
             try {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("an error occurred processing this interaction")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("an error occurred processing this interaction")).set_flags(dpp::m_ephemeral));
             } catch (...) {}
         } catch (...) {
             try {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("an unexpected error occurred")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("an unexpected error occurred")).set_flags(dpp::m_ephemeral));
             } catch (...) {}
         }
     });
@@ -312,9 +308,9 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
         if (custom_id.find("rr_target_") != 0) return;
 
         uint64_t game_id = ::std::stoull(custom_id.substr(10));
-        handle_rr_target(bot, db, event, game_id);
+        ::commands::gambling::handle_rr_target(bot, db, event, game_id);
         } catch (const ::std::exception& e) {
-            std::cerr << "\033[31m✘ gambling select handler exception: " << e.what() << "\033[0m\n";
+            bronx::logger::error("gambling 🎰", "select handler exception: " + std::string(e.what()));
         } catch (...) {}
     });
     
@@ -332,10 +328,10 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             size_t second_last = custom_id.rfind('_', last_underscore - 1);
             ::std::string bet_type = custom_id.substr(second_last + 1, last_underscore - second_last - 1);
             
-            auto it = active_roulette_games.find(game_id);
-            if (it == active_roulette_games.end() || !it->second.active) {
+            auto it = ::commands::gambling::active_roulette_games.find(game_id);
+            if (it == ::commands::gambling::active_roulette_games.end() || !it->second.active) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("this roulette game is no longer active")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("this roulette game is no longer active")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
@@ -343,13 +339,13 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             auto user = db->get_user(user_id);
             if (!user) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("user not found")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("user not found")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
             if (event.components.empty()) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("no form data received")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("no form data received")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
@@ -359,7 +355,7 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
                 bet_str = ::std::get<::std::string>(event.components[0].value);
             } catch (const ::std::exception& e) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error(::std::string("failed to read bet amount: ") + e.what())).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error(::std::string("failed to read bet amount: ") + e.what())).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
@@ -369,35 +365,35 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
                 bet_amount = parse_amount(bet_str, user->wallet);
             } catch (const ::std::exception& e) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error(e.what())).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error(e.what())).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             
             if (bet_amount < 50) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("minimum bet is $50")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("minimum bet is $50")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             
-            if (bet_amount > MAX_BET) {
+            if (bet_amount > ::commands::gambling::MAX_BET) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("maximum bet is $2,000,000,000")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("maximum bet is $2,000,000,000")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             
             if (bet_amount > user->wallet) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("you don't have that much money!" )).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("you don't have that much money!" )).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             
             // Deduct money and add bet
             db->update_wallet(user_id, -bet_amount);
-            log_gambling(db, user_id, "bet $" + format_number(bet_amount) + " on roulette (" + bet_type + ")");;
+            ::bronx::db::history_operations::log_gambling(db, user_id, "bet $" + format_number(bet_amount) + " on roulette (" + bet_type + ")");;
             it->second.player_bets[user_id].bets[bet_type] += bet_amount;
             it->second.player_bets[user_id].total_bet += bet_amount;
             
@@ -406,11 +402,11 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             int64_t potential_win = bet_amount * payout_multiplier;
             
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::success("Bet $" + format_number(bet_amount) + " on " + bet_type + " for a potential win of $" + format_number(potential_win))).set_flags(dpp::m_ephemeral),
+                dpp::message().add_embed(::bronx::success("Bet $" + format_number(bet_amount) + " on " + bet_type + " for a potential win of $" + format_number(potential_win))).set_flags(dpp::m_ephemeral),
                 dpp::utility::log_error());
             
             // Update message after replying to avoid race condition
-            update_roulette_bet_message(bot, db, game_id);
+            ::commands::gambling::update_roulette_bet_message(bot, db, game_id);
         }
         
         // Handle number bet modal
@@ -418,10 +414,10 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             size_t last_underscore = custom_id.rfind('_');
             uint64_t game_id = ::std::stoull(custom_id.substr(last_underscore + 1));
             
-            auto it = active_roulette_games.find(game_id);
-            if (it == active_roulette_games.end() || !it->second.active) {
+            auto it = ::commands::gambling::active_roulette_games.find(game_id);
+            if (it == ::commands::gambling::active_roulette_games.end() || !it->second.active) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("this roulette game is no longer active")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("this roulette game is no longer active")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
@@ -429,14 +425,14 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             auto user = db->get_user(user_id);
             if (!user) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("user not found")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("user not found")).set_flags(dpp::m_ephemeral));
                 return;
             }
             
             // Check if we have both components
             if (event.components.size() < 2) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("invalid form data")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("invalid form data")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
@@ -447,7 +443,7 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
                 bet_str = ::std::get<::std::string>(event.components[1].value);
             } catch (const ::std::exception& e) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error(::std::string("failed to read form values: ") + e.what())).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error(::std::string("failed to read form values: ") + e.what())).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
@@ -461,13 +457,13 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
                     number = ::std::stoi(number_str);
                     if (number < 0 || number > 36) {
                         event.reply(dpp::ir_channel_message_with_source,
-                            dpp::message().add_embed(bronx::error("invalid number! Must be 0-36 or 00")).set_flags(dpp::m_ephemeral),
+                            dpp::message().add_embed(::bronx::error("invalid number! Must be 0-36 or 00")).set_flags(dpp::m_ephemeral),
                             dpp::utility::log_error());
                         return;
                     }
                 } catch (...) {
                     event.reply(dpp::ir_channel_message_with_source,
-                        dpp::message().add_embed(bronx::error("invalid number!")).set_flags(dpp::m_ephemeral),
+                        dpp::message().add_embed(::bronx::error("invalid number!")).set_flags(dpp::m_ephemeral),
                         dpp::utility::log_error());
                     return;
                 }
@@ -479,27 +475,27 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
                 bet_amount = parse_amount(bet_str, user->wallet);
             } catch (const std::exception& e) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("invalid bet amount")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("invalid bet amount")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             if (bet_amount < 50) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("minimum bet is $50")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("minimum bet is $50")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             
-            if (bet_amount > MAX_BET) {
+            if (bet_amount > ::commands::gambling::MAX_BET) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("maximum bet is $2,000,000,000")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("maximum bet is $2,000,000,000")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
             
             if (bet_amount > user->wallet) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("you don't have that much money!")).set_flags(dpp::m_ephemeral),
+                    dpp::message().add_embed(::bronx::error("you don't have that much money!")).set_flags(dpp::m_ephemeral),
                     dpp::utility::log_error());
                 return;
             }
@@ -507,27 +503,27 @@ inline void register_roulette_blackjack_interactions(dpp::cluster& bot, Database
             // Deduct money and add bet
             db->update_wallet(user_id, -bet_amount);
             ::std::string display_number = (number == 37) ? "00" : ::std::to_string(number);
-            log_gambling(db, user_id, "bet $" + format_number(bet_amount) + " on roulette (#" + display_number + ")");
+            ::bronx::db::history_operations::log_gambling(db, user_id, "bet $" + format_number(bet_amount) + " on roulette (#" + display_number + ")");
             it->second.player_bets[user_id].bets[display_number] += bet_amount;
             it->second.player_bets[user_id].total_bet += bet_amount;
             
-            update_roulette_bet_message(bot, db, game_id);
+            ::commands::gambling::update_roulette_bet_message(bot, db, game_id);
             
             int64_t potential_win = bet_amount * 35;
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::success("Bet $" + format_number(bet_amount) + " on " + display_number + " for a potential win of $" + format_number(potential_win))).set_flags(dpp::m_ephemeral),
+                dpp::message().add_embed(::bronx::success("Bet $" + format_number(bet_amount) + " on " + display_number + " for a potential win of $" + format_number(potential_win))).set_flags(dpp::m_ephemeral),
                 dpp::utility::log_error());
         }
         } catch (const ::std::exception& e) {
             // Catch any unhandled exceptions
             try {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error(::std::string("unexpected error: ") + e.what())).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error(::std::string("unexpected error: ") + e.what())).set_flags(dpp::m_ephemeral));
             } catch (...) {}
         } catch (...) {
             try {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("an unexpected error occurred")).set_flags(dpp::m_ephemeral));
+                    dpp::message().add_embed(::bronx::error("an unexpected error occurred")).set_flags(dpp::m_ephemeral));
             } catch (...) {}
         }
     });

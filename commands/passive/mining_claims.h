@@ -61,36 +61,6 @@ static const ClaimTier& get_claim_tier(const std::string& rarity) {
 // Max claims per user
 static const int MAX_CLAIMS = 5;
 
-// Table creation
-static bool g_claim_tables_created = false;
-static std::mutex g_claim_mutex;
-
-static void ensure_claim_tables(Database* db) {
-    if (g_claim_tables_created) return;
-    std::lock_guard<std::mutex> lock(g_claim_mutex);
-    if (g_claim_tables_created) return;
-    
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS user_mining_claims ("
-        "  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
-        "  user_id BIGINT UNSIGNED NOT NULL,"
-        "  ore_name VARCHAR(100) NOT NULL,"
-        "  ore_emoji VARCHAR(32) NOT NULL DEFAULT '⛏️',"
-        "  rarity VARCHAR(20) NOT NULL DEFAULT 'common',"
-        "  yield_min INT NOT NULL DEFAULT 1,"
-        "  yield_max INT NOT NULL DEFAULT 3,"
-        "  ore_value INT NOT NULL DEFAULT 10,"
-        "  purchased_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        "  expires_at TIMESTAMP NOT NULL,"
-        "  last_collect TIMESTAMP NULL DEFAULT NULL,"
-        "  INDEX idx_user (user_id),"
-        "  INDEX idx_expires (expires_at)"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    g_claim_tables_created = true;
-}
-
 // ── DB helpers ──────────────────────────────────────────────────────────────
 
 struct ClaimInfo {
@@ -202,7 +172,6 @@ inline Command* get_claim_command(Database* db) {
         true,
         // text handler
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
-            ensure_claim_tables(db);
             uint64_t uid = event.msg.author.id;
             db->ensure_user_exists(uid);
             
@@ -395,7 +364,6 @@ inline Command* get_claim_command(Database* db) {
         },
         // slash handler
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
-            ensure_claim_tables(db);
             uint64_t uid = event.command.get_issuing_user().id;
             db->ensure_user_exists(uid);
             

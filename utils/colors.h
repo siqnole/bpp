@@ -7,8 +7,21 @@ namespace clr {
     constexpr const char* BLUE        = "\033[34m";
     constexpr const char* MAGENTA     = "\033[35m";
     constexpr const char* CYAN        = "\033[36m";
+    constexpr const char* WHITE       = "\033[37m";
     constexpr const char* DIM         = "\033[2m";
     constexpr const char* BOLD        = "\033[1m";
+    constexpr const char* UNDERLINE   = "\033[4m";
+    
+    // Semantic Colors (Cool to Warm)
+    constexpr const char* LOG_TRACE   = "\033[2;37m";   // Dim White
+    constexpr const char* LOG_DEBUG   = "\033[35m";     // Magenta
+    constexpr const char* LOG_INFO    = "\033[36m";     // Cyan
+    constexpr const char* LOG_NOTICE  = "\033[34m";     // Blue
+    constexpr const char* LOG_SUCCESS = "\033[32m";     // Green
+    constexpr const char* LOG_WARN    = "\033[33m";     // Yellow
+    constexpr const char* LOG_ERROR   = "\033[31m";     // Red
+    constexpr const char* LOG_CRIT    = "\033[1;31m";   // Bold Red
+
     constexpr const char* BOLD_RED    = "\033[1;31m";
     constexpr const char* BOLD_GREEN  = "\033[1;32m";
     constexpr const char* BOLD_YELLOW = "\033[1;33m";

@@ -20,6 +20,7 @@
 #include "muterole.h"
 #include "jailsetup.h"
 #include "modlog_channel.h"
+#include "quiet_config.h"
 #include "../quiet_moderation/antispam_api.h"
 #include "../quiet_moderation/url_guard.h"
 #include "../quiet_moderation/text_filter_config.h"
@@ -69,6 +70,7 @@ inline std::vector<ModCommandInfo> get_moderation_actions(Database* db) {
         {"muterole", "set mute role", get_muterole_command},
         {"jailsetup", "configure jail channel", get_jailsetup_command},
         {"modlog", "set moderation log channel", get_modlog_channel_command},
+        {"quiet", "configure quiet moderation", get_quiet_config_command},
     };
 }
 
@@ -98,6 +100,7 @@ inline Command* create_moderation_parent_command(Database* db) {
         g_mod_commands["muterole"] = get_muterole_command(db);
         g_mod_commands["jailsetup"] = get_jailsetup_command(db);
         g_mod_commands["modlog"] = get_modlog_channel_command(db);
+        g_mod_commands["quiet"] = get_quiet_config_command(db);
         
         // Add quiet moderation commands (these don't take Database* parameter)
         g_mod_commands["antispam"] = quiet_moderation::get_antispam_command();

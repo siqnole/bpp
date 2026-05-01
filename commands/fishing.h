@@ -12,6 +12,7 @@
 #include "fishing/fish_parent.h"
 #include <vector>
 #include <algorithm>
+#include "../utils/logger.h"
 #include "../log.h"
 
 namespace commands {
@@ -93,7 +94,7 @@ inline void register_fishing_interactions(dpp::cluster& bot, Database* db) {
             if (event.custom_id.rfind("fish_nav_", 0) != 0 &&
                 event.custom_id.rfind("fish_sellall_", 0) != 0) return;
                 
-            std::cout << DBG_FISH "button handler processing: " << event.custom_id << " from user " << event.command.get_issuing_user().id << std::endl;
+            bronx::logger::debug("fishing 🎣", "button handler processing: " + event.custom_id + " from user " + std::to_string(event.command.get_issuing_user().id));
             // parse user id from the custom_id. navigation buttons include only one
             // underscore before the user id (e.g. fish_nav_prev_<uid>), while the
             // sellall button appends a page number after the uid, so we must handle
@@ -244,13 +245,13 @@ inline void register_fishing_interactions(dpp::cluster& bot, Database* db) {
         ret.channel_id = event.command.channel_id;
         event.edit_response(ret);
         } catch (const std::exception &e) {
-            std::cerr << "fishing button handler exception: " << e.what() << std::endl;
+            bronx::logger::error("fishing 🎣", "button handler exception: " + std::string(e.what()));
             if (!has_replied) {
                 event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("an error occurred processing this interaction")).set_flags(dpp::m_ephemeral));
             }
         } catch (...) {
-            std::cerr << "fishing button handler unknown exception" << std::endl;
+            bronx::logger::error("fishing 🎣", "button handler unknown exception");
             if (!has_replied) {
                 event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("an unknown error occurred")).set_flags(dpp::m_ephemeral));
@@ -264,7 +265,7 @@ inline void register_fishing_interactions(dpp::cluster& bot, Database* db) {
         try {
             if (event.custom_id.rfind("fish_sell_",0) != 0) return;
             
-            std::cout << DBG_FISH "select handler processing: " << event.custom_id << " from user " << event.command.get_issuing_user().id << std::endl;
+            bronx::logger::debug("fishing 🎣", "select handler processing: " + event.custom_id + " from user " + std::to_string(event.command.get_issuing_user().id));
             std::string rest = event.custom_id.substr(strlen("fish_sell_"));
             std::vector<std::string> parts;
             std::stringstream ss(rest);
@@ -362,13 +363,13 @@ inline void register_fishing_interactions(dpp::cluster& bot, Database* db) {
         ret.channel_id = event.command.channel_id;
         event.edit_response(ret);
         } catch (const std::exception &e) {
-            std::cerr << "fishing select handler exception: " << e.what() << std::endl;
+            bronx::logger::error("fishing 🎣", "select handler exception: " + std::string(e.what()));
             if (!has_replied) {
                 event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("an error occurred processing this interaction")).set_flags(dpp::m_ephemeral));
             }
         } catch (...) {
-            std::cerr << "fishing select handler unknown exception" << std::endl;
+            bronx::logger::error("fishing 🎣", "select handler unknown exception");
             if (!has_replied) {
                 event.reply(dpp::ir_channel_message_with_source,
                     dpp::message().add_embed(bronx::error("an unknown error occurred")).set_flags(dpp::m_ephemeral));

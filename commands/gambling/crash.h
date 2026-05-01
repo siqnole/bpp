@@ -13,9 +13,6 @@
 #include <thread>
 #include <chrono>
 
-using namespace bronx::db;
-using namespace bronx::db::history_operations;
-
 namespace commands {
 namespace gambling {
 
@@ -79,16 +76,16 @@ static dpp::message build_crash_msg(const CrashGame& g) {
     if (g.cashed_out) {
         int64_t payout = (int64_t)(g.bet * g.current_mult);
         int64_t profit = payout - g.bet;
-        embed = bronx::success(
+        embed = ::bronx::success(
             "**bet:** $" + format_number(g.bet) + "\n"
             "**cash-out:** " + fmt_mult(g.current_mult) + "\n"
             "**payout:** $" + format_number(payout) + " (+$" + format_number(profit) + ")\n\n"
             "*actual crash was at " + fmt_mult(g.crash_point) + "*"
         );
-        embed.set_title(bronx::EMOJI_CHECK + " Cashed out at " + fmt_mult(g.current_mult) + "!");
+        embed.set_title(::bronx::EMOJI_CHECK + " Cashed out at " + fmt_mult(g.current_mult) + "!");
 
     } else if (g.crashed) {
-        embed = bronx::error(
+        embed = ::bronx::error(
             "**bet:** $" + format_number(g.bet) + "\n"
             "**lost:** $" + format_number(g.bet) + "\n\n"
             "*better luck next time*"
@@ -103,12 +100,12 @@ static dpp::message build_crash_msg(const CrashGame& g) {
         bar += "]```";
 
         int64_t if_cashout = (int64_t)(g.bet * g.current_mult);
-        embed = bronx::info(
+        embed = ::bronx::info(
             "## 🚀 " + fmt_mult(g.current_mult) + "\n"
             + bar +
             "**bet:** $" + format_number(g.bet) + "\n"
             "**value now:** $" + format_number(if_cashout) + "\n\n"
-            + bronx::EMOJI_WARNING + " *click **Cash Out** before it crashes!*"
+            + ::bronx::EMOJI_WARNING + " *click **Cash Out** before it crashes!*"
         );
         embed.set_title("🟢 CRASH — running");
 
@@ -162,7 +159,7 @@ static void run_crash_ticker(dpp::cluster& bot, Database* db, uint64_t uid) {
             auto it = active_crash_games.find(uid);
             if (it == active_crash_games.end()) return;
             // Bet already deducted at game start — nothing to return
-            track_gambling_result(bot, db, it->second.channel_id, uid, false, -it->second.bet);
+            ::commands::gambling::track_gambling_result(bot, db, it->second.channel_id, uid, false, -it->second.bet);
             bot.message_edit(build_crash_msg(it->second));
 
             std::thread([uid]() {
@@ -198,7 +195,7 @@ inline Command* get_crash_command(Database* db) {
             uint64_t uid = event.msg.author.id;
 
             if (args.empty()) {
-                bronx::send_message(bot, event, bronx::info(
+                ::bronx::send_message(bot, event, ::bronx::info(
                     "**💥 Crash**\n\n"
                     "A multiplier starts at **1.00x** and climbs. Cash out before it crashes!\n\n"
                     "**Usage:** `crash <bet>`\n"
@@ -212,14 +209,14 @@ inline Command* get_crash_command(Database* db) {
             }
 
             if (!db->try_claim_cooldown(uid, "crash", 5)) {
-                bronx::send_message(bot, event, bronx::error("slow down! wait 5 seconds between crash games"));
+                ::bronx::send_message(bot, event, ::bronx::error("slow down! wait 5 seconds between crash games"));
                 return;
             }
 
             {
                 std::lock_guard<std::mutex> lk(crash_mutex);
                 if (active_crash_games.count(uid)) {
-                    bronx::send_message(bot, event, bronx::error("you already have an active crash game!"));
+                    ::bronx::send_message(bot, event, ::bronx::error("you already have an active crash game!"));
                     return;
                 }
             }
@@ -229,11 +226,11 @@ inline Command* get_crash_command(Database* db) {
 
             int64_t bet;
             try { bet = parse_amount(args[0], user->wallet); }
-            catch (...) { bronx::send_message(bot, event, bronx::error("invalid bet amount")); return; }
+            catch (...) { ::bronx::send_message(bot, event, ::bronx::error("invalid bet amount")); return; }
 
-            if (bet < 100)      { bronx::send_message(bot, event, bronx::error("minimum crash bet is $100")); return; }
-            if (bet > MAX_BET)  { bronx::send_message(bot, event, bronx::error("maximum bet is $2,000,000,000")); return; }
-            if (bet > user->wallet) { bronx::send_message(bot, event, bronx::error("you don't have that much")); return; }
+            if (bet < 100)      { ::bronx::send_message(bot, event, ::bronx::error("minimum crash bet is $100")); return; }
+            if (bet > ::commands::gambling::MAX_BET)  { ::bronx::send_message(bot, event, ::bronx::error("maximum bet is $2,000,000,000")); return; }
+            if (bet > user->wallet) { ::bronx::send_message(bot, event, ::bronx::error("you don't have that much")); return; }
 
             db->update_wallet(uid, -bet);
 
@@ -288,7 +285,7 @@ inline void register_crash_interactions(dpp::cluster& bot, Database* db) {
 
         if (event.command.get_issuing_user().id != uid) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("this isn't your crash game!")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("this isn't your crash game!")).set_flags(dpp::m_ephemeral));
             return;
         }
 
@@ -302,7 +299,7 @@ inline void register_crash_interactions(dpp::cluster& bot, Database* db) {
             if (it == active_crash_games.end() || !it->second.active
                 || it->second.cashed_out || it->second.crashed) {
                 event.reply(dpp::ir_channel_message_with_source,
-                    dpp::message().add_embed(bronx::error("game is no longer active (or already crashed)"))
+                    dpp::message().add_embed(::bronx::error("game is no longer active (or already crashed)"))
                         .set_flags(dpp::m_ephemeral));
                 return;
             }
@@ -318,7 +315,7 @@ inline void register_crash_interactions(dpp::cluster& bot, Database* db) {
 
         db->update_wallet(uid, payout);
         int64_t profit = payout - game_copy.bet;
-        track_gambling_result(bot, db, game_copy.channel_id, uid, true, profit);
+        ::commands::gambling::track_gambling_result(bot, db, game_copy.channel_id, uid, true, profit);
 
         event.reply(dpp::ir_update_message, build_crash_msg(game_copy));
 

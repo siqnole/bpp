@@ -708,7 +708,16 @@ public:
     // Call this from your on_button_click handler to route BAC events
     void bac_on_button_click(dpp::cluster& bot, const dpp::button_click_t& event) {
         const auto& cid = event.custom_id;
-        if (cid.rfind("bac_captcha_", 0) == 0) {
+        // Handle custom who-sent button
+        if (cid.rfind("who_sent_", 0) == 0) {
+            std::string id_str = cid.substr(std::string("who_sent_").size());
+            uint64_t uid = 0;
+            try { uid = std::stoull(id_str); } catch (...) { return; }
+            dpp::message reply_msg;
+            reply_msg.add_embed(bronx::create_embed("Message was sent by <@" + std::to_string(uid) + ">.", bronx::COLOR_INFO));
+            event.reply(reply_msg.set_flags(dpp::m_ephemeral));
+            return;
+        } else if (cid.rfind("bac_captcha_", 0) == 0) {
             bac_handle_component(bot, event);
         } else if (cid.rfind("bac_wrong_", 0) == 0) {
             bac_handle_wrong_captcha(bot, event);

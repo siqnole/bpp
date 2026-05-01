@@ -71,34 +71,8 @@ struct RaidSession {
 static std::mutex g_raid_mutex;
 static std::map<uint64_t, RaidSession> g_raid_sessions; // keyed by channel_id
 
-// ── DB table guard ────────────────────────────────────────────────────────
-static void ensure_raid_tables(Database* db) {
-    static bool created = false;
-    if (created) return;
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS boss_raids ("
-        "  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
-        "  guild_id    BIGINT UNSIGNED NOT NULL,"
-        "  host_id     BIGINT UNSIGNED NOT NULL,"
-        "  entry_fee   BIGINT NOT NULL,"
-        "  total_pool  BIGINT NOT NULL,"
-        "  members     INT NOT NULL DEFAULT 0,"
-        "  boss_killed TINYINT(1) NOT NULL DEFAULT 0,"
-        "  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-        ")"
-    );
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS raid_participants ("
-        "  raid_id      BIGINT UNSIGNED NOT NULL,"
-        "  user_id      BIGINT UNSIGNED NOT NULL,"
-        "  damage_dealt BIGINT NOT NULL DEFAULT 0,"
-        "  survived     TINYINT(1) NOT NULL DEFAULT 0,"
-        "  payout       BIGINT NOT NULL DEFAULT 0,"
-        "  PRIMARY KEY (raid_id, user_id)"
-        ")"
-    );
-    created = true;
-}
+
+// ── Format boss HP bar ────────────────────────────────────────────────────
 
 // ── Format boss HP bar ────────────────────────────────────────────────────
 static std::string boss_hp_bar(int64_t hp, int64_t max_hp) {
@@ -403,7 +377,6 @@ static void launch_raid(dpp::cluster& bot, Database* db, uint64_t channel_id) {
 // ============================================================================
 
 inline std::vector<Command*> get_boss_raid_commands(Database* db) {
-    ensure_raid_tables(db);
 
     static Command* cmd = new Command(
         "raid",

@@ -262,12 +262,12 @@ inline Command* get_minesweeper_command(Database* db) {
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             // Anti-spam cooldown (3 seconds) - prevents double-tap exploit
             if (!db->try_claim_cooldown(event.msg.author.id, "minesweeper", 3)) {
-                bronx::send_message(bot, event, bronx::error("slow down! wait a few seconds between games"));
+                ::bronx::send_message(bot, event, ::bronx::error("slow down! wait a few seconds between games"));
                 return;
             }
             
             if (args.size() < 2) {
-                bronx::send_message(bot, event, bronx::error("usage: bomb <easy|medium|hard|impossible|number> <amount> [x=3] [y=3]\nexample: bomb easy 1000\nexample: bomb 5 500 4 4"));
+                ::bronx::send_message(bot, event, ::bronx::error("usage: bomb <easy|medium|hard|impossible|number> <amount> [x=3] [y=3]\nexample: bomb easy 1000\nexample: bomb 5 500 4 4"));
                 return;
             }
             
@@ -280,22 +280,22 @@ inline Command* get_minesweeper_command(Database* db) {
             try {
                 bet = parse_amount(args[1], user->wallet);
             } catch (const std::exception& e) {
-                bronx::send_message(bot, event, bronx::error("invalid bet amount"));
+                ::bronx::send_message(bot, event, ::bronx::error("invalid bet amount"));
                 return;
             }
             
             if (bet < 100) {
-                bronx::send_message(bot, event, bronx::error("minimum bet is $100"));
+                ::bronx::send_message(bot, event, ::bronx::error("minimum bet is $100"));
                 return;
             }
             
-            if (bet > MAX_BET) {
-                bronx::send_message(bot, event, bronx::error("maximum bet is $2,000,000,000"));
+            if (bet > ::commands::gambling::MAX_BET) {
+                ::bronx::send_message(bot, event, ::bronx::error("maximum bet is $2,000,000,000"));
                 return;
             }
             
             if (bet > user->wallet) {
-                bronx::send_message(bot, event, bronx::error("you don't have that much"));
+                ::bronx::send_message(bot, event, ::bronx::error("you don't have that much"));
                 return;
             }
             
@@ -307,7 +307,7 @@ inline Command* get_minesweeper_command(Database* db) {
                 try {
                     x = ::std::stoi(args[2]);
                 } catch (...) {
-                    bronx::send_message(bot, event, bronx::error("invalid x value"));
+                    ::bronx::send_message(bot, event, ::bronx::error("invalid x value"));
                     return;
                 }
             }
@@ -316,19 +316,19 @@ inline Command* get_minesweeper_command(Database* db) {
                 try {
                     y = ::std::stoi(args[3]);
                 } catch (...) {
-                    bronx::send_message(bot, event, bronx::error("invalid y value"));
+                    ::bronx::send_message(bot, event, ::bronx::error("invalid y value"));
                     return;
                 }
             }
             
             // Validate grid size (Discord button limits: max 5 cols, max 4 rows of cells + 1 for cashout)
             if (x < 2 || x > 5) {
-                bronx::send_message(bot, event, bronx::error("x must be between 2 and 5"));
+                ::bronx::send_message(bot, event, ::bronx::error("x must be between 2 and 5"));
                 return;
             }
             
             if (y < 2 || y > 4) {
-                bronx::send_message(bot, event, bronx::error("y must be between 2 and 4"));
+                ::bronx::send_message(bot, event, ::bronx::error("y must be between 2 and 4"));
                 return;
             }
             
@@ -336,12 +336,12 @@ inline Command* get_minesweeper_command(Database* db) {
             int num_mines = difficulty_to_mines(difficulty_input, total_cells);
             
             if (num_mines < 1) {
-                bronx::send_message(bot, event, bronx::error("invalid difficulty or mine count\nuse: easy, medium, hard, impossible, or a number"));
+                ::bronx::send_message(bot, event, ::bronx::error("invalid difficulty or mine count\nuse: easy, medium, hard, impossible, or a number"));
                 return;
             }
             
             if (num_mines >= total_cells) {
-                bronx::send_message(bot, event, bronx::error("too many mines! must be less than " + ::std::to_string(total_cells)));
+                ::bronx::send_message(bot, event, ::bronx::error("too many mines! must be less than " + ::std::to_string(total_cells)));
                 return;
             }
             
@@ -350,7 +350,7 @@ inline Command* get_minesweeper_command(Database* db) {
             
             // Log minesweeper start to history
             int64_t start_balance = db->get_wallet(event.msg.author.id);
-            bronx::db::history_operations::log_gambling(db, event.msg.author.id, "started minesweeper ($" + format_number(bet) + " bet)", -bet, start_balance);
+            ::bronx::db::history_operations::log_gambling(db, event.msg.author.id, "started minesweeper ($" + format_number(bet) + " bet)", -bet, start_balance);
             
             // Create game
             MinesweeperGame game;
@@ -396,7 +396,7 @@ inline Command* get_minesweeper_command(Database* db) {
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
             // Anti-spam cooldown (3 seconds) - prevents double-tap exploit
             if (!db->try_claim_cooldown(event.command.get_issuing_user().id, "minesweeper", 3)) {
-                event.reply(dpp::message().add_embed(bronx::error("slow down! wait a few seconds between games")));
+                event.reply(dpp::message().add_embed(::bronx::error("slow down! wait a few seconds between games")));
                 return;
             }
             
@@ -405,7 +405,7 @@ inline Command* get_minesweeper_command(Database* db) {
             if (std::holds_alternative<std::string>(diff_param)) {
                 difficulty_input = std::get<std::string>(diff_param);
             } else {
-                event.reply(dpp::message().add_embed(bronx::error("please provide a difficulty")));
+                event.reply(dpp::message().add_embed(::bronx::error("please provide a difficulty")));
                 return;
             }
             auto amount_param = event.get_parameter("amount");
@@ -415,13 +415,13 @@ inline Command* get_minesweeper_command(Database* db) {
             } else if (std::holds_alternative<int64_t>(amount_param)) {
                 amount_str = std::to_string(std::get<int64_t>(amount_param));
             } else {
-                event.reply(dpp::message().add_embed(bronx::error("please provide a bet amount")));
+                event.reply(dpp::message().add_embed(::bronx::error("please provide a bet amount")));
                 return;
             }
             
             auto user = db->get_user(event.command.get_issuing_user().id);
             if (!user) {
-                event.reply(dpp::message().add_embed(bronx::error("user not found")));
+                event.reply(dpp::message().add_embed(::bronx::error("user not found")));
                 return;
             }
             
@@ -429,22 +429,22 @@ inline Command* get_minesweeper_command(Database* db) {
             try {
                 bet = parse_amount(amount_str, user->wallet);
             } catch (const std::exception& e) {
-                event.reply(dpp::message().add_embed(bronx::error("invalid bet amount")));
+                event.reply(dpp::message().add_embed(::bronx::error("invalid bet amount")));
                 return;
             }
             
             if (bet < 100) {
-                event.reply(dpp::message().add_embed(bronx::error("minimum bet is $100")));
+                event.reply(dpp::message().add_embed(::bronx::error("minimum bet is $100")));
                 return;
             }
             
-            if (bet > MAX_BET) {
-                event.reply(dpp::message().add_embed(bronx::error("maximum bet is $2,000,000,000")));
+            if (bet > ::commands::gambling::MAX_BET) {
+                event.reply(dpp::message().add_embed(::bronx::error("maximum bet is $2,000,000,000")));
                 return;
             }
             
             if (bet > user->wallet) {
-                event.reply(dpp::message().add_embed(bronx::error("you don't have that much")));
+                event.reply(dpp::message().add_embed(::bronx::error("you don't have that much")));
                 return;
             }
             
@@ -465,12 +465,12 @@ inline Command* get_minesweeper_command(Database* db) {
             } catch (...) {}
             
             if (x < 2 || x > 5) {
-                event.reply(dpp::message().add_embed(bronx::error("x must be between 2 and 5")));
+                event.reply(dpp::message().add_embed(::bronx::error("x must be between 2 and 5")));
                 return;
             }
             
             if (y < 2 || y > 4) {
-                event.reply(dpp::message().add_embed(bronx::error("y must be between 2 and 4")));
+                event.reply(dpp::message().add_embed(::bronx::error("y must be between 2 and 4")));
                 return;
             }
             
@@ -478,12 +478,12 @@ inline Command* get_minesweeper_command(Database* db) {
             int num_mines = difficulty_to_mines(difficulty_input, total_cells);
             
             if (num_mines < 1) {
-                event.reply(dpp::message().add_embed(bronx::error("invalid difficulty or mine count\nuse: easy, medium, hard, impossible, or a number")));
+                event.reply(dpp::message().add_embed(::bronx::error("invalid difficulty or mine count\nuse: easy, medium, hard, impossible, or a number")));
                 return;
             }
             
             if (num_mines >= total_cells) {
-                event.reply(dpp::message().add_embed(bronx::error("too many mines! must be less than " + ::std::to_string(total_cells))));
+                event.reply(dpp::message().add_embed(::bronx::error("too many mines! must be less than " + ::std::to_string(total_cells))));
                 return;
             }
             
@@ -558,13 +558,13 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         
         if (event.command.get_issuing_user().id != user_id) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
             return;
         }
         
         if (active_minesweeper_games.find(user_id) == active_minesweeper_games.end()) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
             return;
         }
         
@@ -572,14 +572,14 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         
         if (!game.active) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game is already over")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game is already over")).set_flags(dpp::m_ephemeral));
             return;
         }
         
         // Check if already revealed
         if (game.revealed_positions.count(pos)) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("this cell is already revealed")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("this cell is already revealed")).set_flags(dpp::m_ephemeral));
             return;
         }
         
@@ -597,11 +597,11 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
             db->increment_stat(user_id, "gambling_losses", game.initial_bet);
             
             // Track milestone (loss)
-            track_gambling_result(bot, db, event.command.channel_id, user_id, false);
+            ::commands::gambling::track_gambling_result(bot, db, event.command.channel_id, user_id, false);
             
             // Log minesweeper loss to history
             int64_t balance_after = db->get_wallet(user_id);
-            bronx::db::history_operations::log_gambling(db, user_id, "lost minesweeper ($" + format_number(game.initial_bet) + ")", 0, balance_after);
+            ::bronx::db::history_operations::log_gambling(db, user_id, "lost minesweeper ($" + format_number(game.initial_bet) + ")", 0, balance_after);
             
             event.reply(dpp::ir_update_message, build_minesweeper_message(game, true));
             
@@ -634,15 +634,15 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
                 if (profit > 0) {
                     db->increment_stat(user_id, "gambling_profit", profit);
                     // Check gambling profit achievements
-                    track_gambling_profit(bot, db, event.command.channel_id, user_id);
+                    ::commands::gambling::track_gambling_profit(bot, db, event.command.channel_id, user_id);
                 }
                 
                 // Track milestone (win)
-                track_gambling_result(bot, db, event.command.channel_id, user_id, profit > 0, profit);
+                ::commands::gambling::track_gambling_result(bot, db, event.command.channel_id, user_id, profit > 0, profit);
                 
                 // Log minesweeper auto-win to history
                 int64_t balance_after = db->get_wallet(user_id);
-                bronx::db::history_operations::log_gambling(db, user_id, "won minesweeper ($" + format_number(profit) + " profit)", payout, balance_after);
+                ::bronx::db::history_operations::log_gambling(db, user_id, "won minesweeper ($" + format_number(profit) + " profit)", payout, balance_after);
                 
                 event.reply(dpp::ir_update_message, build_minesweeper_message(game, true));
                 
@@ -669,7 +669,7 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         
         if (event.command.get_issuing_user().id != user_id) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("this is not your game!")).set_flags(dpp::m_ephemeral));
             return;
         }
         
@@ -677,7 +677,7 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         
         if (active_minesweeper_games.find(user_id) == active_minesweeper_games.end()) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game not found or expired")).set_flags(dpp::m_ephemeral));
             return;
         }
         
@@ -696,13 +696,13 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         
         if (!game.active) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("game is not active")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("game is not active")).set_flags(dpp::m_ephemeral));
             return;
         }
         
         if (game.safe_cells_revealed == 0) {
             event.reply(dpp::ir_channel_message_with_source,
-                dpp::message().add_embed(bronx::error("you need to reveal at least one safe cell before cashing out")).set_flags(dpp::m_ephemeral));
+                dpp::message().add_embed(::bronx::error("you need to reveal at least one safe cell before cashing out")).set_flags(dpp::m_ephemeral));
             return;
         }
         
@@ -718,15 +718,15 @@ inline void register_minesweeper_interactions(dpp::cluster& bot, Database* db) {
         if (profit > 0) {
             db->increment_stat(user_id, "gambling_profit", profit);
             // Check gambling profit achievements
-            track_gambling_profit(bot, db, event.command.channel_id, user_id);
+            ::commands::gambling::track_gambling_profit(bot, db, event.command.channel_id, user_id);
         }
         
         // Track milestone (win on cashout)
-        track_gambling_result(bot, db, event.command.channel_id, user_id, profit > 0, profit);
+        ::commands::gambling::track_gambling_result(bot, db, event.command.channel_id, user_id, profit > 0, profit);
         
         // Log minesweeper cashout to history
         int64_t balance_after = db->get_wallet(user_id);
-        bronx::db::history_operations::log_gambling(db, user_id, "cashed out minesweeper ($" + format_number(profit) + " profit)", payout, balance_after);
+        ::bronx::db::history_operations::log_gambling(db, user_id, "cashed out minesweeper ($" + format_number(profit) + " profit)", payout, balance_after);
         
         game.active = false;
         game.game_over = true;

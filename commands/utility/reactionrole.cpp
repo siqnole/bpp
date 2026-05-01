@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <sstream>
 #include <mutex>
+#include "../../utils/logger.h"
 
 namespace commands {
 namespace utility {
@@ -130,14 +131,7 @@ static ::std::string prepare_emoji_for_storage(const ::std::string& input) {
     // Check safety of sanitized string
     if (!is_safe_emoji_string(sanitized)) {
         // Log for debugging but still return the sanitized version if it's non-empty
-        std::cerr << "[reaction-roles] WARN: emoji string may contain unusual bytes after sanitization, len=" << sanitized.size();
-        // Print hex dump for debugging
-        std::cerr << " hex:";
-        for (unsigned char ch : sanitized) {
-            char buf[4]; snprintf(buf, sizeof(buf), "%02X", ch);
-            std::cerr << " " << buf;
-        }
-        std::cerr << std::endl;
+        bronx::logger::warn("reaction-roles", "emoji string may contain unusual bytes after sanitization, len=" + std::to_string(sanitized.size()));
     }
     return sanitized;
 }
@@ -165,7 +159,7 @@ void sync_existing_reactions(dpp::cluster& bot, uint64_t message_id, uint64_t ch
     bot.message_get_reactions(message_id, channel_id, emoji_reaction, 0, after_user, 100,
         [&bot, message_id, channel_id, emoji_reaction, role_id, guild_id, on_complete](const dpp::confirmation_callback_t& cb) {
             if (cb.is_error()) {
-                std::cerr << "[reaction-roles] sync: failed to fetch reactions: " << cb.get_error().message << std::endl;
+                bronx::logger::error("reaction-roles", "sync: failed to fetch reactions: " + cb.get_error().message);
                 if (on_complete) on_complete();
                 return;
             }
@@ -201,7 +195,7 @@ void sync_existing_reactions(dpp::cluster& bot, uint64_t message_id, uint64_t ch
                     (*idx)++;
                     bot.guild_member_add_role(guild_id, uid, role_id, [uid](const dpp::confirmation_callback_t& rcb) {
                         if (rcb.is_error() && rcb.get_error().code != 50013) { // Ignore missing perms, log others
-                             std::cerr << "[reaction-roles] sync: could not add role to " << uid << ": " << rcb.get_error().message << std::endl;
+                             bronx::logger::error("reaction-roles", "sync: could not add role to " + std::to_string(uid) + ": " + rcb.get_error().message);
                         }
                     });
                 }, 2); // Increased to 2s per role-add for safety
@@ -213,7 +207,7 @@ void sync_existing_reactions(dpp::cluster& bot, uint64_t message_id, uint64_t ch
 
 void process_sync_queue(dpp::cluster& bot, std::shared_ptr<std::vector<SyncTask>> queue, size_t index) {
     if (index >= queue->size()) {
-        std::cout << "[reaction-roles] all sync tasks completed" << std::endl;
+        bronx::logger::success("reaction-roles", "all sync tasks completed");
         return;
     }
     const auto& task = (*queue)[index];
@@ -268,7 +262,7 @@ void load_persistent_reaction_roles(dpp::cluster& bot) {
     // Clear in-memory map before loading (safe if on_ready fires multiple times due to reconnects)
     reaction_roles.clear();
     auto rows = rr_db->get_all_reaction_roles();
-    std::cout << "[reaction-roles] loading " << rows.size() << " persisted reaction role(s) from database" << std::endl;
+    bronx::logger::info("reaction-roles", "loading " + std::to_string(rows.size()) + " persisted reaction role(s) from database");
     for (const auto &r : rows) {
         reaction_roles[r.message_id].channel_id = r.channel_id;
         // normalize the stored emoji and update DB if it changed
@@ -307,12 +301,12 @@ void load_persistent_reaction_roles(dpp::cluster& bot) {
     }
 
     if (!sync_items->empty()) {
-        std::cout << "[reaction-roles] syncing existing reactions (" << sync_items->size() << " items, staggered)..." << std::endl;
+        bronx::logger::info("reaction-roles", "syncing existing reactions (" + std::to_string(sync_items->size()) + " items, staggered)...");
         auto idx = std::make_shared<size_t>(0);
         bot.start_timer([&bot, sync_items, idx](dpp::timer t) {
             if (*idx >= sync_items->size()) {
                 bot.stop_timer(t);
-                std::cout << "[reaction-roles] sync complete" << std::endl;
+                bronx::logger::success("reaction-roles", "sync complete");
                 return;
             }
             const auto& item = (*sync_items)[*idx];
@@ -353,14 +347,14 @@ void load_persistent_reaction_roles(dpp::cluster& bot) {
                             bot.message_add_reaction(item.message_id, item.channel_id, item.emoji,
                                 [](const dpp::confirmation_callback_t& cb) {
                                     if (cb.is_error()) {
-                                        std::cerr << "[reaction-roles] sync: reaction add failed: " << cb.get_error().message << std::endl;
+                                        bronx::logger::error("reaction-roles", "sync: reaction add failed: " + cb.get_error().message);
                                     }
                                 });
                         }
                     } catch (const std::exception& ex) {
-                        std::cerr << "[reaction-roles] sync: exception adding reaction: " << ex.what() << std::endl;
+                        bronx::logger::error("reaction-roles", "sync: exception adding reaction: " + std::string(ex.what()));
                     } catch (...) {
-                        std::cerr << "[reaction-roles] sync: unknown exception adding reaction" << std::endl;
+                        bronx::logger::error("reaction-roles", "sync: unknown exception adding reaction");
                     }
                 }
                 
@@ -670,8 +664,7 @@ static dpp::message build_check_confirm(const RRCheckSession& s) {
 
 // Scan message content for role mentions/names and emoji names/markup to pre-fill assignments.
 static void attempt_auto_map(RRCheckSession& s, const std::string& content) {
-    std::cerr << "[reaction-role] Auto-mapping attempt for message " << s.message_id << " in channel " << s.channel_id << std::endl;
-    std::cerr << "[reaction-role] Raw Content: [" << content << "]" << std::endl;
+    bronx::logger::debug("reaction-role", "Auto-mapping attempt for message " + std::to_string(s.message_id) + " in channel " + std::to_string(s.channel_id));
     if (content.empty()) return;
 
     std::stringstream ss(content);
@@ -729,7 +722,7 @@ static void attempt_auto_map(RRCheckSession& s, const std::string& content) {
 
             if (match) {
                 em.assigned_role = found_role;
-                std::cerr << "[reaction-role] Match! Line [" << line << "] linked " << em.emoji_str << " to Role ID " << found_role << std::endl;
+                bronx::logger::debug("reaction-role", "Match! Line [" + line + "] linked " + em.emoji_str + " to Role ID " + std::to_string(found_role));
                 break;
             }
         }
@@ -748,7 +741,7 @@ void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t message_id
             return;
         }
         auto msg = std::get<dpp::message>(cb.value);
-        std::cerr << "[reaction-role] Checking message " << message_id << " - found " << msg.reactions.size() << " reactions total." << std::endl;
+        bronx::logger::debug("reaction-role", "Checking message " + std::to_string(message_id) + " - found " + std::to_string(msg.reactions.size()) + " reactions total.");
 
         // collect reactions not already tracked
         std::vector<PendingRREmoji> unmapped;
@@ -776,7 +769,7 @@ void handle_rr_check(dpp::cluster& bot, uint64_t channel_id, uint64_t message_id
                 }
             }
             all_emojis.push_back(pe);
-            std::cerr << "[reaction-role] Identified: " << pe.emoji_str << " (Role: " << pe.assigned_role << ", Me: " << (pe.bot_has_reacted?"true":"false") << ")" << std::endl;
+            bronx::logger::debug("reaction-role", "Identified: " + pe.emoji_str + " (Role: " + std::to_string(pe.assigned_role) + ", Me: " + (pe.bot_has_reacted?"true":"false") + ")");
         }
 
         if (all_emojis.empty()) {
@@ -1570,20 +1563,29 @@ Command* get_reactionrole_command() {
                 }
             });
         },
-        // slash handler
         [](dpp::cluster& /*bot2*/, const dpp::slashcommand_t& /*event*/) {},
         {
-            dpp::command_option(dpp::co_string, "message", "message id, message link, or ^ for message above", true),
-            dpp::command_option(dpp::co_string, "emoji", "emoji (unicode or <:name:id>)", true),
-            dpp::command_option(dpp::co_role, "role", "role to assign/remove", true),
-            dpp::command_option(dpp::co_boolean, "silent", "do not add the initial reaction", false)
+            dpp::command_option(dpp::co_sub_command, "add", "add a reaction role to an existing message")
+                .add_option(dpp::command_option(dpp::co_string, "message", "message id, message link, or ^ for message above", true))
+                .add_option(dpp::command_option(dpp::co_string, "emoji", "emoji (unicode or <:name:id>)", true))
+                .add_option(dpp::command_option(dpp::co_role, "role", "role to assign/remove", true))
+                .add_option(dpp::command_option(dpp::co_boolean, "silent", "do not add the initial reaction", false)),
+            dpp::command_option(dpp::co_sub_command, "setup", "create a new reaction role panel from scratch")
+                .add_option(dpp::command_option(dpp::co_string, "title", "panel title", true))
+                .add_option(dpp::command_option(dpp::co_string, "description", "panel description", true))
+                .add_option(dpp::command_option(dpp::co_string, "type", "interaction type (buttons or reactions)", true)
+                    .add_choice(dpp::command_option_choice("reactions", std::string("reactions")))
+                    .add_choice(dpp::command_option_choice("buttons", std::string("buttons"))))
+                .add_option(dpp::command_option(dpp::co_role, "role", "role to assign", true))
+                .add_option(dpp::command_option(dpp::co_string, "emoji", "emoji (unicode or <:name:id>)", true))
+                .add_option(dpp::command_option(dpp::co_channel, "channel", "channel to post in", false))
         }
     );
 
     // replace the dummy slash handler with real implementation (can't capture bot above easily in-line)
     rr->slash_handler = [](dpp::cluster& bot, const dpp::slashcommand_t& event) {
         if (!event.command.guild_id) {
-            event.reply(dpp::message().add_embed(bronx::error("this command must be used in a server")));
+            event.reply(dpp::message().add_embed(bronx::error("this command must be used in a server")).set_flags(dpp::m_ephemeral));
             return;
         }
 
@@ -1591,70 +1593,73 @@ Command* get_reactionrole_command() {
         uint64_t user_id = event.command.get_issuing_user().id;
         bot.guild_get_member(event.command.guild_id, user_id, [&bot, event](const dpp::confirmation_callback_t& memb_cb) {
             if (memb_cb.is_error()) {
-                event.reply(dpp::message().add_embed(bronx::error("failed to verify permissions")));
+                event.reply(dpp::message().add_embed(bronx::error("failed to verify permissions")).set_flags(dpp::m_ephemeral));
                 return;
             }
             auto member = ::std::get<dpp::guild_member>(memb_cb.value);
             if (!member_can_manage_roles(bot, event.command.guild_id, member)) {
-                event.reply(dpp::message().add_embed(bronx::error("you need Manage Roles or Administrator to use this command")));
+                event.reply(dpp::message().add_embed(bronx::error("you need Manage Roles or Administrator to use this command")).set_flags(dpp::m_ephemeral));
                 return;
             }
 
-            ::std::string message_ref = ::std::get<::std::string>(event.get_parameter("message"));
-            ::std::string emoji_raw = ::std::get<::std::string>(event.get_parameter("emoji"));
-            uint64_t role_id = ::std::get<dpp::snowflake>(event.get_parameter("role"));
-            bool silent = false;
-            if (std::holds_alternative<bool>(event.get_parameter("silent"))) {
-                silent = std::get<bool>(event.get_parameter("silent"));
-            }
+            auto sub = event.command.get_command_interaction().options[0];
 
-            // Handle "^" to reference message above current interaction  
-            if (message_ref == "^") {
-                uint64_t channel_id = event.command.channel_id;
-                
-                // Extract values needed for async call to prevent memory issues
-                ::std::string emoji_arg = emoji_raw;
-                bool silent_flag = silent;
-                
-                // For slash commands, find the most recent non-bot message (limit to 3 messages)
-                bot.messages_get(channel_id, 0, 0, 0, 3, [&bot, event, emoji_arg, role_id, silent_flag, channel_id](const dpp::confirmation_callback_t& cb) {
-                    if (cb.is_error()) {
-                        event.reply(dpp::message().add_embed(bronx::error("failed to fetch recent messages")));
-                        return;
-                    }
+            if (sub.name == "add") {
+                ::std::string message_ref = ::std::get<::std::string>(event.get_parameter("message"));
+                ::std::string emoji_raw = ::std::get<::std::string>(event.get_parameter("emoji"));
+                uint64_t role_id = ::std::get<dpp::snowflake>(event.get_parameter("role"));
+                bool silent = false;
+                if (std::holds_alternative<bool>(event.get_parameter("silent"))) {
+                    silent = std::get<bool>(event.get_parameter("silent"));
+                }
+
+                // Handle "^" to reference message above current interaction  
+                if (message_ref == "^") {
+                    uint64_t channel_id = event.command.channel_id;
                     
-                    auto messages = std::get<dpp::message_map>(cb.value);
-                    uint64_t target_message_id = 0;
+                    // Extract values needed for async call to prevent memory issues
+                    ::std::string emoji_arg = emoji_raw;
+                    bool silent_flag = silent;
                     
-                    // Find the most recent non-bot message
-                    for (const auto& [msg_id, msg] : messages) {
-                        if (!msg.author.is_bot()) {
-                            if (target_message_id == 0 || static_cast<uint64_t>(msg_id) > target_message_id) {
-                                target_message_id = static_cast<uint64_t>(msg_id);
+                    // For slash commands, find the most recent non-bot message (limit to 3 messages)
+                    bot.messages_get(channel_id, 0, 0, 0, 3, [&bot, event, emoji_arg, role_id, silent_flag, channel_id](const dpp::confirmation_callback_t& cb) {
+                        if (cb.is_error()) {
+                            event.reply(dpp::message().add_embed(bronx::error("failed to fetch recent messages")).set_flags(dpp::m_ephemeral));
+                            return;
+                        }
+                        
+                        auto messages = std::get<dpp::message_map>(cb.value);
+                        uint64_t target_message_id = 0;
+                        
+                        // Find the most recent non-bot message
+                        for (const auto& [msg_id, msg] : messages) {
+                            if (!msg.author.is_bot()) {
+                                if (target_message_id == 0 || static_cast<uint64_t>(msg_id) > target_message_id) {
+                                    target_message_id = static_cast<uint64_t>(msg_id);
+                                }
                             }
                         }
-                    }
-                    
-                    if (target_message_id == 0) {
-                        event.reply(dpp::message().add_embed(bronx::error("no user message found in recent history")));
-                        return;
-                    }
+                        
+                        if (target_message_id == 0) {
+                            event.reply(dpp::message().add_embed(bronx::error("no user message found in recent history")).set_flags(dpp::m_ephemeral));
+                            return;
+                        }
 
-                    // Parse emoji
-                    auto [emoji_id, emoji_str] = parse_emoji_raw(emoji_arg);
-                    std::string emoji_raw_local = emoji_arg;
-                    if (emoji_id != 0) {
-                        std::string prefix = "<";
-                        if (emoji_raw_local.rfind("<a:", 0) == 0) prefix += "a:";
-                        else prefix += ":";
-                        emoji_raw_local = prefix + emoji_str + ":" + std::to_string(emoji_id) + ">";
-                    } else if (emoji_raw_local.find(":") != ::std::string::npos) {
-                        event.reply(dpp::message().add_embed(bronx::error("invalid emoji format; please provide a unicode emoji or a custom one with its id (e.g. <:name:id> or name:id)")));
-                        return;
-                    }
+                        // Parse emoji
+                        auto [emoji_id, emoji_str] = parse_emoji_raw(emoji_arg);
+                        std::string emoji_raw_local = emoji_arg;
+                        if (emoji_id != 0) {
+                            std::string prefix = "<";
+                            if (emoji_raw_local.rfind("<a:", 0) == 0) prefix += "a:";
+                            else prefix += ":";
+                            emoji_raw_local = prefix + emoji_str + ":" + std::to_string(emoji_id) + ">";
+                        } else if (emoji_raw_local.find(":") != ::std::string::npos) {
+                            event.reply(dpp::message().add_embed(bronx::error("invalid emoji format; please provide a unicode emoji or a custom one with its id (e.g. <:name:id> or name:id)")).set_flags(dpp::m_ephemeral));
+                            return;
+                        }
 
-                    dpp::role* r = dpp::find_role(role_id);
-                    if (!r) {
+                        dpp::role* r = dpp::find_role(role_id);
+                        if (!r) {
                         event.reply(dpp::message().add_embed(bronx::error("role not found")));
                         return;
                     }
@@ -1791,6 +1796,86 @@ Command* get_reactionrole_command() {
                     }
                 }
             });
+        } else if (sub.name == "setup") {
+            ::std::string title = ::std::get<::std::string>(event.get_parameter("title"));
+                ::std::string desc = ::std::get<::std::string>(event.get_parameter("description"));
+                ::std::string type = ::std::get<::std::string>(event.get_parameter("type"));
+                uint64_t role_id = ::std::get<dpp::snowflake>(event.get_parameter("role"));
+                ::std::string emoji_raw = ::std::get<::std::string>(event.get_parameter("emoji"));
+                
+                uint64_t channel_id = event.command.channel_id;
+                auto chan_param = event.get_parameter("channel");
+                if (std::holds_alternative<dpp::snowflake>(chan_param)) {
+                    channel_id = std::get<dpp::snowflake>(chan_param);
+                }
+
+                auto [emoji_id, emoji_str] = parse_emoji_raw(emoji_raw);
+                if (emoji_id != 0) {
+                    std::string prefix = "<";
+                    if (emoji_raw.rfind("<a:", 0) == 0) prefix += "a:";
+                    else prefix += ":";
+                    emoji_raw = prefix + emoji_str + ":" + std::to_string(emoji_id) + ">";
+                } else if (emoji_raw.find(":") != ::std::string::npos) {
+                    event.reply(dpp::message().add_embed(bronx::error("invalid emoji format")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+
+                dpp::role* r = dpp::find_role(role_id);
+                if (!r) {
+                    event.reply(dpp::message().add_embed(bronx::error("role not found")).set_flags(dpp::m_ephemeral));
+                    return;
+                }
+
+                dpp::message msg(channel_id, "");
+                auto embed = bronx::create_embed(desc, bronx::COLOR_DEFAULT);
+                embed.set_title(title);
+                msg.add_embed(embed);
+
+                if (type == "buttons") {
+                    dpp::component row;
+                    row.add_component(
+                        dpp::component().set_label(r->name)
+                                        .set_style(dpp::cos_primary)
+                                        .set_id("br_" + std::to_string(role_id))
+                                        .set_emoji(emoji_str, emoji_id)
+                    );
+                    msg.add_component(row);
+                }
+
+                std::string norm = normalize_emoji_for_reaction(emoji_raw);
+                uint64_t slash_guild_id = static_cast<uint64_t>(event.command.guild_id);
+
+                bot.message_create(msg, [&bot, event, type, norm, role_id, emoji_id, emoji_str, slash_guild_id, channel_id](const dpp::confirmation_callback_t& cb) {
+                    if (cb.is_error()) {
+                        event.reply(dpp::message().add_embed(bronx::error("failed to post panel: " + cb.get_error().message)).set_flags(dpp::m_ephemeral));
+                        return;
+                    }
+                    dpp::message created_msg = std::get<dpp::message>(cb.value);
+                    
+                    if (type == "reactions") {
+                        bot.message_add_reaction(created_msg.id, channel_id, norm, [&bot, created_msg, channel_id, norm, role_id, emoji_id, emoji_str, slash_guild_id, event](const dpp::confirmation_callback_t& cb2) {
+                            RREntry e;
+                            e.role_id = role_id;
+                            e.emoji_id = emoji_id;
+                            e.emoji_str = emoji_str;
+                            e.raw = norm;
+                            reaction_roles[created_msg.id].channel_id = channel_id;
+                            reaction_roles[created_msg.id].entries.push_back(e);
+                            if (rr_db) {
+                                try {
+                                    std::string db_emoji = prepare_emoji_for_storage(norm);
+                                    if (!db_emoji.empty()) {
+                                        rr_db->add_reaction_role(slash_guild_id, created_msg.id, channel_id, db_emoji, emoji_id, role_id);
+                                    }
+                                } catch (...) {}
+                            }
+                            event.reply(dpp::message().add_embed(bronx::success("reaction role panel created!")).set_flags(dpp::m_ephemeral));
+                        });
+                    } else {
+                        event.reply(dpp::message().add_embed(bronx::success("interaction role panel created!")).set_flags(dpp::m_ephemeral));
+                    }
+                });
+            }
         });
     };
 

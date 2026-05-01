@@ -18,6 +18,7 @@
 #include <condition_variable>
 #include <iostream>
 #include <sstream>
+#include "../utils/logger.h"
 
 namespace bronx {
 namespace snipe {
@@ -133,8 +134,8 @@ private:
                 return m.created_at < cutoff;
             });
             if (evicted > 0) {
-                std::cout << "\033[2m[msg_cache]\033[0m evicted " << evicted
-                          << " old messages (remaining: " << cache_.size() << ")\n";
+                bronx::logger::debug("message cache", "evicted " + std::to_string(evicted) + 
+                                   " old messages (remaining: " + std::to_string(cache_.size()) + ")");
             }
         }
     }

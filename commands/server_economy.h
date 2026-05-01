@@ -38,17 +38,17 @@ inline Command* create_servereconomy_command(Database* db) {
             // Check admin permissions via Discord perms
             dpp::guild* g = dpp::find_guild(guild_id);
             if (!g) {
-                event.reply(dpp::message(bronx::EMOJI_DENY + " Could not find guild.").set_flags(dpp::m_ephemeral));
+                event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Could not find guild.").set_flags(dpp::m_ephemeral));
                 return;
             }
             auto member_it = g->members.find(user_id);
             if (member_it == g->members.end()) {
-                event.reply(dpp::message(bronx::EMOJI_DENY + " Member data not found.").set_flags(dpp::m_ephemeral));
+                event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Member data not found.").set_flags(dpp::m_ephemeral));
                 return;
             }
             dpp::permission perms = g->base_permissions(member_it->second);
             if (!perms.can(dpp::p_administrator)) {
-                event.reply(dpp::message(bronx::EMOJI_DENY + " You need administrator permissions to use this command!").set_flags(dpp::m_ephemeral));
+                event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " You need administrator permissions to use this command!").set_flags(dpp::m_ephemeral));
                 return;
             }
 
@@ -73,7 +73,7 @@ inline Command* create_servereconomy_command(Database* db) {
 
                     dpp::embed embed = dpp::embed()
                         .set_color(bronx::COLOR_SUCCESS)
-                        .set_title(bronx::EMOJI_CHECK + " Economy Mode Updated")
+                        .set_title(std::string(bronx::EMOJI_CHECK) + " Economy Mode Updated")
                         .set_description(mode == "server"
                             ? "This server now uses a **server-specific economy**!\n\n"
                               "All economy commands will now operate on server-specific balances.\n"
@@ -86,7 +86,7 @@ inline Command* create_servereconomy_command(Database* db) {
 
                     event.reply(dpp::message().add_embed(embed));
                 } else {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " Failed to update economy mode. Please try again.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Failed to update economy mode. Please try again.").set_flags(dpp::m_ephemeral));
                 }
 
             } else if (subcommand.name == "status") {
@@ -94,7 +94,7 @@ inline Command* create_servereconomy_command(Database* db) {
                 auto settings = get_guild_economy_settings(db, guild_id);
 
                 if (!settings) {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " Failed to retrieve economy settings.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Failed to retrieve economy settings.").set_flags(dpp::m_ephemeral));
                     return;
                 }
 
@@ -121,10 +121,10 @@ inline Command* create_servereconomy_command(Database* db) {
                     embed.add_field("Multipliers", multipliers.str(), true);
 
                     std::string features;
-                    features += (settings->allow_gambling ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + std::string(" Gambling\n");
-                    features += (settings->allow_fishing ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + std::string(" Fishing\n");
-                    features += (settings->allow_trading ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + std::string(" Trading\n");
-                    features += (settings->allow_robbery ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + std::string(" Robbery");
+                    features += std::string(settings->allow_gambling ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + " Gambling\n";
+                    features += std::string(settings->allow_fishing ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + " Fishing\n";
+                    features += std::string(settings->allow_trading ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + " Trading\n";
+                    features += std::string(settings->allow_robbery ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + " Robbery";
                     embed.add_field("Features", features, true);
 
                     if (settings->enable_tax) {
@@ -144,7 +144,7 @@ inline Command* create_servereconomy_command(Database* db) {
                 auto settings = get_guild_economy_settings(db, guild_id);
 
                 if (!settings) {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " Failed to retrieve economy settings.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Failed to retrieve economy settings.").set_flags(dpp::m_ephemeral));
                     return;
                 }
 
@@ -172,7 +172,7 @@ inline Command* create_servereconomy_command(Database* db) {
                 }
 
                 if (updates.empty()) {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " No settings to update.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " No settings to update.").set_flags(dpp::m_ephemeral));
                     db->get_pool()->release(conn);
                     return;
                 }
@@ -186,14 +186,14 @@ inline Command* create_servereconomy_command(Database* db) {
                 if (mysql_query(conn->get(), query.c_str()) == 0) {
                     dpp::embed embed = dpp::embed()
                         .set_color(bronx::COLOR_SUCCESS)
-                        .set_title(bronx::EMOJI_CHECK + " Economy Settings Updated")
+                        .set_title(std::string(bronx::EMOJI_CHECK) + " Economy Settings Updated")
                         .set_description("Server economy configuration has been updated successfully!")
                         .set_footer(dpp::embed_footer().set_text("Use /servereconomy status to view all settings"))
                         .set_timestamp(time(0));
 
                     event.reply(dpp::message().add_embed(embed));
                 } else {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " Failed to update settings.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Failed to update settings.").set_flags(dpp::m_ephemeral));
                 }
 
                 db->get_pool()->release(conn);
@@ -211,21 +211,21 @@ inline Command* create_servereconomy_command(Database* db) {
 
                     if (opt.name == "gambling") {
                         updates.push_back("allow_gambling = " + db_value);
-                        changes.push_back((value ? bronx::EMOJI_CHECK + " Enabled" : bronx::EMOJI_DENY + " Disabled") + std::string(" gambling"));
+                        changes.push_back(std::string(value ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + (value ? " Enabled" : " Disabled") + " gambling");
                     } else if (opt.name == "fishing") {
                         updates.push_back("allow_fishing = " + db_value);
-                        changes.push_back((value ? bronx::EMOJI_CHECK + " Enabled" : bronx::EMOJI_DENY + " Disabled") + std::string(" fishing"));
+                        changes.push_back(std::string(value ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + (value ? " Enabled" : " Disabled") + " fishing");
                     } else if (opt.name == "trading") {
                         updates.push_back("allow_trading = " + db_value);
-                        changes.push_back((value ? bronx::EMOJI_CHECK + " Enabled" : bronx::EMOJI_DENY + " Disabled") + std::string(" trading"));
+                        changes.push_back(std::string(value ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + (value ? " Enabled" : " Disabled") + " trading");
                     } else if (opt.name == "robbery") {
                         updates.push_back("allow_robbery = " + db_value);
-                        changes.push_back((value ? bronx::EMOJI_CHECK + " Enabled" : bronx::EMOJI_DENY + " Disabled") + std::string(" robbery"));
+                        changes.push_back(std::string(value ? bronx::EMOJI_CHECK : bronx::EMOJI_DENY) + (value ? " Enabled" : " Disabled") + " robbery");
                     }
                 }
 
                 if (updates.empty()) {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " No features to update.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " No features to update.").set_flags(dpp::m_ephemeral));
                     db->get_pool()->release(conn);
                     return;
                 }
@@ -244,14 +244,14 @@ inline Command* create_servereconomy_command(Database* db) {
 
                     dpp::embed embed = dpp::embed()
                         .set_color(bronx::COLOR_SUCCESS)
-                        .set_title(bronx::EMOJI_CHECK + " Feature Settings Updated")
+                        .set_title(std::string(bronx::EMOJI_CHECK) + " Feature Settings Updated")
                         .set_description(description)
                         .set_footer(dpp::embed_footer().set_text("Server Economy System"))
                         .set_timestamp(time(0));
 
                     event.reply(dpp::message().add_embed(embed));
                 } else {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " Failed to update feature settings.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Failed to update feature settings.").set_flags(dpp::m_ephemeral));
                 }
 
                 db->get_pool()->release(conn);
@@ -264,7 +264,7 @@ inline Command* create_servereconomy_command(Database* db) {
                 if (subcommand.options.size() > 1) {
                     rate = std::get<double>(subcommand.options[1].value);
                     if (rate < 0 || rate > 100) {
-                        event.reply(dpp::message(bronx::EMOJI_DENY + " Tax rate must be between 0 and 100.").set_flags(dpp::m_ephemeral));
+                        event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Tax rate must be between 0 and 100.").set_flags(dpp::m_ephemeral));
                         return;
                     }
                 }
@@ -290,14 +290,14 @@ inline Command* create_servereconomy_command(Database* db) {
 
                     dpp::embed embed = dpp::embed()
                         .set_color(bronx::COLOR_SUCCESS)
-                        .set_title(enabled ? bronx::EMOJI_CHECK + " Tax System Enabled" : "\xF0\x9F\x94\x93 Tax System Disabled")
+                        .set_title(enabled ? std::string(bronx::EMOJI_CHECK) + " Tax System Enabled" : "\xF0\x9F\x94\x93 Tax System Disabled")
                         .set_description(desc.str())
                         .set_footer(dpp::embed_footer().set_text("Server Economy System"))
                         .set_timestamp(time(0));
 
                     event.reply(dpp::message().add_embed(embed));
                 } else {
-                    event.reply(dpp::message(bronx::EMOJI_DENY + " Failed to update tax settings.").set_flags(dpp::m_ephemeral));
+                    event.reply(dpp::message(std::string(bronx::EMOJI_DENY) + " Failed to update tax settings.").set_flags(dpp::m_ephemeral));
                 }
 
                 db->get_pool()->release(conn);

@@ -12,6 +12,7 @@
 #include "../performance/cached_database.h"
 #include "../performance/async_stat_writer.h"
 #include "../performance/hybrid_database.h"
+#include "../utils/logger.h"
 // forward declare owner helper to avoid circular dependency
 namespace commands { bool is_owner(uint64_t user_id); }
 
@@ -316,25 +317,25 @@ public:
             double _t_log = _elapsed();
 
             // --- DEBUG TIMING: print pre-handler breakdown ---
-            std::cerr << "\033[2m[cmd-timing] b." << it->second->name
-                      << "  ban=" << _t_ban << "ms"
-                      << "  prefix=" << (_t_prefix - _t_ban) << "ms"
-                      << "  bac=" << (_t_bac - _t_prefix) << "ms"
-                      << "  toggles=" << (_t_toggle - _t_bac) << "ms"
-                      << "  log=" << (_t_log - _t_toggle) << "ms"
-                      << "  pre-total=" << _t_log << "ms\033[0m\n";
+            bronx::logger::debug("pre-cmd-fast", "b." + it->second->name + 
+                               "  ban=" + std::to_string(_t_ban) + "ms" +
+                               "  prefix=" + std::to_string(_t_prefix - _t_ban) + "ms" +
+                               "  bac=" + std::to_string(_t_bac - _t_prefix) + "ms" +
+                               "  toggles=" + std::to_string(_t_toggle - _t_bac) + "ms" +
+                               "  log=" + std::to_string(_t_log - _t_toggle) + "ms" +
+                               "  pre-total=" + std::to_string(_t_log) + "ms");
             
             it->second->text_handler(bot, event, args);
 
             double _t_handler = _elapsed();
-            std::cerr << "\033[2m[cmd-timing] b." << it->second->name
-                      << "  handler=" << (_t_handler - _t_log) << "ms"
-                      << "  TOTAL=" << _t_handler << "ms\033[0m\n";
+            bronx::logger::debug("pre-cmd-slow", "b." + it->second->name + 
+                               "  handler=" + std::to_string(_t_handler - _t_log) + "ms" +
+                               "  TOTAL=" + std::to_string(_t_handler) + "ms");
         } catch (const std::exception& e) {
             // Record error
             commands::global_stats.record_error(std::string("command_error: ") + it->second->name);
             
-            std::cerr << "\033[1;31m\u2718 Command handler exception for " << it->second->name << ": " << e.what() << "\033[0m" << std::endl;
+            bronx::logger::error("command executor", "handler exception for " + it->second->name + ": " + std::string(e.what()));
             
             try {
                 dpp::embed error_embed = dpp::embed()
@@ -343,18 +344,18 @@ public:
                     
                 dpp::message error_msg;
                 error_msg.add_embed(error_embed);
-                std::string cmd_name = it->second->name;
+                std::string current_cmd = it->second->name;
                 bot.message_create(error_msg.set_channel_id(event.msg.channel_id),
-                    [ch = event.msg.channel_id, gid = event.msg.guild_id, cmd_name](const dpp::confirmation_callback_t& cb) {
+                    [ch = event.msg.channel_id, gid = event.msg.guild_id, current_cmd](const dpp::confirmation_callback_t& cb) {
                         if (cb.is_error()) {
-                            std::cerr << "\033[31m[command_error]\033[0m failed to send error for '" << cmd_name
-                                      << "' in channel " << ch << " (guild " << gid
-                                      << "): " << cb.get_error().code << " - " << cb.get_error().message << "\n";
+                            bronx::logger::error("command executor", "failed to send error for '" + current_cmd + 
+                                               "' in channel " + std::to_string(ch) + " (guild " + std::to_string(gid) + 
+                                               "): " + std::to_string(cb.get_error().code) + " - " + cb.get_error().message);
                         }
                     });
             } catch (...) {
                 // If we can't send error message, just log it
-                std::cerr << "\033[31mFailed to send error message for command " << it->second->name << "\033[0m" << std::endl;
+                bronx::logger::error("command executor", "critical failure sending error message for command " + it->second->name);
             }
         }
     }
@@ -403,16 +404,16 @@ public:
         std::string cmd_name = event.command.get_command_name();
         std::transform(cmd_name.begin(), cmd_name.end(), cmd_name.begin(), ::tolower);
         
-        std::cout << "\033[36m/\033[0m " << cmd_name << " \033[2mfrom user " << user_id << "\033[0m\n";
+        bronx::logger::info("slash command", "/" + cmd_name + " from user " + std::to_string(user_id));
         
         auto it = commands.find(cmd_name);
         if (it == commands.end()) {
-            std::cerr << "\033[33m\u26a0 [SLASH]\033[0m Command not found: /" << cmd_name << "\n";
+            bronx::logger::warn("slash command", "command not found: /" + cmd_name);
             event.reply(dpp::message("Unknown command.").set_flags(dpp::m_ephemeral));
             return;
         }
         if (!it->second->slash_handler) {
-            std::cerr << "\033[33m\u26a0 [SLASH]\033[0m Command has no slash handler: /" << cmd_name << "\n";
+            bronx::logger::warn("slash command", "command has no slash handler: /" + cmd_name);
             event.reply(dpp::message("This command doesn't support slash commands.").set_flags(dpp::m_ephemeral));
             return;
         }
@@ -463,27 +464,27 @@ public:
             double _t_log = _elapsed();
 
             // --- DEBUG TIMING: print pre-handler breakdown ---
-            std::cerr << "\033[2m[cmd-timing] /" << cmd_name
-                      << "  ban=" << _t_ban << "ms"
-                      << "  bac=" << (_t_bac - _t_ban) << "ms"
-                      << "  toggles=" << (_t_toggle - _t_bac) << "ms"
-                      << "  log=" << (_t_log - _t_toggle) << "ms"
-                      << "  pre-total=" << _t_log << "ms\033[0m\n";
+            bronx::logger::debug("pre-cmd-fast", "/" + cmd_name + 
+                               "  ban=" + std::to_string(_t_ban) + "ms" +
+                               "  bac=" + std::to_string(_t_bac - _t_ban) + "ms" +
+                               "  toggles=" + std::to_string(_t_toggle - _t_bac) + "ms" +
+                               "  log=" + std::to_string(_t_log - _t_toggle) + "ms" +
+                               "  pre-total=" + std::to_string(_t_log) + "ms");
             
             it->second->slash_handler(bot, event);
 
             double _t_handler = _elapsed();
-            std::cerr << "\033[2m[cmd-timing] /" << cmd_name
-                      << "  handler=" << (_t_handler - _t_log) << "ms"
-                      << "  TOTAL=" << _t_handler << "ms\033[0m\n";
+            bronx::logger::debug("pre-cmd-slow", "/" + cmd_name + 
+                               "  handler=" + std::to_string(_t_handler - _t_log) + "ms" +
+                               "  TOTAL=" + std::to_string(_t_handler) + "ms");
         } catch (const std::exception& e) {
             commands::global_stats.record_error(std::string("slash_command_error: ") + it->second->name);
-            std::cerr << "\033[1;31m\u2718 Slash command exception for " << it->second->name << ": " << e.what() << "\033[0m" << std::endl;
+            bronx::logger::error("slash executor", "exception for " + it->second->name + ": " + std::string(e.what()));
             
             try {
                 event.reply(dpp::message("An error occurred while executing this command.").set_flags(dpp::m_ephemeral));
             } catch (...) {
-                std::cerr << "\033[31mFailed to send slash command error response\033[0m" << std::endl;
+                bronx::logger::error("slash executor", "critical failure sending error response for command " + it->second->name);
             }
         }
     }

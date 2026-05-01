@@ -13,9 +13,7 @@
 #include <cmath>
 #include <algorithm>
 
-using namespace bronx::db;
-using namespace bronx::db::history_operations;
-using commands::economy::format_number;
+using namespace ::bronx::db;
 
 namespace commands {
 namespace skill_tree {
@@ -138,27 +136,8 @@ static int get_total_prestige_points(int prestige_level) {
 }
 
 // ============================================================================
-// Database — lazy table creation
+// Database helper functions
 // ============================================================================
-static bool g_skill_tables_created = false;
-static std::mutex g_skill_mutex;
-
-static void ensure_skill_tables(Database* db) {
-    if (g_skill_tables_created) return;
-    std::lock_guard<std::mutex> lock(g_skill_mutex);
-    if (g_skill_tables_created) return;
-    
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS user_skill_points ("
-        "  user_id BIGINT UNSIGNED NOT NULL,"
-        "  skill_id VARCHAR(64) NOT NULL,"
-        "  rank INT NOT NULL DEFAULT 0,"
-        "  PRIMARY KEY (user_id, skill_id)"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    g_skill_tables_created = true;
-}
 
 // ============================================================================
 // DB helpers
@@ -199,7 +178,8 @@ static int get_skill_rank(const UserSkillState& state, const std::string& skill_
 }
 
 static double get_skill_bonus(Database* db, uint64_t user_id, const std::string& bonus_type) {
-    ensure_skill_tables(db);
+    
+
     auto state = get_user_skills(db, user_id);
     
     double total = 0.0;
@@ -320,7 +300,8 @@ static std::string build_branch_display(const std::string& branch, const UserSki
 // Button handler for skill investment
 // ============================================================================
 inline void handle_skill_button(dpp::cluster& bot, const dpp::button_click_t& event, Database* db) {
-    ensure_skill_tables(db);
+    
+
     std::string custom_id = event.custom_id;
     
     // Format: skill_invest_{skill_id}_{user_id}
@@ -336,7 +317,7 @@ inline void handle_skill_button(dpp::cluster& bot, const dpp::button_click_t& ev
     
     if (clicker_id != target_user_id) {
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("that's not your skill tree!")).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::error("that's not your skill tree!")).set_flags(dpp::m_ephemeral));
         return;
     }
     
@@ -346,7 +327,7 @@ inline void handle_skill_button(dpp::cluster& bot, const dpp::button_click_t& ev
     // Check prestige requirement
     if (state.prestige_level < 1) {
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("you need prestige 1+ to use skill trees!")).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::error("you need prestige 1+ to use skill trees!")).set_flags(dpp::m_ephemeral));
         return;
     }
     
@@ -354,7 +335,7 @@ inline void handle_skill_button(dpp::cluster& bot, const dpp::button_click_t& ev
     int free_points = state.total_points_available - state.total_points_spent;
     if (free_points <= 0) {
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("no skill points available! prestige more to earn points.")).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::error("no skill points available! prestige more to earn points.")).set_flags(dpp::m_ephemeral));
         return;
     }
     
@@ -362,7 +343,7 @@ inline void handle_skill_button(dpp::cluster& bot, const dpp::button_click_t& ev
     const SkillNode* skill = find_skill(skill_id);
     if (!skill) {
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("unknown skill!")).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::error("unknown skill!")).set_flags(dpp::m_ephemeral));
         return;
     }
     
@@ -370,14 +351,14 @@ inline void handle_skill_button(dpp::cluster& bot, const dpp::button_click_t& ev
     int current_rank = get_skill_rank(state, skill_id);
     if (current_rank >= skill->max_rank) {
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("that skill is already maxed!")).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::error("that skill is already maxed!")).set_flags(dpp::m_ephemeral));
         return;
     }
     
     // Check prerequisite
     if (!meets_prerequisite(state, *skill)) {
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("you need at least 1 point in a tier " + std::to_string(skill->prerequisite_tier) + " skill first!")).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::error("you need at least 1 point in a tier " + std::to_string(skill->prerequisite_tier) + " skill first!")).set_flags(dpp::m_ephemeral));
         return;
     }
     
@@ -389,15 +370,15 @@ inline void handle_skill_button(dpp::cluster& bot, const dpp::button_click_t& ev
         oss.precision(1);
         oss << new_bonus;
         
-        std::string desc = bronx::EMOJI_CHECK + " Invested 1 point in **" + skill->name + "** (" + std::to_string(current_rank + 1) + "/" + std::to_string(skill->max_rank) + ")\n";
+        std::string desc = ::bronx::EMOJI_CHECK + " Invested 1 point in **" + skill->name + "** (" + std::to_string(current_rank + 1) + "/" + std::to_string(skill->max_rank) + ")\n";
         desc += "Bonus: **+" + oss.str() + "%** " + format_bonus_name(skill->bonus_type) + "\n";
         desc += "Points remaining: **" + std::to_string(free_points - 1) + "**";
         
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::create_embed(desc, bronx::COLOR_SUCCESS)).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::create_embed(desc, ::bronx::COLOR_SUCCESS)).set_flags(dpp::m_ephemeral));
     } else {
         event.reply(dpp::ir_channel_message_with_source,
-            dpp::message().add_embed(bronx::error("failed to invest skill point!")).set_flags(dpp::m_ephemeral));
+            dpp::message().add_embed(::bronx::error("failed to invest skill point!")).set_flags(dpp::m_ephemeral));
     }
 }
 
@@ -408,7 +389,7 @@ inline Command* create_skill_tree_command(Database* db) {
     static Command* cmd = new Command("skills", "view & manage your skill tree", "economy", {"skill", "tree", "skilltree"}, true,
         // Text handler
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
-            ensure_skill_tables(db);
+
             uint64_t user_id = event.msg.author.id;
             db->ensure_user_exists(user_id);
             
@@ -416,7 +397,7 @@ inline Command* create_skill_tree_command(Database* db) {
             
             // Check prestige requirement
             if (state.prestige_level < 1) {
-                bronx::send_message(bot, event, bronx::error("skill trees unlock at **Prestige 1**! use `b.prestige` to check requirements."));
+                ::bronx::send_message(bot, event, ::bronx::error("skill trees unlock at **Prestige 1**! use `b.prestige` to check requirements."));
                 return;
             }
             
@@ -425,7 +406,7 @@ inline Command* create_skill_tree_command(Database* db) {
             // Handle respec
             if (action == "respec" || action == "reset") {
                 if (state.total_points_spent == 0) {
-                    bronx::send_message(bot, event, bronx::error("you have no skill points invested!"));
+                    ::bronx::send_message(bot, event, ::bronx::error("you have no skill points invested!"));
                     return;
                 }
                 
@@ -436,31 +417,31 @@ inline Command* create_skill_tree_command(Database* db) {
                 
                 int64_t wallet = db->get_wallet(user_id);
                 if (wallet < respec_cost) {
-                    bronx::send_message(bot, event, bronx::error("respec costs $" + format_number(respec_cost) + " but you only have $" + format_number(wallet) + "!"));
+                    ::bronx::send_message(bot, event, ::bronx::error("respec costs $" + ::commands::economy::format_number(respec_cost) + " but you only have $" + ::commands::economy::format_number(wallet) + "!"));
                     return;
                 }
                 
                 // Check for confirm
                 if (args.size() >= 2 && args[1] == "confirm") {
                     db->update_wallet(user_id, -respec_cost);
-                    log_balance_change(db, user_id, "skill tree respec -$" + format_number(respec_cost));
+                    log_balance_change(db, user_id, "skill tree respec -$" + ::commands::economy::format_number(respec_cost));
                     reset_all_skills(db, user_id);
                     
-                    std::string desc = bronx::EMOJI_CHECK + " **Skill tree reset!**\n\n";
+                    std::string desc = ::bronx::EMOJI_CHECK + " **Skill tree reset!**\n\n";
                     desc += "Refunded **" + std::to_string(state.total_points_spent) + "** skill points\n";
-                    desc += "Cost: **$" + format_number(respec_cost) + "**";
+                    desc += "Cost: **$" + ::commands::economy::format_number(respec_cost) + "**";
                     
-                    auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
-                    bronx::add_invoker_footer(embed, event.msg.author);
-                    bronx::send_message(bot, event, embed);
+                    auto embed = ::bronx::create_embed(desc, ::bronx::COLOR_SUCCESS);
+                    ::bronx::add_invoker_footer(embed, event.msg.author);
+                    ::bronx::send_message(bot, event, embed);
                 } else {
                     std::string desc = "\xE2\x9A\xA0\xEF\xB8\x8F **Respec Confirmation**\n\n";
                     desc += "This will reset **all " + std::to_string(state.total_points_spent) + " invested skill points**.\n";
-                    desc += "Cost: **$" + format_number(respec_cost) + "**\n\n";
+                    desc += "Cost: **$" + ::commands::economy::format_number(respec_cost) + "**\n\n";
                     desc += "Use `b.skills respec confirm` to proceed.";
                     
-                    auto embed = bronx::create_embed(desc, bronx::COLOR_WARNING);
-                    bronx::send_message(bot, event, embed);
+                    auto embed = ::bronx::create_embed(desc, ::bronx::COLOR_WARNING);
+                    ::bronx::send_message(bot, event, embed);
                 }
                 return;
             }
@@ -468,7 +449,7 @@ inline Command* create_skill_tree_command(Database* db) {
             // Handle invest
             if (action == "invest" || action == "add") {
                 if (args.size() < 2) {
-                    bronx::send_message(bot, event, bronx::error("usage: `b.skills invest <skill>`\nUse `b.skills` to see available skills."));
+                    ::bronx::send_message(bot, event, ::bronx::error("usage: `b.skills invest <skill>`\nUse `b.skills` to see available skills."));
                     return;
                 }
                 
@@ -500,24 +481,24 @@ inline Command* create_skill_tree_command(Database* db) {
                 }
                 
                 if (!skill) {
-                    bronx::send_message(bot, event, bronx::error("unknown skill `" + skill_query + "`! use `b.skills` to see available skills."));
+                    ::bronx::send_message(bot, event, ::bronx::error("unknown skill `" + skill_query + "`! use `b.skills` to see available skills."));
                     return;
                 }
                 
                 int free_points = state.total_points_available - state.total_points_spent;
                 if (free_points <= 0) {
-                    bronx::send_message(bot, event, bronx::error("no skill points available! prestige more to earn points."));
+                    ::bronx::send_message(bot, event, ::bronx::error("no skill points available! prestige more to earn points."));
                     return;
                 }
                 
                 int current_rank = get_skill_rank(state, skill_id);
                 if (current_rank >= skill->max_rank) {
-                    bronx::send_message(bot, event, bronx::error("**" + skill->name + "** is already at max rank!"));
+                    ::bronx::send_message(bot, event, ::bronx::error("**" + skill->name + "** is already at max rank!"));
                     return;
                 }
                 
                 if (!meets_prerequisite(state, *skill)) {
-                    bronx::send_message(bot, event, bronx::error("you need at least 1 point in a tier " + std::to_string(skill->prerequisite_tier) + " " + branch_display(skill->branch) + " skill first!"));
+                    ::bronx::send_message(bot, event, ::bronx::error("you need at least 1 point in a tier " + std::to_string(skill->prerequisite_tier) + " " + branch_display(skill->branch) + " skill first!"));
                     return;
                 }
                 
@@ -532,11 +513,11 @@ inline Command* create_skill_tree_command(Database* db) {
                     desc += "Total bonus: **+" + oss.str() + "%** " + format_bonus_name(skill->bonus_type) + "\n";
                     desc += "Points remaining: **" + std::to_string(free_points - 1) + "**";
                     
-                    auto embed = bronx::create_embed(desc, bronx::COLOR_SUCCESS);
-                    bronx::add_invoker_footer(embed, event.msg.author);
-                    bronx::send_message(bot, event, embed);
+                    auto embed = ::bronx::create_embed(desc, ::bronx::COLOR_SUCCESS);
+                    ::bronx::add_invoker_footer(embed, event.msg.author);
+                    ::bronx::send_message(bot, event, embed);
                 } else {
-                    bronx::send_message(bot, event, bronx::error("failed to invest skill point!"));
+                    ::bronx::send_message(bot, event, ::bronx::error("failed to invest skill point!"));
                 }
                 return;
             }
@@ -544,10 +525,10 @@ inline Command* create_skill_tree_command(Database* db) {
             // Handle branch-specific view
             if (action == "angler" || action == "prospector" || action == "gambler") {
                 std::string display = build_branch_display(action, state);
-                auto embed = bronx::create_embed(display);
+                auto embed = ::bronx::create_embed(display);
                 embed.set_title("\xF0\x9F\x8C\xB3 Skill Tree \xE2\x80\x94 " + branch_display(action));
-                bronx::add_invoker_footer(embed, event.msg.author);
-                bronx::send_message(bot, event, embed);
+                ::bronx::add_invoker_footer(embed, event.msg.author);
+                ::bronx::send_message(bot, event, embed);
                 return;
             }
             
@@ -588,15 +569,15 @@ inline Command* create_skill_tree_command(Database* db) {
             
             desc += "*Use `b.skills <branch>` for details, `b.skills invest <skill>` to invest*";
             
-            auto embed = bronx::create_embed(desc);
+            auto embed = ::bronx::create_embed(desc);
             embed.set_title("\xF0\x9F\x8C\xB3 Skill Tree");
-            bronx::add_invoker_footer(embed, event.msg.author);
-            bronx::maybe_add_support_link(embed);
-            bronx::send_message(bot, event, embed);
+            ::bronx::add_invoker_footer(embed, event.msg.author);
+            ::bronx::maybe_add_support_link(embed);
+            ::bronx::send_message(bot, event, embed);
         },
         // Slash handler
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
-            ensure_skill_tables(db);
+
             uint64_t user_id = event.command.get_issuing_user().id;
             db->ensure_user_exists(user_id);
             
@@ -604,7 +585,7 @@ inline Command* create_skill_tree_command(Database* db) {
             
             if (state.prestige_level < 1) {
                 event.reply(dpp::message().add_embed(
-                    bronx::error("skill trees unlock at **Prestige 1**! use `/prestige` to check requirements.")));
+                    ::bronx::error("skill trees unlock at **Prestige 1**! use `/prestige` to check requirements.")));
                 return;
             }
             
@@ -626,7 +607,7 @@ inline Command* create_skill_tree_command(Database* db) {
             // Handle respec
             if (action == "respec") {
                 if (state.total_points_spent == 0) {
-                    event.reply(dpp::message().add_embed(bronx::error("you have no skill points invested!")));
+                    event.reply(dpp::message().add_embed(::bronx::error("you have no skill points invested!")));
                     return;
                 }
                 
@@ -638,26 +619,26 @@ inline Command* create_skill_tree_command(Database* db) {
                 int64_t wallet = db->get_wallet(user_id);
                 if (wallet < respec_cost) {
                     event.reply(dpp::message().add_embed(
-                        bronx::error("respec costs $" + format_number(respec_cost) + " but you only have $" + format_number(wallet) + "!")));
+                        ::bronx::error("respec costs $" + ::commands::economy::format_number(respec_cost) + " but you only have $" + ::commands::economy::format_number(wallet) + "!")));
                     return;
                 }
                 
                 db->update_wallet(user_id, -respec_cost);
-                log_balance_change(db, user_id, "skill tree respec -$" + format_number(respec_cost));
+                log_balance_change(db, user_id, "skill tree respec -$" + ::commands::economy::format_number(respec_cost));
                 reset_all_skills(db, user_id);
                 
-                std::string desc = bronx::EMOJI_CHECK + " **Skill tree reset!**\n\n";
+                std::string desc = ::bronx::EMOJI_CHECK + " **Skill tree reset!**\n\n";
                 desc += "Refunded **" + std::to_string(state.total_points_spent) + "** skill points\n";
-                desc += "Cost: **$" + format_number(respec_cost) + "**";
+                desc += "Cost: **$" + ::commands::economy::format_number(respec_cost) + "**";
                 
-                event.reply(dpp::message().add_embed(bronx::create_embed(desc, bronx::COLOR_SUCCESS)));
+                event.reply(dpp::message().add_embed(::bronx::create_embed(desc, ::bronx::COLOR_SUCCESS)));
                 return;
             }
             
             // Handle invest
             if (action == "invest") {
                 if (skill_name.empty()) {
-                    event.reply(dpp::message().add_embed(bronx::error("specify a skill to invest in!")));
+                    event.reply(dpp::message().add_embed(::bronx::error("specify a skill to invest in!")));
                     return;
                 }
                 
@@ -674,25 +655,25 @@ inline Command* create_skill_tree_command(Database* db) {
                 }
                 
                 if (!skill) {
-                    event.reply(dpp::message().add_embed(bronx::error("unknown skill!")));
+                    event.reply(dpp::message().add_embed(::bronx::error("unknown skill!")));
                     return;
                 }
                 
                 int free_points = state.total_points_available - state.total_points_spent;
                 if (free_points <= 0) {
-                    event.reply(dpp::message().add_embed(bronx::error("no skill points available!")));
+                    event.reply(dpp::message().add_embed(::bronx::error("no skill points available!")));
                     return;
                 }
                 
                 int current_rank = get_skill_rank(state, skill_name);
                 if (current_rank >= skill->max_rank) {
-                    event.reply(dpp::message().add_embed(bronx::error("**" + skill->name + "** is already at max rank!")));
+                    event.reply(dpp::message().add_embed(::bronx::error("**" + skill->name + "** is already at max rank!")));
                     return;
                 }
                 
                 if (!meets_prerequisite(state, *skill)) {
                     event.reply(dpp::message().add_embed(
-                        bronx::error("prerequisite not met! invest in a tier " + std::to_string(skill->prerequisite_tier) + " " + branch_display(skill->branch) + " skill first.")));
+                        ::bronx::error("prerequisite not met! invest in a tier " + std::to_string(skill->prerequisite_tier) + " " + branch_display(skill->branch) + " skill first.")));
                     return;
                 }
                 
@@ -707,9 +688,9 @@ inline Command* create_skill_tree_command(Database* db) {
                     desc += "Total bonus: **+" + oss.str() + "%** " + format_bonus_name(skill->bonus_type) + "\n";
                     desc += "Points remaining: **" + std::to_string(free_points - 1) + "**";
                     
-                    event.reply(dpp::message().add_embed(bronx::create_embed(desc, bronx::COLOR_SUCCESS)));
+                    event.reply(dpp::message().add_embed(::bronx::create_embed(desc, ::bronx::COLOR_SUCCESS)));
                 } else {
-                    event.reply(dpp::message().add_embed(bronx::error("failed to invest skill point!")));
+                    event.reply(dpp::message().add_embed(::bronx::error("failed to invest skill point!")));
                 }
                 return;
             }
@@ -717,9 +698,9 @@ inline Command* create_skill_tree_command(Database* db) {
             // Handle branch view
             if (!branch.empty()) {
                 std::string display = build_branch_display(branch, state);
-                auto embed = bronx::create_embed(display);
+                auto embed = ::bronx::create_embed(display);
                 embed.set_title("\xF0\x9F\x8C\xB3 Skill Tree \xE2\x80\x94 " + branch_display(branch));
-                bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+                ::bronx::add_invoker_footer(embed, event.command.get_issuing_user());
                 event.reply(dpp::message().add_embed(embed));
                 return;
             }
@@ -758,10 +739,10 @@ inline Command* create_skill_tree_command(Database* db) {
             
             desc += "*Use `/skills` with a **branch** to see details*";
             
-            auto embed = bronx::create_embed(desc);
+            auto embed = ::bronx::create_embed(desc);
             embed.set_title("\xF0\x9F\x8C\xB3 Skill Tree");
-            bronx::add_invoker_footer(embed, event.command.get_issuing_user());
-            bronx::maybe_add_support_link(embed);
+            ::bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+            ::bronx::maybe_add_support_link(embed);
             event.reply(dpp::message().add_embed(embed));
         },
         // Slash command options

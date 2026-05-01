@@ -1,7 +1,7 @@
 #pragma once
 #include "../../command.h"
 #include "../../embed_style.h"
-#include "commands/skill_tree/skill_tree.h"
+#include "../skill_tree/skill_tree.h"
 #include "../../database/core/database.h"
 #include "../../database/operations/economy/history_operations.h"
 #include "../../database/operations/economy/gambling_verification.h"
@@ -11,8 +11,7 @@
 #include <random>
 #include <algorithm>
 
-using namespace bronx::db;
-using namespace bronx::db::gambling_verification;
+using namespace ::bronx::db;
 
 namespace commands {
 namespace gambling {
@@ -22,12 +21,12 @@ inline Command* get_coinflip_command(Database* db) {
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             // Anti-spam cooldown (3 seconds) - prevents double-tap exploit
             if (!db->try_claim_cooldown(event.msg.author.id, "coinflip", 3)) {
-                bronx::send_message(bot, event, bronx::error("slow down! wait a few seconds between bets"));
+                ::bronx::send_message(bot, event, ::bronx::error("slow down! wait a few seconds between bets"));
                 return;
             }
             
             if (args.empty()) {
-                bronx::send_message(bot, event, bronx::error("usage: coinflip <amount> [heads|tails]"));
+                ::bronx::send_message(bot, event, ::bronx::error("usage: coinflip <amount> [heads|tails]"));
                 return;
             }
             
@@ -37,7 +36,7 @@ inline Command* get_coinflip_command(Database* db) {
                 choice = args[1];
                 ::std::transform(choice.begin(), choice.end(), choice.begin(), ::tolower);
                 if (choice != "heads" && choice != "tails" && choice != "h" && choice != "t") {
-                    bronx::send_message(bot, event, bronx::error("choose heads or tails"));
+                    ::bronx::send_message(bot, event, ::bronx::error("choose heads or tails"));
                     return;
                 }
             }
@@ -49,22 +48,22 @@ inline Command* get_coinflip_command(Database* db) {
             try {
                 bet = parse_amount(args[0], user->wallet);
             } catch (const std::exception& e) {
-                bronx::send_message(bot, event, bronx::error("invalid bet amount"));
+                ::bronx::send_message(bot, event, ::bronx::error("invalid bet amount"));
                 return;
             }
             
             if (bet < 50) {
-                bronx::send_message(bot, event, bronx::error("minimum bet is $50"));
+                ::bronx::send_message(bot, event, ::bronx::error("minimum bet is $50"));
                 return;
             }
             
-            if (bet > MAX_BET) {
-                bronx::send_message(bot, event, bronx::error("maximum bet is $2,000,000,000"));
+            if (bet > ::commands::gambling::MAX_BET) {
+                ::bronx::send_message(bot, event, ::bronx::error("maximum bet is $2,000,000,000"));
                 return;
             }
             
             if (bet > user->wallet) {
-                bronx::send_message(bot, event, bronx::error("you don't have that much"));
+                ::bronx::send_message(bot, event, ::bronx::error("you don't have that much"));
                 return;
             }
             
@@ -115,18 +114,18 @@ inline Command* get_coinflip_command(Database* db) {
             
             // VERIFIED GAMBLING TRANSACTION
             int64_t balance_before = db->get_wallet(event.msg.author.id);
-            std::string transaction_id = create_gambling_transaction(
+            std::string transaction_id = bronx::db::gambling_verification::create_gambling_transaction(
                 db, event.msg.author.id, "coinflip", bet, winnings, 
                 balance_before, "", "heads:" + std::to_string(heads) + ",choice:" + choice
             );
             
-            if (!verify_gambling_transaction(db, event.msg.author.id, transaction_id, balance_before, balance_before + winnings)) {
-                bronx::send_message(bot, event, bronx::error("gambling verification failed - please try again"));
+            if (!bronx::db::gambling_verification::verify_gambling_transaction(db, event.msg.author.id, transaction_id, balance_before, balance_before + winnings)) {
+                ::bronx::send_message(bot, event, ::bronx::error("gambling verification failed - please try again"));
                 return;
             }
             
-            if (!apply_verified_gambling_winnings(db, event.msg.author.id, transaction_id, winnings, "coinflip")) {
-                bronx::send_message(bot, event, bronx::error("failed to apply gambling winnings - contact support"));
+            if (!bronx::db::gambling_verification::apply_verified_gambling_winnings(db, event.msg.author.id, transaction_id, winnings, "coinflip")) {
+                ::bronx::send_message(bot, event, ::bronx::error("failed to apply gambling winnings - contact support"));
                 return;
             }
             
@@ -134,7 +133,7 @@ inline Command* get_coinflip_command(Database* db) {
             if (winnings > 0) {
                 db->increment_stat(event.msg.author.id, "gambling_profit", winnings);
                 // Check gambling profit achievements
-                track_gambling_profit(bot, db, event.msg.channel_id, event.msg.author.id);
+                ::commands::gambling::track_gambling_profit(bot, db, event.msg.channel_id, event.msg.author.id);
                 // Track daily challenge stat
                 ::commands::daily_challenges::track_daily_stat(db, event.msg.author.id, "coinflip_wins_today", 1);
             } else {
@@ -142,12 +141,12 @@ inline Command* get_coinflip_command(Database* db) {
             }
             
             // Track milestone
-            track_gambling_result(bot, db, event.msg.channel_id, event.msg.author.id, won, winnings);
+            ::commands::gambling::track_gambling_result(bot, db, event.msg.channel_id, event.msg.author.id, won, winnings);
             
             // Log gambling result to history
             int64_t new_balance = db->get_wallet(event.msg.author.id);
             std::string log_desc = won ? "won coinflip for $" + format_number(bet) : "lost coinflip for $" + format_number(bet);
-            bronx::db::history_operations::log_gambling(db, event.msg.author.id, log_desc, winnings, new_balance);
+            ::bronx::db::history_operations::log_gambling(db, event.msg.author.id, log_desc, winnings, new_balance);
             
             ::std::string coin_emoji = heads ? "🪙" : "🪙";
             ::std::string result = heads ? "heads" : "tails";
@@ -159,14 +158,14 @@ inline Command* get_coinflip_command(Database* db) {
                 description += "you lost $" + format_number(bet);
             }
             
-            auto embed = won ? bronx::success(description) : bronx::error(description);
-            bronx::add_invoker_footer(embed, event.msg.author);
-            bronx::send_message(bot, event, embed);
+            auto embed = won ? ::bronx::success(description) : ::bronx::error(description);
+            ::bronx::add_invoker_footer(embed, event.msg.author);
+            ::bronx::send_message(bot, event, embed);
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
             // Anti-spam cooldown (3 seconds) - prevents double-tap exploit
             if (!db->try_claim_cooldown(event.command.get_issuing_user().id, "coinflip", 3)) {
-                event.reply(dpp::message().add_embed(bronx::error("slow down! wait a few seconds between bets")));
+                event.reply(dpp::message().add_embed(::bronx::error("slow down! wait a few seconds between bets")));
                 return;
             }
             
@@ -177,7 +176,7 @@ inline Command* get_coinflip_command(Database* db) {
             } else if (std::holds_alternative<int64_t>(amount_param)) {
                 amount_str = std::to_string(std::get<int64_t>(amount_param));
             } else {
-                event.reply(dpp::message().add_embed(bronx::error("please provide a bet amount")));
+                event.reply(dpp::message().add_embed(::bronx::error("please provide a bet amount")));
                 return;
             }
             
@@ -191,7 +190,7 @@ inline Command* get_coinflip_command(Database* db) {
             
             auto user = db->get_user(event.command.get_issuing_user().id);
             if (!user) {
-                event.reply(dpp::message().add_embed(bronx::error("user not found")));
+                event.reply(dpp::message().add_embed(::bronx::error("user not found")));
                 return;
             }
             
@@ -199,22 +198,22 @@ inline Command* get_coinflip_command(Database* db) {
             try {
                 bet = parse_amount(amount_str, user->wallet);
             } catch (const std::exception& e) {
-                event.reply(dpp::message().add_embed(bronx::error("invalid bet amount")));
+                event.reply(dpp::message().add_embed(::bronx::error("invalid bet amount")));
                 return;
             }
             
             if (bet < 50) {
-                event.reply(dpp::message().add_embed(bronx::error("minimum bet is $50")));
+                event.reply(dpp::message().add_embed(::bronx::error("minimum bet is $50")));
                 return;
             }
             
-            if (bet > MAX_BET) {
-                event.reply(dpp::message().add_embed(bronx::error("maximum bet is $2,000,000,000")));
+            if (bet > ::commands::gambling::MAX_BET) {
+                event.reply(dpp::message().add_embed(::bronx::error("maximum bet is $2,000,000,000")));
                 return;
             }
             
             if (bet > user->wallet) {
-                event.reply(dpp::message().add_embed(bronx::error("you don't have that much")));
+                event.reply(dpp::message().add_embed(::bronx::error("you don't have that much")));
                 return;
             }
             
@@ -231,18 +230,18 @@ inline Command* get_coinflip_command(Database* db) {
             // VERIFIED GAMBLING TRANSACTION
             uint64_t user_id = event.command.get_issuing_user().id;
             int64_t balance_before = db->get_wallet(user_id);
-            std::string transaction_id = create_gambling_transaction(
+            std::string transaction_id = bronx::db::gambling_verification::create_gambling_transaction(
                 db, user_id, "coinflip", bet, winnings,
                 balance_before, "", "heads:" + std::to_string(heads) + ",choice:" + choice
             );
             
-            if (!verify_gambling_transaction(db, user_id, transaction_id, balance_before, balance_before + winnings)) {
-                event.reply(dpp::message().add_embed(bronx::error("gambling verification failed - please try again")));
+            if (!bronx::db::gambling_verification::verify_gambling_transaction(db, user_id, transaction_id, balance_before, balance_before + winnings)) {
+                event.reply(dpp::message().add_embed(::bronx::error("gambling verification failed - please try again")));
                 return;
             }
             
-            if (!apply_verified_gambling_winnings(db, user_id, transaction_id, winnings, "coinflip")) {
-                event.reply(dpp::message().add_embed(bronx::error("failed to apply gambling winnings - contact support")));
+            if (!bronx::db::gambling_verification::apply_verified_gambling_winnings(db, user_id, transaction_id, winnings, "coinflip")) {
+                event.reply(dpp::message().add_embed(::bronx::error("failed to apply gambling winnings - contact support")));
                 return;
             }
             
@@ -250,7 +249,7 @@ inline Command* get_coinflip_command(Database* db) {
             if (winnings > 0) {
                 db->increment_stat(user_id, "gambling_profit", winnings);
                 // Check gambling profit achievements
-                track_gambling_profit(bot, db, event.command.channel_id, user_id);
+                ::commands::gambling::track_gambling_profit(bot, db, event.command.channel_id, user_id);
                 // Track daily challenge stat
                 ::commands::daily_challenges::track_daily_stat(db, user_id, "coinflip_wins_today", 1);
             } else {
@@ -258,12 +257,12 @@ inline Command* get_coinflip_command(Database* db) {
             }
             
             // Track milestone
-            track_gambling_result(bot, db, event.command.channel_id, user_id, won, winnings);
+            ::commands::gambling::track_gambling_result(bot, db, event.command.channel_id, user_id, won, winnings);
             
             // Log gambling result to history
             int64_t new_balance = db->get_wallet(user_id);
             std::string log_desc = won ? "won coinflip for $" + format_number(bet) : "lost coinflip for $" + format_number(bet);
-            bronx::db::history_operations::log_gambling(db, user_id, log_desc, winnings, new_balance);
+            ::bronx::db::history_operations::log_gambling(db, user_id, log_desc, winnings, new_balance);
             
             ::std::string coin_emoji = "🪙";
             ::std::string result = heads ? "heads" : "tails";
@@ -275,8 +274,8 @@ inline Command* get_coinflip_command(Database* db) {
                 description += "you lost $" + format_number(bet);
             }
             
-            auto embed = won ? bronx::success(description) : bronx::error(description);
-            bronx::add_invoker_footer(embed, event.command.get_issuing_user());
+            auto embed = won ? ::bronx::success(description) : ::bronx::error(description);
+            ::bronx::add_invoker_footer(embed, event.command.get_issuing_user());
             event.reply(dpp::message().add_embed(embed));
         },
         {

@@ -17,7 +17,8 @@ std::optional<InfractionConfig> Database::get_infraction_config(uint64_t guild_i
         "default_duration_ban, default_duration_warn, "
         "COALESCE(escalation_rules, '[]'), "
         "COALESCE(mute_role_id, 0), COALESCE(jail_role_id, 0), COALESCE(jail_channel_id, 0), "
-        "COALESCE(log_channel_id, 0), dm_on_action "
+        "COALESCE(log_channel_id, 0), dm_on_action, "
+        "quiet_global, COALESCE(quiet_overrides, '{}'), case_counter, require_reason "
         "FROM guild_infraction_config WHERE guild_id = ?";
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
@@ -33,12 +34,14 @@ std::optional<InfractionConfig> Database::get_infraction_config(uint64_t guild_i
     }
 
     InfractionConfig c;
-    char esc_buf[4096]; unsigned long esc_len;
-    my_bool dm;
+    char esc_buf[4096], q_ov_buf[4096];
+    unsigned long esc_len, q_ov_len;
+    my_bool dm, q_gl, req_r;
     uint64_t mute_r, jail_r, jail_c, log_c;
     uint32_t dur_t, dur_m, dur_k, dur_b, dur_w;
+    int c_count;
 
-    MYSQL_BIND rb[17]; memset(rb, 0, sizeof(rb));
+    MYSQL_BIND rb[21]; memset(rb, 0, sizeof(rb));
     rb[0].buffer_type = MYSQL_TYPE_LONGLONG; rb[0].buffer = (char*)&c.guild_id; rb[0].is_unsigned = 1;
     rb[1].buffer_type = MYSQL_TYPE_DOUBLE; rb[1].buffer = (char*)&c.point_timeout;
     rb[2].buffer_type = MYSQL_TYPE_DOUBLE; rb[2].buffer = (char*)&c.point_mute;
@@ -56,6 +59,10 @@ std::optional<InfractionConfig> Database::get_infraction_config(uint64_t guild_i
     rb[14].buffer_type = MYSQL_TYPE_LONGLONG; rb[14].buffer = (char*)&jail_c; rb[14].is_unsigned = 1;
     rb[15].buffer_type = MYSQL_TYPE_LONGLONG; rb[15].buffer = (char*)&log_c; rb[15].is_unsigned = 1;
     rb[16].buffer_type = MYSQL_TYPE_TINY; rb[16].buffer = (char*)&dm;
+    rb[17].buffer_type = MYSQL_TYPE_TINY; rb[17].buffer = (char*)&q_gl;
+    rb[18].buffer_type = MYSQL_TYPE_STRING; rb[18].buffer = q_ov_buf; rb[18].buffer_length = sizeof(q_ov_buf); rb[18].length = &q_ov_len;
+    rb[19].buffer_type = MYSQL_TYPE_LONG; rb[19].buffer = (char*)&c_count;
+    rb[20].buffer_type = MYSQL_TYPE_TINY; rb[20].buffer = (char*)&req_r;
 
     mysql_stmt_bind_result(stmt, rb);
     mysql_stmt_store_result(stmt);
@@ -73,6 +80,10 @@ std::optional<InfractionConfig> Database::get_infraction_config(uint64_t guild_i
     c.mute_role_id = mute_r; c.jail_role_id = jail_r;
     c.jail_channel_id = jail_c; c.log_channel_id = log_c;
     c.dm_on_action = dm;
+    c.quiet_global = q_gl;
+    c.quiet_overrides = std::string(q_ov_buf, q_ov_len);
+    c.case_counter = c_count;
+    c.require_reason = req_r;
 
     mysql_stmt_close(stmt); pool_->release(conn);
     return c;
@@ -84,8 +95,9 @@ bool Database::upsert_infraction_config(const InfractionConfig& c) {
         "(guild_id, point_timeout, point_mute, point_kick, point_ban, point_warn, "
         " default_duration_timeout, default_duration_mute, default_duration_kick, "
         " default_duration_ban, default_duration_warn, escalation_rules, "
-        " mute_role_id, jail_role_id, jail_channel_id, log_channel_id, dm_on_action) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        " mute_role_id, jail_role_id, jail_channel_id, log_channel_id, dm_on_action, "
+        " quiet_global, quiet_overrides, case_counter, require_reason) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON DUPLICATE KEY UPDATE "
         " point_timeout=VALUES(point_timeout), point_mute=VALUES(point_mute), "
         " point_kick=VALUES(point_kick), point_ban=VALUES(point_ban), point_warn=VALUES(point_warn), "
@@ -97,7 +109,9 @@ bool Database::upsert_infraction_config(const InfractionConfig& c) {
         " escalation_rules=VALUES(escalation_rules), "
         " mute_role_id=VALUES(mute_role_id), jail_role_id=VALUES(jail_role_id), "
         " jail_channel_id=VALUES(jail_channel_id), log_channel_id=VALUES(log_channel_id), "
-        " dm_on_action=VALUES(dm_on_action)";
+        " dm_on_action=VALUES(dm_on_action), quiet_global=VALUES(quiet_global), "
+        " quiet_overrides=VALUES(quiet_overrides), case_counter=VALUES(case_counter), "
+        " require_reason=VALUES(require_reason)";
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
     if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
@@ -105,8 +119,10 @@ bool Database::upsert_infraction_config(const InfractionConfig& c) {
         mysql_stmt_close(stmt); pool_->release(conn); return false;
     }
 
-    MYSQL_BIND bp[17]; memset(bp, 0, sizeof(bp));
+    MYSQL_BIND bp[21]; memset(bp, 0, sizeof(bp));
     my_bool dm_val = c.dm_on_action ? 1 : 0;
+    my_bool q_gl_val = c.quiet_global ? 1 : 0;
+    my_bool req_r_val = c.require_reason ? 1 : 0;
     my_bool null_flag = 1, not_null = 0;
 
     bp[0].buffer_type = MYSQL_TYPE_LONGLONG; bp[0].buffer = (char*)&c.guild_id; bp[0].is_unsigned = 1;
@@ -133,6 +149,12 @@ bool Database::upsert_infraction_config(const InfractionConfig& c) {
     bp[15].buffer_type = MYSQL_TYPE_LONGLONG; bp[15].buffer = (char*)&c.log_channel_id;
     bp[15].is_unsigned = 1; bp[15].is_null = (c.log_channel_id == 0) ? &null_flag : &not_null;
     bp[16].buffer_type = MYSQL_TYPE_TINY; bp[16].buffer = (char*)&dm_val;
+    bp[17].buffer_type = MYSQL_TYPE_TINY; bp[17].buffer = (char*)&q_gl_val;
+    unsigned long q_ov_len = c.quiet_overrides.size();
+    bp[18].buffer_type = MYSQL_TYPE_STRING; bp[18].buffer = (char*)c.quiet_overrides.c_str();
+    bp[18].buffer_length = c.quiet_overrides.size(); bp[18].length = &q_ov_len;
+    bp[19].buffer_type = MYSQL_TYPE_LONG; bp[19].buffer = (char*)&c.case_counter;
+    bp[20].buffer_type = MYSQL_TYPE_TINY; bp[20].buffer = (char*)&req_r_val;
 
     mysql_stmt_bind_param(stmt, bp);
     bool ok = (mysql_stmt_execute(stmt) == 0);

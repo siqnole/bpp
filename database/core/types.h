@@ -397,8 +397,13 @@ struct InfractionConfig {
     uint64_t jail_role_id    = 0;
     uint64_t jail_channel_id = 0;
     uint64_t log_channel_id  = 0;
-
     bool dm_on_action = true;
+
+    // Quiet Moderation (Expansion)
+    bool quiet_global = true;
+    std::string quiet_overrides = "{}"; // JSON: { "ban": false, "mute": true }
+    int case_counter = 1;
+    bool require_reason = false;
 };
 
 // Escalation rule (deserialized from escalation_rules JSON)
@@ -478,6 +483,51 @@ struct WorldEventData {
     int64_t started_at_timestamp;
     int64_t ends_at_timestamp;
     bool active;
+};
+
+// ── Interaction Roles & Panels ──────────────────────────────────
+struct InteractionPanel {
+    uint64_t id;
+    uint64_t guild_id;
+    uint64_t channel_id;
+    uint64_t message_id;
+    std::string name;
+    std::string description;
+    std::string panel_type; // button, select
+    std::chrono::system_clock::time_point created_at;
+};
+
+struct InteractionRole {
+    uint64_t id;
+    uint64_t panel_id;
+    uint64_t role_id;
+    std::string label;
+    std::string emoji_raw;
+    int style; // 1=primary, 2=secondary, 3=success, 4=danger
+};
+
+// ── Ticket System ───────────────────────────────────────────────
+struct TicketPanel {
+    uint64_t id;
+    uint64_t guild_id;
+    uint64_t channel_id;
+    uint64_t message_id;
+    std::string name;
+    uint64_t category_id;
+    uint64_t support_role_id;
+    std::string ticket_type; // channel, thread
+    std::chrono::system_clock::time_point created_at;
+};
+
+struct ActiveTicket {
+    uint64_t id;
+    uint64_t guild_id;
+    uint64_t channel_id;
+    uint64_t user_id;
+    uint64_t panel_id;
+    std::string status; // open, closed, claimed
+    uint64_t claimed_by;
+    std::chrono::system_clock::time_point created_at;
 };
 
 } // namespace db

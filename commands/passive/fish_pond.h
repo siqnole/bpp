@@ -69,43 +69,6 @@ static std::string get_rarity_emoji(const std::string& rarity) {
     return "⬜";
 }
 
-// Table creation (called on first use)
-static bool g_pond_tables_created = false;
-static std::mutex g_pond_mutex;
-
-static void ensure_pond_tables(Database* db) {
-    if (g_pond_tables_created) return;
-    std::lock_guard<std::mutex> lock(g_pond_mutex);
-    if (g_pond_tables_created) return;
-    
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS user_fish_ponds ("
-        "  user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,"
-        "  pond_level INT NOT NULL DEFAULT 1,"
-        "  capacity INT NOT NULL DEFAULT 5,"
-        "  last_collect TIMESTAMP NULL DEFAULT NULL,"
-        "  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        "  INDEX idx_last_collect (last_collect)"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS user_pond_fish ("
-        "  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,"
-        "  user_id BIGINT UNSIGNED NOT NULL,"
-        "  fish_name VARCHAR(100) NOT NULL,"
-        "  fish_emoji VARCHAR(32) NOT NULL DEFAULT '🐟',"
-        "  rarity VARCHAR(20) NOT NULL DEFAULT 'common',"
-        "  base_value INT NOT NULL DEFAULT 10,"
-        "  stocked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        "  INDEX idx_user (user_id),"
-        "  FOREIGN KEY (user_id) REFERENCES user_fish_ponds(user_id) ON DELETE CASCADE"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    g_pond_tables_created = true;
-}
-
 // ── DB helpers ──────────────────────────────────────────────────────────────
 
 struct PondInfo {
@@ -324,7 +287,6 @@ inline Command* get_pond_command(Database* db) {
         true,
         // text handler
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const std::vector<std::string>& args) {
-            ensure_pond_tables(db);
             uint64_t uid = event.msg.author.id;
             db->ensure_user_exists(uid);
             
@@ -508,7 +470,6 @@ inline Command* get_pond_command(Database* db) {
         },
         // slash handler
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
-            ensure_pond_tables(db);
             uint64_t uid = event.command.get_issuing_user().id;
             db->ensure_user_exists(uid);
             

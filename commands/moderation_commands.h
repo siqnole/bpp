@@ -25,6 +25,9 @@
 
 namespace commands {
 
+// Register all moderation interaction handlers (modals, buttons, etc.)
+void register_moderation_handlers(dpp::cluster& bot, bronx::db::Database* db);
+
 // Get all moderation commands (consolidated into /mod parent)
 inline std::vector<Command*> get_manual_moderation_commands(bronx::db::Database* db) {
     // Replace 18 individual commands with single /mod parent command

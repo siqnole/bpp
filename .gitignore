@@ -51,3 +51,6 @@ split_events*.py
 /site/
 fish_emojis/
 .github/prompts/
+.aider*
+*.bak
+*.md

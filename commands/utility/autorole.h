@@ -9,6 +9,7 @@
 #include <mutex>
 #include <algorithm>
 #include <sstream>
+#include "../../utils/logger.h"
 
 namespace commands {
 namespace utility {
@@ -608,9 +609,9 @@ inline void handle_autorole_member_join(dpp::cluster& bot, const dpp::guild_memb
         bot.guild_member_add_role(guild_id, user_id, role_id,
             [guild_id, user_id, role_id](const dpp::confirmation_callback_t& cb) {
                 if (cb.is_error()) {
-                    std::cerr << "[autorole] failed to add role " << role_id
-                              << " to user " << user_id << " in guild " << guild_id
-                              << ": " << cb.get_error().message << "\n";
+                    bronx::logger::error("autorole", "failed to add role " + std::to_string(role_id) + 
+                                       " to user " + std::to_string(user_id) + " in guild " + std::to_string(guild_id) + 
+                                       ": " + cb.get_error().message);
                 }
             });
     }
@@ -622,8 +623,9 @@ inline void load_autoroles(dpp::cluster& bot) {
     std::lock_guard<std::mutex> lock(autorole_mutex);
     size_t total = 0;
     for (const auto& [gid, roles] : autorole_cache) total += roles.size();
-    std::cout << "\033[32m✔ \033[0m" << "loaded " << total << " autorole(s) across "
-              << autorole_cache.size() << " guild(s)\n";
+    size_t guilds = autorole_cache.size();
+    bronx::logger::success("autorole", "loaded " + std::to_string(total) + " autorole(s) across " + 
+                           std::to_string(guilds) + " guild(s)");
 }
 
 } // namespace utility

@@ -323,6 +323,12 @@ public:
     bool update_autofisher_last_run(uint64_t user_id, uint64_t guild_id = 0);
     std::optional<std::chrono::system_clock::time_point> get_autofisher_last_run(uint64_t user_id, uint64_t guild_id = 0);
 
+    // Autominer (global — miners don't scope per-guild)
+    std::vector<uint64_t> get_all_active_autominers();          // all user_ids with active=TRUE
+    bool update_autominer_last_run(uint64_t user_id);           // stamp last_run = NOW()
+    std::optional<std::chrono::system_clock::time_point> get_autominer_last_run(uint64_t user_id);
+
+
     // Autofisher v2 – own gear, bait pool, fish storage, auto-sell (guild_id=0 → global)
     std::optional<AutofisherConfig> get_autofisher_config(uint64_t user_id, uint64_t guild_id = 0);
     bool autofisher_set_rod(uint64_t user_id, const std::string& rod_id, uint64_t guild_id = 0);
@@ -505,6 +511,8 @@ public:
     int pardon_user_type(uint64_t guild_id, uint64_t user_id, const std::string& type,
         uint64_t pardoned_by, const std::string& reason = "");
     int expire_infractions();
+    std::vector<InfractionRow> get_active_timed_infractions();
+    bool update_infraction_reason(uint64_t guild_id, uint32_t case_number, const std::string& reason);
 
     // Infraction config
     std::optional<InfractionConfig> get_infraction_config(uint64_t guild_id);

@@ -68,6 +68,7 @@
 #endif
 #include "tui_logger.h"
 #include "utils/colors.h"
+#include "utils/logger.h"
 
 using namespace bronx::db;
 using namespace bronx;
@@ -90,8 +91,7 @@ static void crash_handler(int signum) {
         case SIGFPE:  signal_name = "sigfpe"; break;
     }
     
-    std::string msg = "critical: " + std::string(signal_name) + " received (signal " + std::to_string(signum) + "), stack trace:";
-    bronx::tui::TuiLogger::get().add_log(bronx::tui::LogLevel::ERROR, msg);
+    bronx::logger::critical("crash", signal_name);
     
     // still use cerr for actual stack trace as tui might be frozen
     std::cerr << "\n*** " << signal_name << " received ***\n";
@@ -236,7 +236,13 @@ int main(int argc, char* argv[]) {
                 if (use_tui) {
                     bronx::tui::TuiLogger::get().add_log(l, "[" + std::to_string(static_cast<int>(event.severity)) + "] " + event.message);
                 } else {
-                    std::cout << "[dpp] " << event.message << "\n";
+                    bronx::logger::Level lvl = bronx::logger::Level::INFO;
+                    if (event.severity == dpp::ll_error) lvl = bronx::logger::Level::ERR;
+                    if (event.severity == dpp::ll_warning) lvl = bronx::logger::Level::WARN;
+                    if (event.severity == dpp::ll_debug) lvl = bronx::logger::Level::DEBUG;
+                    if (event.severity == dpp::ll_trace) lvl = bronx::logger::Level::TRACE;
+
+                    bronx::logger::log(lvl, "dpp", event.message);
                 }
             });
 
@@ -267,17 +273,18 @@ int main(int argc, char* argv[]) {
             for (auto* cmd : commands::get_patch_commands(&db)) cmd_handler.register_command(cmd);
             for (auto* cmd : commands::get_owner_commands(&cmd_handler, &db)) cmd_handler.register_command(cmd);
             for (auto* cmd : commands::get_mining_commands(&db)) cmd_handler.register_command(cmd);
-            for (auto* cmd : commands::get_global_boss_commands(&db)) cmd_handler.register_command(cmd);
+            for (auto* cmd : commands::global_boss::get_global_boss_commands(&db)) cmd_handler.register_command(cmd);
             for (auto* cmd : commands::get_boss_raid_commands(&db)) cmd_handler.register_command(cmd);
             for (auto* cmd : commands::get_passive_commands(&db)) cmd_handler.register_command(cmd);
             for (auto* cmd : commands::get_social_commands(&db)) cmd_handler.register_command(cmd);
             for (auto* cmd : commands::server_economy::get_server_economy_commands(&db)) cmd_handler.register_command(cmd);
+            for (auto* cmd : commands::get_gambling_commands(&db)) cmd_handler.register_command(cmd);
             
             cmd_handler.register_command(commands::world_events::get_event_command(&db));
             cmd_handler.register_command(commands::create_help_command(&cmd_handler));
             cmd_handler.register_command(commands::create_guide_command(&db));
             cmd_handler.register_command(commands::gambling::get_russian_roulette_command(&db));
-            cmd_handler.register_command(commands::setup::create_setup_command(&db));
+            // cmd_handler.register_command(commands::setup::create_setup_command(&db));
             cmd_handler.register_command(commands::moderation::get_log_command(&db));
             cmd_handler.register_command(commands::owner::get_log_beta_command(&db));
             cmd_handler.register_command(commands::get_feature_command(&db));
@@ -307,12 +314,12 @@ int main(int argc, char* argv[]) {
                     memory_mb = usage.ru_maxrss / 1024; // KB to MB
                 }
 
-                int guild_count = dpp::get_guild_cache()->count();
+                size_t guild_count = dpp::get_guild_cache()->count();
                 
                 // Update heartbeat for all shards managed by this process
                 auto shards = bot.get_shards();
                 for (auto const& [shard_id, shard_ptr] : shards) {
-                    db.update_heartbeat(shard_id, uptime_seconds, memory_mb, guild_count, "online");
+                    db.update_heartbeat(shard_id, uptime_seconds, memory_mb, static_cast<int>(guild_count), "online");
                 }
             }, 60);
 

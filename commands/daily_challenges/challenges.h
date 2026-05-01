@@ -18,7 +18,6 @@
 
 using namespace bronx::db;
 using namespace bronx::db::history_operations;
-using commands::economy::format_number;
 
 namespace commands {
 namespace daily_challenges {

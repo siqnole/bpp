@@ -12,7 +12,9 @@
 #include "../../database/operations/moderation/infraction_config_operations.h"
 #include "../quiet_moderation/mod_log.h"
 #include "../../embed_style.h"
+#include "../../utils/moderation/mod_utility.h"
 #include "../../server_logger.h"
+#include "../../utils/logger.h"
 
 #include <dpp/nlohmann/json.hpp>
 
@@ -41,26 +43,10 @@ inline uint32_t parse_duration(const std::string& input) {
     return total;
 }
 
-inline std::string format_duration(uint32_t seconds) {
-    if (seconds == 0) return "permanent";
-    std::string result;
-    if (seconds >= 604800) { result += std::to_string(seconds / 604800) + "w "; seconds %= 604800; }
-    if (seconds >= 86400)  { result += std::to_string(seconds / 86400) + "d "; seconds %= 86400; }
-    if (seconds >= 3600)   { result += std::to_string(seconds / 3600) + "h "; seconds %= 3600; }
-    if (seconds >= 60)     { result += std::to_string(seconds / 60) + "m "; seconds %= 60; }
-    if (seconds > 0)       { result += std::to_string(seconds) + "s"; }
-    while (!result.empty() && result.back() == ' ') result.pop_back();
-    return result;
-}
-
-inline uint32_t get_action_color(const std::string& type) {
-    if (type == "warn" || type == "auto_nickname") return 0xF59E0B;
-    if (type == "timeout" || type == "mute" || type == "jail") return 0xF97316;
-    if (type == "kick") return 0xEF4444;
-    if (type == "ban") return 0x991B1B;
-    if (type.substr(0, 5) == "auto_") return 0x8B5CF6;
-    return bronx::COLOR_DEFAULT;
-}
+// ── Forward to canonical implementations in bronx::moderation (mod_utility.h) ──
+using bronx::moderation::format_duration;
+using bronx::moderation::get_action_color;
+using bronx::moderation::parse_mention;
 
 inline std::vector<bronx::db::EscalationRule> parse_escalation_rules(const std::string& json_str) {
     std::vector<bronx::db::EscalationRule> rules;
@@ -98,30 +84,17 @@ inline void dm_user_action(dpp::cluster& bot, uint64_t user_id, const std::strin
 // ── Mod Log ────────────────────────────────────────────────────
 inline void send_mod_log(dpp::cluster& bot, bronx::db::Database* db,
                          uint64_t guild_id, const bronx::db::InfractionRow& inf,
-                         uint64_t log_channel_id = 0) {
-    dpp::snowflake channel = log_channel_id;
-    if (channel == 0) {
-        auto config = bronx::db::infraction_config_operations::get_infraction_config(db, guild_id);
-        if (config.has_value()) channel = config.value().log_channel_id;
-    }
-    if (channel == 0) return;
+                         uint64_t origin_channel_id = 0) {
+    
+    // Use the new centralized logging utility
+    bronx::moderation::log_mod_action(bot, db, guild_id, inf, origin_channel_id);
 
-    auto embed = bronx::create_embed("", get_action_color(inf.type));
+    // Also send to central server logger (LOG_TYPE_MODERATION) for internal auditing
+    auto embed = bronx::create_embed("", bronx::moderation::get_action_color(inf.type));
     embed.set_title("case #" + std::to_string(inf.case_number) + " — " + inf.type);
     embed.add_field("user", "<@" + std::to_string(inf.user_id) + ">", true);
     embed.add_field("moderator", "<@" + std::to_string(inf.moderator_id) + ">", true);
-    embed.add_field("points", std::to_string(inf.points), true);
-    if (!inf.reason.empty()) embed.add_field("reason", inf.reason, false);
-    if (inf.duration_seconds > 0)
-        embed.add_field("duration", format_duration(inf.duration_seconds), true);
-    if (inf.expires_at.has_value()) {
-        auto exp_time = std::chrono::system_clock::to_time_t(inf.expires_at.value());
-        embed.add_field("expires", "<t:" + std::to_string(exp_time) + ":R>", true);
-    }
-
-    commands::quiet_moderation::send_embed_via_webhook(bot, channel, embed);
-
-    // Also send to central server logger (LOG_TYPE_MODERATION)
+    
     bronx::logger::ServerLogger::get().log_embed(guild_id, bronx::logger::LOG_TYPE_MODERATION, embed);
 }
 
@@ -254,13 +227,200 @@ inline dpp::timer start_expiry_sweep(dpp::cluster& bot, bronx::db::Database* db)
     return bot.start_timer([&bot, db](dpp::timer) {
         int expired = bronx::db::infraction_operations::expire_infractions(db);
         if (expired > 0) {
-            std::cerr << "\033[35m[MOD]\033[0m expired " << expired << " infractions\n";
+            bronx::logger::info("moderation", "Expired " + std::to_string(expired) + " infractions");
         }
     }, 60);
 }
 
 inline void restore_active_timers(dpp::cluster& bot, bronx::db::Database* db) {
-    // TODO: implement once infraction_operations::get_active_timed_infractions() exists
+    auto active = bronx::db::infraction_operations::get_active_timed_infractions(db);
+    int restored = 0;
+    auto now = std::chrono::system_clock::now();
+
+    for (const auto& inf : active) {
+        if (!inf.expires_at.has_value()) continue;
+        
+        auto expiry = inf.expires_at.value();
+        if (expiry <= now) continue;
+
+        auto diff = std::chrono::duration_cast<std::chrono::seconds>(expiry - now).count();
+        if (diff > 0) {
+            schedule_punishment_expiry(bot, db, inf.guild_id, inf.case_number, 
+                                      inf.type, inf.user_id, (uint32_t)diff, inf.metadata);
+            restored++;
+        }
+    }
+    
+    if (restored > 0) {
+        bronx::logger::info("moderation", "Restored " + std::to_string(restored) + " active moderation timers");
+    }
+}
+
+// ── Internal Apply Helpers (used by commands and modals) ──────────
+
+inline void apply_mute_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                               uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                               uint32_t duration, const std::string& reason, 
+                               const bronx::db::InfractionConfig& config,
+                               std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                               std::function<void(const std::string&)> error_cb) {
+    
+    if (config.mute_role_id == 0) {
+        error_cb("mute role is not configured — use the setup command to set one");
+        return;
+    }
+
+    std::string guild_name = "unknown server";
+    auto* g = dpp::find_guild(guild_id);
+    if (g) guild_name = g->name;
+
+    // dm user if enabled
+    if (config.dm_on_action) {
+        dm_user_action(bot, target_id, guild_name, "mute", reason, duration, config.point_mute);
+    }
+
+    // apply mute role
+    bot.guild_member_add_role(guild_id, target_id, config.mute_role_id,
+        [&bot, db, guild_id, target_id, mod_id, duration, reason, config, guild_name, success_cb, error_cb](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                error_cb("failed to add mute role: " + cb.get_error().message);
+                return;
+            }
+
+            // create infraction
+            auto inf = bronx::db::infraction_operations::create_infraction(
+                db, guild_id, target_id, mod_id,
+                "mute", reason, config.point_mute,
+                duration);
+
+            if (!inf.has_value()) {
+                error_cb("mute applied but failed to create infraction record");
+                return;
+            }
+
+            // schedule expiry
+            std::string meta = "{\"mute_role_id\":" + std::to_string(config.mute_role_id) + "}";
+            schedule_punishment_expiry(bot, db, guild_id, inf->case_number, "mute", target_id, duration, meta);
+
+            // check escalation
+            check_and_escalate(bot, db, guild_id, target_id, guild_name);
+
+            // send mod log
+            send_mod_log(bot, db, guild_id, inf.value());
+
+            success_cb(inf.value(), config.quiet_global);
+        });
+}
+
+inline void apply_ban_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                              uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                              uint32_t duration, uint32_t delete_message_seconds, const std::string& reason, 
+                              const bronx::db::InfractionConfig& config,
+                              std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                              std::function<void(const std::string&)> error_cb) {
+
+    std::string guild_name = "unknown server";
+    auto* g = dpp::find_guild(guild_id);
+    if (g) guild_name = g->name;
+
+    // dm user BEFORE banning
+    if (config.dm_on_action) {
+        dm_user_action(bot, target_id, guild_name, "ban", reason, duration, config.point_ban);
+    }
+
+    // ban member
+    bot.guild_ban_add(guild_id, target_id, delete_message_seconds,
+        [&bot, db, guild_id, target_id, mod_id, duration, reason, config, guild_name, success_cb, error_cb](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                error_cb("failed to ban user: " + cb.get_error().message);
+                return;
+            }
+
+            // create infraction
+            auto inf = bronx::db::infraction_operations::create_infraction(
+                db, guild_id, target_id, mod_id,
+                "ban", reason, config.point_ban,
+                duration);
+
+            if (!inf.has_value()) {
+                error_cb("user banned but failed to create infraction record");
+                return;
+            }
+
+            // schedule unban if tempban
+            if (duration > 0) {
+                schedule_punishment_expiry(bot, db, guild_id, inf->case_number, "ban", target_id, duration);
+            }
+
+            // check escalation
+            check_and_escalate(bot, db, guild_id, target_id, guild_name);
+
+            // send mod log
+            send_mod_log(bot, db, guild_id, inf.value());
+
+            // quiet check
+            bool is_quiet = config.quiet_global;
+            try {
+                auto overrides = nlohmann::json::parse(config.quiet_overrides);
+                if (overrides.contains("ban") && overrides["ban"].is_boolean()) {
+                    is_quiet = overrides["ban"].get<bool>();
+                }
+            } catch (...) {}
+
+            success_cb(inf.value(), is_quiet);
+        });
+}
+
+inline void apply_timeout_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                                 uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                                 uint32_t duration, const std::string& reason, 
+                                 const bronx::db::InfractionConfig& config,
+                                 std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                                 std::function<void(const std::string&)> error_cb) {
+
+    // max discord timeout is 28 days
+    constexpr uint32_t MAX_TIMEOUT_SECONDS = 2419200;
+    if (duration > MAX_TIMEOUT_SECONDS) duration = MAX_TIMEOUT_SECONDS;
+
+    std::string guild_name = "unknown server";
+    auto* g = dpp::find_guild(guild_id);
+    if (g) guild_name = g->name;
+
+    // dm user if enabled
+    if (config.dm_on_action) {
+        dm_user_action(bot, target_id, guild_name, "timeout", reason, duration, config.point_timeout);
+    }
+
+    // apply discord timeout
+    bot.guild_member_timeout(guild_id, target_id, time(0) + duration,
+        [&bot, db, guild_id, target_id, mod_id, duration, reason, config, guild_name, success_cb, error_cb](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                error_cb("failed to timeout user: " + cb.get_error().message);
+                return;
+            }
+
+            // create infraction
+            auto inf = bronx::db::infraction_operations::create_infraction(
+                db, guild_id, target_id, mod_id,
+                "timeout", reason, config.point_timeout,
+                duration);
+
+            if (!inf.has_value()) {
+                error_cb("timeout applied but failed to create infraction record");
+                return;
+            }
+
+            // schedule expiry
+            schedule_punishment_expiry(bot, db, guild_id, inf->case_number, "timeout", target_id, duration);
+
+            // check escalation
+            check_and_escalate(bot, db, guild_id, target_id, guild_name);
+
+            // send mod log
+            send_mod_log(bot, db, guild_id, inf.value());
+
+            success_cb(inf.value(), config.quiet_global);
+        });
 }
 
 } // namespace moderation

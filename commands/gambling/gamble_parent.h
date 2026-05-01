@@ -23,7 +23,7 @@ Command* get_blackjack_command(Database* db);
 inline Command* get_lottery_command(Database* db);
 inline Command* get_minesweeper_command(Database* db);
 inline Command* get_crash_command(Database* db);
-inline Command* get_poker_command(Database* db);
+Command* get_poker_command(Database* db);
 inline Command* get_jackpot_command(Database* db);
 inline Command* get_stats_command(Database* db);
 
@@ -80,10 +80,10 @@ inline Command* create_gamble_parent_command(Database* db) {
                 for (const auto& game : games) {
                     game_list += "• **" + game.name + "**: " + game.description + "\n";
                 }
-                auto embed = bronx::create_embed(game_list)
+                auto embed = ::bronx::create_embed(game_list)
                     .set_title("Available Games")
                     .set_color(0xFF6B00);
-                bronx::send_message(bot, event, embed);
+                ::bronx::send_message(bot, event, embed);
                 return;
             }
 
@@ -113,8 +113,8 @@ inline Command* create_gamble_parent_command(Database* db) {
                     suggestions += games[i].name;
                     if (i < games.size() - 1) suggestions += ", ";
                 }
-                bronx::send_message(bot, event,
-                    bronx::error("unknown game '" + game_name + "'\n" + suggestions));
+                ::bronx::send_message(bot, event,
+                    ::bronx::error("unknown game '" + game_name + "'\n" + suggestions));
                 return;
             }
 
@@ -145,7 +145,7 @@ inline Command* create_gamble_parent_command(Database* db) {
                 for (const auto& game : games) {
                     game_list += "• **" + game.name + "**: " + game.description + "\n";
                 }
-                auto embed = bronx::create_embed(game_list)
+                auto embed = ::bronx::create_embed(game_list)
                     .set_title("Available Games")
                     .set_color(0xFF6B00);
                 event.reply(dpp::message().add_embed(embed));
@@ -156,7 +156,7 @@ inline Command* create_gamble_parent_command(Database* db) {
             auto it = g_game_commands.find(game_name);
             if (it == g_game_commands.end()) {
                 event.reply(dpp::message().add_embed(
-                    bronx::error("Unknown game: " + game_name)));
+                    ::bronx::error("Unknown game: " + game_name)));
                 return;
             }
 

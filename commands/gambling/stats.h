@@ -9,7 +9,7 @@
 namespace commands {
 namespace gambling {
 
-inline Command* get_stats_command(bronx::db::Database* db) {
+inline Command* get_stats_command(::bronx::db::Database* db) {
     static Command gstats("gstats", "view your gambling and game statistics", "gambling", {"gamestats"}, true,
         [db](dpp::cluster& bot, const dpp::message_create_t& event, const ::std::vector<::std::string>& args) {
             uint64_t target_id = event.msg.author.id;
@@ -73,8 +73,8 @@ inline Command* get_stats_command(bronx::db::Database* db) {
             std::string profit_color = net_profit >= 0 ? "+" : "";
             description += "• net profit: **" + profit_color + "$" + format_number(net_profit) + "**\n";
             
-            auto embed = bronx::create_embed(description);
-            
+            auto embed = ::bronx::create_embed(description);
+
             // Color based on net profit
             if (net_profit > 0) {
                 embed.set_color(0x43B581); // Green for profit
@@ -83,8 +83,8 @@ inline Command* get_stats_command(bronx::db::Database* db) {
             } else {
                 embed.set_color(0x7289DA); // Blue for neutral
             }
-            
-            bronx::add_invoker_footer(embed, event.msg.author);
+
+            ::bronx::add_invoker_footer(embed, event.msg.author);
             bot.message_create(dpp::message(event.msg.channel_id, embed));
         },
         [db](dpp::cluster& bot, const dpp::slashcommand_t& event) {
@@ -139,8 +139,8 @@ inline Command* get_stats_command(bronx::db::Database* db) {
             std::string profit_color = net_profit >= 0 ? "+" : "";
             description += "• net profit: **" + profit_color + "$" + format_number(net_profit) + "**\n";
             
-            auto embed = bronx::create_embed(description);
-            
+            auto embed = ::bronx::create_embed(description);
+
             // Color based on net profit
             if (net_profit > 0) {
                 embed.set_color(0x43B581); // Green for profit
@@ -149,7 +149,7 @@ inline Command* get_stats_command(bronx::db::Database* db) {
             } else {
                 embed.set_color(0x7289DA); // Blue for neutral
             }
-            
+
             event.reply(dpp::message().add_embed(embed));
         },
         { dpp::command_option(dpp::co_user, "user", "user to view stats for", false) }

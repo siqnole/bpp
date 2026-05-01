@@ -177,6 +177,11 @@ file(GLOB EVENTS_SOURCES
     ${CMAKE_SOURCE_DIR}/events/*.cpp
 )
 
+# Add utility source files
+file(GLOB_RECURSE UTILS_SOURCES
+    ${CMAKE_SOURCE_DIR}/utils/**/*.cpp
+)
+
 # Add executable
 add_executable(${PROJECT_NAME}
     ${CMAKE_SOURCE_DIR}/main.cpp
@@ -186,6 +191,7 @@ add_executable(${PROJECT_NAME}
     ${COMMAND_SOURCES}
     ${DATABASE_SOURCES}
     ${PERFORMANCE_SOURCES}
+    ${UTILS_SOURCES}
 )
 
 # ============================================================================
