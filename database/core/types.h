@@ -530,5 +530,24 @@ struct ActiveTicket {
     std::chrono::system_clock::time_point created_at;
 };
 
+// ── Mod-mail System ──────────────────────────────────────────────
+struct ModmailConfig {
+    uint64_t guild_id;
+    uint64_t category_id;      // Category where threads are created
+    uint64_t staff_role_id;    // Role notified of new modmails
+    uint64_t log_channel_id;   // Channel for logging modmail transcripts
+    bool enabled = false;
+};
+
+struct ModmailThread {
+    uint64_t id;
+    uint64_t guild_id;
+    uint64_t user_id;
+    uint64_t thread_id;
+    std::string status;        // open, closed
+    std::chrono::system_clock::time_point created_at;
+    std::optional<std::chrono::system_clock::time_point> closed_at;
+};
+
 } // namespace db
 } // namespace bronx

@@ -55,6 +55,9 @@ std::vector<InfractionRow> get_active_timed_infractions(Database* db);
 // Update the reason on an existing infraction
 bool update_infraction_reason(Database* db, uint64_t guild_id, uint32_t case_number, const std::string& reason);
 
+// Update the duration on an existing timed infraction
+bool update_infraction_duration(Database* db, uint64_t guild_id, uint32_t case_number, uint32_t new_duration_seconds);
+
 // Count infractions for a user
 InfractionCounts count_infractions(Database* db, uint64_t guild_id, uint64_t user_id);
 

@@ -835,6 +835,32 @@ CREATE TABLE IF NOT EXISTS user_autominers (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 )SQL");
 
+    // ── Mod-mail System ──────────────────────────────────────────────
+    migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS guild_modmail_config (
+    guild_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+    category_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    staff_role_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    log_channel_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+)SQL");
+
+    migrations.push_back(R"SQL(
+CREATE TABLE IF NOT EXISTS modmail_threads (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    guild_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    thread_id BIGINT UNSIGNED NOT NULL,
+    status ENUM('open', 'closed') NOT NULL DEFAULT 'open',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP NULL DEFAULT NULL,
+    INDEX idx_user_guild (user_id, guild_id),
+    INDEX idx_thread (thread_id),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+)SQL");
+
     return migrations;
 }
 

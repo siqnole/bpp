@@ -513,6 +513,7 @@ public:
     int expire_infractions();
     std::vector<InfractionRow> get_active_timed_infractions();
     bool update_infraction_reason(uint64_t guild_id, uint32_t case_number, const std::string& reason);
+    bool update_infraction_duration(uint64_t guild_id, uint32_t case_number, uint32_t new_duration_seconds);
 
     // Infraction config
     std::optional<InfractionConfig> get_infraction_config(uint64_t guild_id);
@@ -532,6 +533,17 @@ public:
     bool assign_role_to_class(uint64_t guild_id, uint64_t role_id, uint32_t class_id);
     bool remove_role_from_class(uint64_t guild_id, uint64_t role_id);
     std::vector<RoleClassMember> get_class_members(uint32_t class_id);
+
+    // ========================================
+    // MOD-MAIL SYSTEM
+    // ========================================
+    std::optional<ModmailConfig> get_modmail_config(uint64_t guild_id);
+    bool set_modmail_config(const ModmailConfig& config);
+    std::optional<ModmailThread> get_any_active_modmail_thread(uint64_t user_id);
+    std::optional<ModmailThread> get_active_modmail_thread_by_user(uint64_t user_id, uint64_t guild_id);
+    std::optional<ModmailThread> get_modmail_thread_by_id(uint64_t thread_id);
+    bool create_modmail_thread(uint64_t guild_id, uint64_t user_id, uint64_t thread_id);
+    bool close_modmail_thread(uint64_t thread_id);
 
     // ========================================
     // PATCH NOTES

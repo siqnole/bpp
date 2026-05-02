@@ -223,6 +223,26 @@ inline void schedule_punishment_expiry(dpp::cluster& bot, bronx::db::Database* d
     get_active_timers()[guild_id][case_number] = timer;
 }
 
+inline void reschedule_punishment_expiry(dpp::cluster& bot, bronx::db::Database* db,
+                                        uint64_t guild_id, uint32_t case_number,
+                                        const std::string& type, uint64_t user_id,
+                                        uint32_t remaining_seconds,
+                                        const std::string& metadata = "{}") {
+    auto& timers = get_active_timers();
+    if (timers.count(guild_id) && timers[guild_id].count(case_number)) {
+        bot.stop_timer(timers[guild_id][case_number]);
+        timers[guild_id].erase(case_number);
+    }
+    if (remaining_seconds > 0) {
+        schedule_punishment_expiry(bot, db, guild_id, case_number, type, user_id, remaining_seconds, metadata);
+    } else {
+        // If expired now, just pardon it
+        bronx::db::infraction_operations::pardon_infraction(db, guild_id, case_number, bot.me.id, "duration updated to past");
+        if (type == "timeout") bot.guild_member_timeout(guild_id, user_id, 0);
+        else if (type == "ban") bot.guild_ban_delete(guild_id, user_id);
+    }
+}
+
 inline dpp::timer start_expiry_sweep(dpp::cluster& bot, bronx::db::Database* db) {
     return bot.start_timer([&bot, db](dpp::timer) {
         int expired = bronx::db::infraction_operations::expire_infractions(db);

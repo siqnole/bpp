@@ -59,6 +59,7 @@
 #include "../utils/logger.h"
 #include "../commands/moderation/infraction_engine.h"
 #include "../database/operations/moderation/raid_operations.h"
+#include "modmail_handler.h"
 
 
 struct register_commands {};
@@ -202,6 +203,7 @@ void register_event_handlers(
             commands::register_passive_interactions(bot, &db);
             commands::register_social_interactions(bot, &db);
             commands::register_stats_interactions(bot, &db);
+            bronx::events::register_modmail_handlers(bot, &db);
 
             // PERFORMANCE FIX: Register level-up callback for the XP batch writer.
             // When the batch writer detects a level-up during its periodic flush,

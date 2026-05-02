@@ -838,6 +838,48 @@ bool Database::update_infraction_reason(uint64_t guild_id, uint32_t case_number,
 }
 
 // ---------------------------------------------------------------------------
+// update_infraction_duration
+// ---------------------------------------------------------------------------
+bool Database::update_infraction_duration(uint64_t guild_id, uint32_t case_number, uint32_t new_duration_seconds) {
+    auto conn = pool_->acquire();
+    
+    // We update duration_seconds and recalculate expires_at from created_at
+    // If duration is 0, expires_at becomes NULL (permanent)
+    const char* q = "UPDATE guild_infractions SET "
+                    "duration_seconds = ?, "
+                    "expires_at = IF(? > 0, DATE_ADD(created_at, INTERVAL ? SECOND), NULL) "
+                    "WHERE guild_id = ? AND case_number = ?";
+    
+    MYSQL_STMT* stmt = mysql_stmt_init(conn->get());
+    if (mysql_stmt_prepare(stmt, q, strlen(q)) != 0) {
+        last_error_ = mysql_stmt_error(stmt); log_error("update_infraction_duration prepare");
+        mysql_stmt_close(stmt); pool_->release(conn); return false;
+    }
+
+    MYSQL_BIND bp[5]; memset(bp, 0, sizeof(bp));
+    // 0: duration_seconds
+    bp[0].buffer_type = MYSQL_TYPE_LONG; bp[0].buffer = (char*)&new_duration_seconds; bp[0].is_unsigned = 1;
+    // 1: duration_seconds (for IF test)
+    bp[1].buffer_type = MYSQL_TYPE_LONG; bp[1].buffer = (char*)&new_duration_seconds; bp[1].is_unsigned = 1;
+    // 2: duration_seconds (for DATE_ADD)
+    bp[2].buffer_type = MYSQL_TYPE_LONG; bp[2].buffer = (char*)&new_duration_seconds; bp[2].is_unsigned = 1;
+    // 3: guild_id
+    bp[3].buffer_type = MYSQL_TYPE_LONGLONG; bp[3].buffer = (char*)&guild_id; bp[3].is_unsigned = 1;
+    // 4: case_number
+    bp[4].buffer_type = MYSQL_TYPE_LONG; bp[4].buffer = (char*)&case_number; bp[4].is_unsigned = 1;
+    
+    mysql_stmt_bind_param(stmt, bp);
+    bool ok = (mysql_stmt_execute(stmt) == 0);
+    if (!ok) {
+        last_error_ = mysql_stmt_error(stmt); log_error("update_infraction_duration execute");
+    }
+    
+    mysql_stmt_close(stmt);
+    pool_->release(conn);
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
 // expire_infractions
 // ---------------------------------------------------------------------------
 int Database::expire_infractions() {
@@ -926,6 +968,10 @@ std::vector<InfractionRow> get_active_timed_infractions(Database* db) {
 
 bool update_infraction_reason(Database* db, uint64_t guild_id, uint32_t case_number, const std::string& reason) {
     return db->update_infraction_reason(guild_id, case_number, reason);
+}
+
+bool update_infraction_duration(Database* db, uint64_t guild_id, uint32_t case_number, uint32_t new_duration_seconds) {
+    return db->update_infraction_duration(guild_id, case_number, new_duration_seconds);
 }
 
 } // namespace infraction_operations

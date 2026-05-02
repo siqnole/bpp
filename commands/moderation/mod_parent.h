@@ -32,6 +32,8 @@
 #include "lockdown.h"
 #include "softban.h"
 #include "raid_protection.h"
+#include "duration_edit.h"
+#include "modmail.h"
 #include "../quiet_moderation/antispam_api.h"
 #include "../quiet_moderation/url_guard.h"
 #include "../quiet_moderation/text_filter_config.h"
@@ -67,6 +69,7 @@ inline std::vector<ModCommandInfo> get_moderation_actions(Database* db) {
         {"slowmode", "set channel slowmode", get_slowmode_command},
         {"note", "add a moderation note to a user", get_note_command},
         {"reason", "update the reason for a case", get_reason_command},
+        {"duration", "update the duration for a case", get_duration_command},
         {"massban", "ban multiple users at once", get_massban_command},
         {"masskick", "kick multiple users at once", get_masskick_command},
         {"massmute", "mute multiple users at once", get_massmute_command},
@@ -94,6 +97,7 @@ inline std::vector<ModCommandInfo> get_moderation_actions(Database* db) {
         {"modlog", "set moderation log channel", get_modlog_channel_command},
         {"quiet", "configure quiet moderation", get_quiet_config_command},
         {"raid", "configure raid protection", create_raid_protection_command},
+        {"modmail", "manage modmail threads", get_modmail_command},
     };
 }
 
@@ -128,6 +132,7 @@ inline Command* create_moderation_parent_command(Database* db) {
         g_mod_commands["slowmode"] = get_slowmode_command(db);
         g_mod_commands["note"] = get_note_command(db);
         g_mod_commands["reason"] = get_reason_command(db);
+        g_mod_commands["duration"] = get_duration_command(db);
         g_mod_commands["massban"] = get_massban_command(db);
         g_mod_commands["masskick"] = get_masskick_command(db);
         g_mod_commands["massmute"] = get_massmute_command(db);
@@ -136,6 +141,7 @@ inline Command* create_moderation_parent_command(Database* db) {
         g_mod_commands["unlock"] = get_unlock_command(db);
         g_mod_commands["softban"] = get_softban_command(db);
         g_mod_commands["raid"] = create_raid_protection_command(db);
+        g_mod_commands["modmail"] = get_modmail_command(db);
         
         // Add quiet moderation commands
         g_mod_commands["antispam"] = quiet_moderation::get_antispam_command();
@@ -269,6 +275,17 @@ inline Command* create_moderation_parent_command(Database* db) {
             action.name,
             action.description
         );
+        
+        // Copy options from the actual command if it exists in cache
+        if (g_mod_commands.count(action.name)) {
+            auto* sub_cmd = g_mod_commands[action.name];
+            if (sub_cmd) {
+                for (auto& opt : sub_cmd->options) {
+                    action_option.add_option(opt);
+                }
+            }
+        }
+        
         mod->options.push_back(action_option);
     }
 
