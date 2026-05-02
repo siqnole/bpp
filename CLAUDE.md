@@ -79,4 +79,6 @@ access: `ssh vps "mariadb -u bronxbot -pbronx2026_secure bronxbot"`
 - [commands/patch.h](file:///home/siqnole/Documents/code/bpp/commands/patch.h) → patch notes logic
 - [database/core/database.h](file:///home/siqnole/Documents/code/bpp/database/core/database.h) → mysql connection pool
 - [site/server.js](file:///home/siqnole/Documents/code/bpp/site/server.js) → dashboard entry
+- [docs/README_Modmail.md](file:///home/siqnole/Documents/code/bpp/docs/README_Modmail.md) → modmail deep-dive
+- [docs/QUICKSTART_Modmail.md](file:///home/siqnole/Documents/code/bpp/docs/QUICKSTART_Modmail.md) → modmail setup guide
 </ref>

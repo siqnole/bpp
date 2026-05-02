@@ -7,6 +7,31 @@
 #include <set>
 
 namespace commands {
+struct HelpEntry {
+  const Command *cmd;
+  int subcommand_idx; // -1 for main command, >= 0 for subcommand
+};
+
+// Build a flattened list of all commands and subcommands in a category
+inline std::vector<HelpEntry>
+get_category_help_entries(const std::vector<Command *> &cmds) {
+  std::vector<HelpEntry> entries;
+  std::set<std::string> seen;
+  for (auto *cmd : cmds) {
+    if (seen.find(cmd->name) != seen.end())
+      continue;
+    seen.insert(cmd->name);
+
+    // Add main command
+    entries.push_back({cmd, -1});
+
+    // Add subcommands
+    for (size_t i = 0; i < cmd->subcommands.size(); i++) {
+      entries.push_back({cmd, (int)i});
+    }
+  }
+  return entries;
+}
 
 // Helper function to generate usage string from command options
 inline ::std::string generate_usage_string(const Command *cmd,
@@ -29,11 +54,49 @@ inline ::std::string generate_usage_string(const Command *cmd,
   return usage;
 }
 
-// Build a rich detail description for an individual command.
+// Build a rich detail description for an individual command or subcommand.
 // Used by text help, slash help, and the paginated embed.
 inline ::std::string build_command_detail(const Command *cmd,
                                           const ::std::string &category,
-                                          const ::std::string &prefix) {
+                                          const ::std::string &prefix,
+                                          int subcommand_idx = -1) {
+  // If we're looking at a specific subcommand
+  if (subcommand_idx >= 0 && subcommand_idx < (int)cmd->subcommands.size()) {
+    const auto &sc = cmd->subcommands[subcommand_idx];
+    
+    // Extract base name for the header (e.g. "ban <user>" -> "ban")
+    size_t space = sc.syntax.find(' ');
+    std::string sc_name = (space == std::string::npos) ? sc.syntax : sc.syntax.substr(0, space);
+
+    ::std::string d = "**" + cmd->name + " " + sc_name + "**\n";
+    d += sc.explanation + "\n\n";
+    
+    d += "**category:** " + category + "\n";
+    d += "**usage:** `" + prefix + cmd->name + " " + sc.syntax + "`\n";
+    
+    // Show parent command context
+    d += "**parent command:** `" + prefix + cmd->name + "`\n";
+    
+    // Inherit flags/examples/notes from parent if they exist, or show them if specific to sub?
+    // Usually these are on the parent in this architecture.
+    if (!cmd->examples.empty()) {
+        d += "\n**examples:**\n";
+        for (const auto &ex : cmd->examples) {
+            // Only show examples that contain this subcommand
+            if (ex.find(sc_name) != std::string::npos) {
+                d += "> `" + ex + "`\n";
+            }
+        }
+    }
+    
+    if (!cmd->notes.empty()) {
+        d += "\n**note:** " + cmd->notes + "\n";
+    }
+
+    return d;
+  }
+
+  // Original command detail logic
   ::std::string d = "**" + cmd->name + "**\n";
 
   // Use extended description when available, otherwise fall back to short one
@@ -125,12 +188,18 @@ inline Command *create_help_command(CommandHandler *handler) {
                 }
               }
 
+              auto entries = get_category_help_entries(cmds);
               description += "**commands (" +
-                             ::std::to_string(unique_commands.size()) +
-                             "):**\n";
-              for (const auto &cmd : unique_commands) {
-                description +=
-                    "`" + cmd->name + "` - " + cmd->description + "\n";
+                             ::std::to_string(entries.size()) + "):**\n";
+              for (const auto &entry : entries) {
+                if (entry.subcommand_idx == -1) {
+                  description += "`" + entry.cmd->name + "` - " + entry.cmd->description + "\n";
+                } else {
+                  const auto& sc = entry.cmd->subcommands[entry.subcommand_idx];
+                  size_t space = sc.syntax.find(' ');
+                  std::string sc_name = (space == std::string::npos) ? sc.syntax : sc.syntax.substr(0, space);
+                  description += "`" + entry.cmd->name + " " + sc_name + "` - " + sc.explanation + "\n";
+                }
               }
 
               auto embed = bronx::create_embed(description);
@@ -203,6 +272,28 @@ inline Command *create_help_command(CommandHandler *handler) {
               }
 
               if (matches) {
+                // If they provided a subcommand as second argument
+                if (args.size() > 1) {
+                  std::string sub_input = args[1];
+                  std::transform(sub_input.begin(), sub_input.end(), sub_input.begin(), ::tolower);
+                  
+                  for (size_t i = 0; i < cmd->subcommands.size(); i++) {
+                    const auto& sc = cmd->subcommands[i];
+                    size_t space = sc.syntax.find(' ');
+                    std::string sc_name = (space == std::string::npos) ? sc.syntax : sc.syntax.substr(0, space);
+                    std::string sc_name_lower = sc_name;
+                    std::transform(sc_name_lower.begin(), sc_name_lower.end(), sc_name_lower.begin(), ::tolower);
+                    
+                    if (sc_name_lower == sub_input) {
+                      ::std::string description = build_command_detail(cmd, category, handler->get_prefix(), (int)i);
+                      auto embed = bronx::create_embed(description);
+                      bronx::add_invoker_footer(embed, event.msg.author);
+                      bot.message_create(dpp::message(event.msg.channel_id, embed));
+                      return;
+                    }
+                  }
+                }
+
                 ::std::string description =
                     build_command_detail(cmd, category, handler->get_prefix());
 
@@ -463,18 +554,11 @@ inline void register_help_interactions(dpp::cluster &bot,
       return;
     }
 
-    // Build command list for this category
-    ::std::vector<Command *> category_commands;
-    ::std::set<::std::string> seen_commands;
-    for (const auto &cmd : categories[selected_category]) {
-      if (seen_commands.find(cmd->name) != seen_commands.end())
-        continue;
-      seen_commands.insert(cmd->name);
-      category_commands.push_back(cmd);
-    }
+    // Build entry list for this category
+    auto entries = get_category_help_entries(categories[selected_category]);
 
-    // Check if category has commands
-    if (category_commands.empty()) {
+    // Check if category has entries
+    if (entries.empty()) {
       event.reply(dpp::ir_update_message,
                   dpp::message().add_embed(
                       bronx::error("no commands found in category")));
@@ -484,12 +568,12 @@ inline void register_help_interactions(dpp::cluster &bot,
     // Start at page 0
     int page = 0;
 
-    // Build detailed embed for first command
-    auto cmd = category_commands[page];
+    // Build detailed embed for first entry
+    auto entry = entries[page];
     ::std::string description =
-        build_command_detail(cmd, selected_category, handler->get_prefix());
+        build_command_detail(entry.cmd, selected_category, handler->get_prefix(), entry.subcommand_idx);
     description += "\n`" + ::std::to_string(page + 1) + "/" +
-                   ::std::to_string(category_commands.size()) + "`";
+                   ::std::to_string(entries.size()) + "`";
 
     auto embed = bronx::create_embed(description);
     bronx::add_invoker_footer(embed, event.command.usr);
@@ -633,18 +717,10 @@ inline void register_help_interactions(dpp::cluster &bot,
 
     auto categories = handler->get_commands_by_category();
 
-    // Build command list for this category
-    ::std::vector<Command *> category_commands;
-    ::std::set<::std::string> seen_commands;
-    for (const auto &cmd : categories[selected_category]) {
-      if (seen_commands.find(cmd->name) != seen_commands.end())
-        continue;
-      seen_commands.insert(cmd->name);
-      category_commands.push_back(cmd);
-    }
+    auto entries = get_category_help_entries(categories[selected_category]);
 
-    // Check if category has commands
-    if (category_commands.empty()) {
+    // Check if category has entries
+    if (entries.empty()) {
       event.reply(dpp::ir_update_message,
                   dpp::message().add_embed(
                       bronx::error("no commands found in category")));
@@ -654,18 +730,18 @@ inline void register_help_interactions(dpp::cluster &bot,
     // Calculate new page with wrap-around
     int new_page = current_page;
     if (is_next) {
-      new_page = (current_page + 1) % category_commands.size();
+      new_page = (current_page + 1) % entries.size();
     } else {
-      new_page = (current_page - 1 + category_commands.size()) %
-                 category_commands.size();
+      new_page = (current_page - 1 + entries.size()) %
+                 entries.size();
     }
 
-    // Build detailed embed for current command
-    auto cmd = category_commands[new_page];
+    // Build detailed embed for current entry
+    auto entry = entries[new_page];
     ::std::string description =
-        build_command_detail(cmd, selected_category, handler->get_prefix());
+        build_command_detail(entry.cmd, selected_category, handler->get_prefix(), entry.subcommand_idx);
     description += "\n`" + ::std::to_string(new_page + 1) + "/" +
-                   ::std::to_string(category_commands.size()) + "`";
+                   ::std::to_string(entries.size()) + "`";
 
     auto embed = bronx::create_embed(description);
     bronx::add_invoker_footer(embed, event.command.usr);
