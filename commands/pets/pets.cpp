@@ -1,9 +1,15 @@
 #include "pets.h"
+#include "../../database/operations/economy/pet_operations.h"
+#include "../../database/operations/economy/history_operations.h"
 #include <iostream>
 #include <ctime>
 
 namespace commands {
 namespace pets {
+
+using namespace bronx::db;
+using namespace bronx::db::pet_operations;
+using namespace bronx::db::history_operations;
 
 bool g_pet_tables_created = false;
 std::mutex g_pet_mutex;
@@ -50,10 +56,13 @@ int calculate_current_hunger(int stored_hunger, const std::string& last_fed) {
     time_t tnow = std::chrono::system_clock::to_time_t(now);
     
     tm tm_fed = {};
-    strptime(last_fed.c_str(), "%Y-%m-%d %H:%M:%S", &tm_fed);
+    // Use strptime or similar; on linux it's fine.
+    if (!strptime(last_fed.c_str(), "%Y-%m-%d %H:%M:%S", &tm_fed)) {
+        return stored_hunger; // fallback
+    }
     time_t t_fed = mktime(&tm_fed);
     
-    int hours_elapsed = static_cast<int>((tnow - t_fed) / 3600);
+    int hours_elapsed = static_cast<int>(difftime(tnow, t_fed) / 3600);
     int current = stored_hunger - hours_elapsed;
     return std::max(0, std::min(100, current));
 }
@@ -83,47 +92,26 @@ void ensure_pet_tables(Database* db) {
     std::lock_guard<std::mutex> lock(g_pet_mutex);
     if (g_pet_tables_created) return;
     
-    db->execute(
-        "CREATE TABLE IF NOT EXISTS user_pets ("
-        "  id BIGINT AUTO_INCREMENT PRIMARY KEY,"
-        "  user_id BIGINT UNSIGNED NOT NULL,"
-        "  species_id VARCHAR(32) NOT NULL,"
-        "  nickname VARCHAR(32) NOT NULL,"
-        "  level INT NOT NULL DEFAULT 1,"
-        "  xp INT NOT NULL DEFAULT 0,"
-        "  hunger INT NOT NULL DEFAULT 100,"
-        "  equipped BOOLEAN NOT NULL DEFAULT FALSE,"
-        "  adopted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-        "  last_fed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-        "  INDEX idx_user (user_id),"
-        "  INDEX idx_user_equipped (user_id, equipped)"
-        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
-    
-    g_pet_tables_created = true;
+    if (pet_operations::ensure_tables(db)) {
+        g_pet_tables_created = true;
+    }
 }
 
 std::vector<UserPet> get_user_pets(Database* db, uint64_t user_id) {
+    auto rows = pet_operations::get_user_pets(db, user_id);
     std::vector<UserPet> pets_list;
-    std::string sql = "SELECT id, species_id, nickname, level, xp, hunger, equipped, adopted_at, last_fed "
-                      "FROM user_pets WHERE user_id = " + std::to_string(user_id) + " ORDER BY equipped DESC, level DESC";
-    MYSQL_RES* res = economy::db_select(db, sql);
-    if (res) {
-        MYSQL_ROW row;
-        while ((row = mysql_fetch_row(res))) {
-            UserPet p;
-            p.pet_id = row[0] ? std::stoll(row[0]) : 0;
-            p.species_id = row[1] ? row[1] : "";
-            p.nickname = row[2] ? row[2] : "";
-            p.level = row[3] ? std::stoi(row[3]) : 1;
-            p.xp = row[4] ? std::stoi(row[4]) : 0;
-            p.hunger = row[5] ? std::stoi(row[5]) : 100;
-            p.equipped = row[6] && std::string(row[6]) == "1";
-            p.adopted_at = row[7] ? row[7] : "";
-            p.last_fed = row[8] ? row[8] : "";
-            pets_list.push_back(p);
-        }
-        mysql_free_result(res);
+    for (const auto& r : rows) {
+        UserPet p;
+        p.pet_id = r.id;
+        p.species_id = r.species_id;
+        p.nickname = r.nickname;
+        p.level = r.level;
+        p.xp = r.xp;
+        p.hunger = r.hunger;
+        p.equipped = r.equipped;
+        p.adopted_at = r.adopted_at;
+        p.last_fed = r.last_fed;
+        pets_list.push_back(p);
     }
     return pets_list;
 }
@@ -145,38 +133,25 @@ UserPet* find_user_pet(std::vector<UserPet>& pets_list, const std::string& name)
 }
 
 bool adopt_pet(Database* db, uint64_t user_id, const std::string& species_id, const std::string& nickname) {
-    std::string esc_species = economy::db_escape(db, species_id);
-    std::string esc_nick = economy::db_escape(db, nickname);
-    MYSQL_RES* existing = economy::db_select(db, "SELECT COUNT(*) FROM user_pets WHERE user_id = " + std::to_string(user_id));
-    bool first_pet = true;
-    if (existing) {
-        MYSQL_ROW r = mysql_fetch_row(existing);
-        if (r && r[0] && std::stoi(r[0]) > 0) first_pet = false;
-        mysql_free_result(existing);
-    }
-    std::string sql = "INSERT INTO user_pets (user_id, species_id, nickname, level, xp, hunger, equipped) "
-                      "VALUES (" + std::to_string(user_id) + ", '" + esc_species + "', '" + esc_nick + "', 1, 0, 100, " + (first_pet ? "TRUE" : "FALSE") + ")";
-    return economy::db_exec(db, sql);
+    int count = pet_operations::count_user_pets(db, user_id);
+    bool first_pet = (count == 0);
+    return pet_operations::adopt_pet(db, user_id, species_id, nickname, first_pet);
 }
 
 bool feed_pet(Database* db, int64_t pet_id) {
-    return economy::db_exec(db, "UPDATE user_pets SET hunger = 100, last_fed = NOW() WHERE id = " + std::to_string(pet_id));
+    return pet_operations::feed_pet(db, pet_id);
 }
 
 bool equip_pet(Database* db, uint64_t user_id, int64_t pet_id) {
-    economy::db_exec(db, "UPDATE user_pets SET equipped = FALSE WHERE user_id = " + std::to_string(user_id));
-    return economy::db_exec(db, "UPDATE user_pets SET equipped = TRUE WHERE id = " + std::to_string(pet_id)
-                              + " AND user_id = " + std::to_string(user_id));
+    return pet_operations::equip_pet(db, user_id, pet_id);
 }
 
 bool release_pet(Database* db, uint64_t user_id, int64_t pet_id) {
-    return economy::db_exec(db, "DELETE FROM user_pets WHERE id = " + std::to_string(pet_id)
-                              + " AND user_id = " + std::to_string(user_id));
+    return pet_operations::release_pet(db, user_id, pet_id);
 }
 
 bool rename_pet(Database* db, int64_t pet_id, const std::string& new_name) {
-    std::string esc_name = economy::db_escape(db, new_name);
-    return economy::db_exec(db, "UPDATE user_pets SET nickname = '" + esc_name + "' WHERE id = " + std::to_string(pet_id));
+    return pet_operations::rename_pet(db, pet_id, new_name);
 }
 
 bool activity_matches_pet(const std::string& bonus_type, const std::string& activity) {
@@ -206,33 +181,27 @@ bool award_pet_xp(Database* db, uint64_t user_id, const std::string& activity, i
     try {
         ensure_pet_tables(db);
         
-        std::string sql = "SELECT id, species_id, level, xp FROM user_pets "
-                          "WHERE user_id = " + std::to_string(user_id) + " AND equipped = TRUE LIMIT 1";
-        MYSQL_RES* res = economy::db_select(db, sql);
-        if (!res) return false;
+        auto user_pets = get_user_pets(db, user_id);
+        UserPet* equipped = nullptr;
+        for (auto& p : user_pets) {
+            if (p.equipped) { equipped = &p; break; }
+        }
         
-        MYSQL_ROW row = mysql_fetch_row(res);
-        if (!row) { mysql_free_result(res); return false; }
+        if (!equipped) return false;
         
-        int64_t pet_id = std::stoll(row[0]);
-        std::string species_id = row[1] ? row[1] : "";
-        int level = row[2] ? std::stoi(row[2]) : 1;
-        int xp = row[3] ? std::stoi(row[3]) : 0;
-        mysql_free_result(res);
-        
-        const PetSpecies* species = find_species(species_id);
+        const PetSpecies* species = find_species(equipped->species_id);
         if (!species) return false;
         
         if (!activity_matches_pet(species->bonus_type, activity)) return false;
-        if (level >= species->max_level) return false;
+        if (equipped->level >= species->max_level) return false;
         
         int xp_gain = species->xp_per_activity * count;
         if (xp_gain <= 0) xp_gain = 1;
         
-        int new_xp = xp + xp_gain;
-        int needed = xp_for_level(level);
+        int new_xp = equipped->xp + xp_gain;
+        int needed = xp_for_level(equipped->level);
         bool leveled_up = false;
-        int new_level = level;
+        int new_level = equipped->level;
         
         while (new_xp >= needed && new_level < species->max_level) {
             new_xp -= needed;
@@ -246,9 +215,7 @@ bool award_pet_xp(Database* db, uint64_t user_id, const std::string& activity, i
             new_xp = 0;
         }
         
-        economy::db_exec(db, "UPDATE user_pets SET xp = " + std::to_string(new_xp) +
-                             ", level = " + std::to_string(new_level) +
-                             " WHERE id = " + std::to_string(pet_id));
+        pet_operations::update_pet_stats(db, equipped->pet_id, new_level, new_xp);
         
         return leveled_up;
     } catch (...) {

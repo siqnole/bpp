@@ -511,6 +511,29 @@ inline void apply_warn_internal(dpp::cluster& bot, bronx::db::Database* db,
     success_cb(inf.value(), is_action_quiet("warn", config), active_points);
 }
 
+inline void apply_note_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                               uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                               const std::string& note_text, 
+                               const bronx::db::InfractionConfig& config,
+                               std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                               std::function<void(const std::string&)> error_cb) {
+    // create infraction
+    auto inf = bronx::db::infraction_operations::create_infraction(
+        db, guild_id, target_id, mod_id,
+        "note", note_text, 0.0, // Notes give 0 points
+        0); // Notes have no duration
+
+    if (!inf.has_value()) {
+        error_cb("failed to create note record");
+        return;
+    }
+
+    // send mod log
+    send_mod_log(bot, db, guild_id, inf.value());
+
+    success_cb(inf.value(), is_action_quiet("note", config));
+}
+
 inline void apply_jail_internal(dpp::cluster& bot, bronx::db::Database* db, 
                                uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
                                uint32_t duration, const std::string& reason, 
@@ -582,5 +605,106 @@ inline void apply_jail_internal(dpp::cluster& bot, bronx::db::Database* db,
         });
 }
 
+inline void apply_softban_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                                  uint64_t guild_id, uint64_t target_id, uint64_t mod_id, 
+                                  const std::string& reason, 
+                                  const bronx::db::InfractionConfig& config,
+                                  std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                                  std::function<void(const std::string&)> error_cb) {
+
+    std::string guild_name = "unknown server";
+    auto* g = dpp::find_guild(guild_id);
+    if (g) guild_name = g->name;
+
+    // dm user BEFORE softbanning
+    if (config.dm_on_action) {
+        dm_user_action(bot, target_id, guild_name, "softban", reason, 0, config.point_kick);
+    }
+
+    // ban member (delete 7 days of messages)
+    bot.guild_ban_add(guild_id, target_id, 604800,
+        [&bot, db, guild_id, target_id, mod_id, reason, config, guild_name, success_cb, error_cb](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                error_cb("failed to softban (ban phase): " + cb.get_error().message);
+                return;
+            }
+
+            // immediately unban
+            bot.guild_ban_delete(guild_id, target_id,
+                [&bot, db, guild_id, target_id, mod_id, reason, config, guild_name, success_cb, error_cb](const dpp::confirmation_callback_t& ucb) {
+                    if (ucb.is_error()) {
+                        // we still create the infraction because the ban happened
+                        bronx::logger::error("moderation", "softban unban failed for " + std::to_string(target_id) + ": " + ucb.get_error().message);
+                    }
+
+                    // create infraction
+                    auto inf = bronx::db::infraction_operations::create_infraction(
+                        db, guild_id, target_id, mod_id,
+                        "softban", reason, config.point_kick, // use kick points
+                        0);
+
+                    if (!inf.has_value()) {
+                        error_cb("softban applied but failed to create infraction record");
+                        return;
+                    }
+
+                    // send mod log
+                    send_mod_log(bot, db, guild_id, inf.value());
+
+                    success_cb(inf.value(), is_action_quiet("softban", config));
+                });
+        });
+}
+
+inline void apply_lockdown_internal(dpp::cluster& bot, bronx::db::Database* db, 
+                                   uint64_t guild_id, uint64_t channel_id, uint64_t mod_id, 
+                                   bool lock, const std::string& reason, 
+                                   const bronx::db::InfractionConfig& config,
+                                   std::function<void(const bronx::db::InfractionRow&, bool)> success_cb,
+                                   std::function<void(const std::string&)> error_cb) {
+    
+    auto* ch = dpp::find_channel(channel_id);
+    if (!ch) {
+        error_cb("channel not found");
+        return;
+    }
+
+    dpp::permission deny = 0;
+    if (lock) {
+        deny = dpp::p_send_messages;
+    }
+
+    // find @everyone override
+    dpp::permission_overwrite everyone_ov;
+    everyone_ov.id = guild_id;
+    everyone_ov.type = dpp::ot_role;
+    everyone_ov.allow = 0;
+    everyone_ov.deny = deny;
+
+    bot.channel_edit_permissions(*ch, everyone_ov.id, everyone_ov.allow, everyone_ov.deny, everyone_ov.type == dpp::ot_role,
+        [&bot, db, guild_id, channel_id, mod_id, lock, reason, config, success_cb, error_cb](const dpp::confirmation_callback_t& cb) {
+            if (cb.is_error()) {
+                error_cb("failed to update channel permissions: " + cb.get_error().message);
+                return;
+            }
+
+            // create infraction record for history
+            auto inf = bronx::db::infraction_operations::create_infraction(
+                db, guild_id, channel_id, mod_id, // we use channel_id as user_id for logging simplicity
+                lock ? "lockdown" : "unlock", reason, 0, 0);
+
+            if (!inf.has_value()) {
+                error_cb("lockdown applied but failed to create infraction record");
+                return;
+            }
+
+            // send mod log
+            send_mod_log(bot, db, guild_id, inf.value());
+
+            success_cb(inf.value(), is_action_quiet("lockdown", config));
+        });
+}
+
 } // namespace moderation
+
 } // namespace commands

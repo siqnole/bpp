@@ -58,6 +58,7 @@
 #include "../utils/colors.h"
 #include "../utils/logger.h"
 #include "../commands/moderation/infraction_engine.h"
+#include "../database/operations/moderation/raid_operations.h"
 
 
 struct register_commands {};
@@ -716,26 +717,87 @@ void register_event_handlers(
     // Auto-role: assign roles to new members on join
     commands::register_autorole_handler(bot);
 
+    // Join velocity tracking for raid protection
+    static std::mutex join_mutex;
+    static std::map<uint64_t, std::vector<time_t>> guild_joins;
+
     // Stats: track member joins (runs after autorole handler which also uses on_guild_member_add)
-    bot.on_guild_member_add([&async_stat_writer, verbose_events](const dpp::guild_member_add_t& event) {
-        // uint64_t gid = event.adding_guild.id;
-        // uint64_t uid = event.added.user_id;
-        // bronx::logger::info("event", "member_add: " + std::to_string(uid) + " to guild " + std::to_string(gid));
-        
-        /*
-        if (event.adding_guild.id != 0) {
-            if (verbose_events) {
-                bronx::logger::debug("event", "member_add guild=" + std::to_string(event.adding_guild.id) + " user=" + std::to_string(event.added.user_id));
+    bot.on_guild_member_add([&bot, &db, &async_stat_writer, verbose_events](const dpp::guild_member_add_t& event) {
+        uint64_t guild_id = event.adding_guild.id;
+        uint64_t user_id = event.added.user_id;
+
+        // Raid Protection Check
+        auto raid_settings = bronx::db::raid_operations::get_settings(&db, guild_id);
+        if (raid_settings.join_gate_level != bronx::db::JoinGateLevel::OFF) {
+            bool should_action = false;
+            std::string reason = "Raid Protection: ";
+
+            if (raid_settings.join_gate_level == bronx::db::JoinGateLevel::LOW) {
+                // Account age check
+                double created = event.added.user_id.get_creation_time();
+                double now = (double)time(nullptr);
+                int age_days = (int)((now - created) / 86400);
+                if (age_days < raid_settings.min_account_age_days) {
+                    should_action = true;
+                    reason += "Account too young (" + std::to_string(age_days) + " days)";
+                }
+            } else if (raid_settings.join_gate_level == bronx::db::JoinGateLevel::MEDIUM) {
+                // Join velocity check
+                time_t now = time(nullptr);
+                {
+                    std::lock_guard<std::mutex> lock(join_mutex);
+                    auto& joins = guild_joins[guild_id];
+                    
+                    // Cleanup old joins (> 60s)
+                    joins.erase(std::remove_if(joins.begin(), joins.end(), [now](time_t t) {
+                        return (now - t) > 60;
+                    }), joins.end());
+                    
+                    joins.push_back(now);
+                    
+                    if ((int)joins.size() > raid_settings.join_velocity_threshold) {
+                        should_action = true;
+                        reason += "Join velocity spike (" + std::to_string(joins.size()) + " joins/min)";
+                    }
+                }
+            } else if (raid_settings.join_gate_level == bronx::db::JoinGateLevel::HIGH) {
+                // Lockdown
+                should_action = true;
+                reason += "Server is in join lockdown";
+            } else if (raid_settings.join_gate_level == bronx::db::JoinGateLevel::MAX) {
+                // Ban all
+                should_action = true;
+                reason += "Server is in extreme join protection (auto-ban)";
             }
-            async_stat_writer.enqueue_member_event(
-                event.adding_guild.id, event.added.user_id, "join");
-                
-            dpp::embed log_embed = bronx::create_embed("User <@" + std::to_string(event.added.user_id) + "> joined the server.")
-                .set_title("Member Joined")
-                .set_color(0x00FF00);
-            bronx::logger::ServerLogger::get().log_embed(event.adding_guild.id, bronx::logger::LOG_TYPE_MEMBERS, log_embed);
+
+            if (should_action) {
+                if (raid_settings.join_gate_level == bronx::db::JoinGateLevel::MAX) {
+                    bot.set_audit_reason(reason).guild_ban_add(guild_id, user_id, 0);
+                } else {
+                    bot.set_audit_reason(reason).guild_member_delete(guild_id, user_id);
+                }
+
+                if (raid_settings.notify_channel_id) {
+                    dpp::embed alert = bronx::create_embed("🛡️ **Raid Protection Triggered**\n"
+                                                          "User: <@" + std::to_string(user_id) + ">\n"
+                                                          "Action: `" + (raid_settings.join_gate_level == bronx::db::JoinGateLevel::MAX ? "BAN" : "KICK") + "`\n"
+                                                          "Reason: " + reason)
+                                       .set_color(::bronx::COLOR_ERROR);
+                    bot.message_create(dpp::message(*raid_settings.notify_channel_id, alert));
+                }
+                return; // Stop further processing for this join
+            }
         }
-        */
+
+        if (verbose_events) {
+            bronx::logger::debug("event", "member_add guild=" + std::to_string(guild_id) + " user=" + std::to_string(user_id));
+        }
+        async_stat_writer.enqueue_member_event(guild_id, user_id, "join");
+        
+        dpp::embed log_embed = bronx::create_embed("User <@" + std::to_string(user_id) + "> joined the server.")
+            .set_title("Member Joined")
+            .set_color(0x00FF00);
+        bronx::logger::ServerLogger::get().log_embed(guild_id, bronx::logger::LOG_TYPE_MEMBERS, log_embed);
     });
 
     // Stats: track member leaves

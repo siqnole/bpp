@@ -21,6 +21,17 @@
 #include "jailsetup.h"
 #include "modlog_channel.h"
 #include "quiet_config.h"
+#include "purge.h"
+#include "slowmode.h"
+#include "note.h"
+#include "reason.h"
+#include "massban.h"
+#include "masskick.h"
+#include "massmute.h"
+#include "masstimeout.h"
+#include "lockdown.h"
+#include "softban.h"
+#include "raid_protection.h"
 #include "../quiet_moderation/antispam_api.h"
 #include "../quiet_moderation/url_guard.h"
 #include "../quiet_moderation/text_filter_config.h"
@@ -52,6 +63,17 @@ inline std::vector<ModCommandInfo> get_moderation_actions(Database* db) {
         {"kick", "kick a user from server", get_kick_command},
         {"ban", "ban a user from server", get_ban_command},
         {"warn", "warn a user", get_warn_command},
+        {"purge", "delete multiple messages", get_purge_command},
+        {"slowmode", "set channel slowmode", get_slowmode_command},
+        {"note", "add a moderation note to a user", get_note_command},
+        {"reason", "update the reason for a case", get_reason_command},
+        {"massban", "ban multiple users at once", get_massban_command},
+        {"masskick", "kick multiple users at once", get_masskick_command},
+        {"massmute", "mute multiple users at once", get_massmute_command},
+        {"masstimeout", "timeout multiple users at once", get_masstimeout_command},
+        {"lockdown", "lock a channel from messages", get_lockdown_command},
+        {"unlock", "unlock a channel", get_unlock_command},
+        {"softban", "ban and unban to clear messages", get_softban_command},
         
         // Unpunishment commands
         {"untimeout", "remove timeout from user", get_untimeout_command},
@@ -71,6 +93,7 @@ inline std::vector<ModCommandInfo> get_moderation_actions(Database* db) {
         {"jailsetup", "configure jail channel", get_jailsetup_command},
         {"modlog", "set moderation log channel", get_modlog_channel_command},
         {"quiet", "configure quiet moderation", get_quiet_config_command},
+        {"raid", "configure raid protection", create_raid_protection_command},
     };
 }
 
@@ -101,8 +124,20 @@ inline Command* create_moderation_parent_command(Database* db) {
         g_mod_commands["jailsetup"] = get_jailsetup_command(db);
         g_mod_commands["modlog"] = get_modlog_channel_command(db);
         g_mod_commands["quiet"] = get_quiet_config_command(db);
+        g_mod_commands["purge"] = get_purge_command(db);
+        g_mod_commands["slowmode"] = get_slowmode_command(db);
+        g_mod_commands["note"] = get_note_command(db);
+        g_mod_commands["reason"] = get_reason_command(db);
+        g_mod_commands["massban"] = get_massban_command(db);
+        g_mod_commands["masskick"] = get_masskick_command(db);
+        g_mod_commands["massmute"] = get_massmute_command(db);
+        g_mod_commands["masstimeout"] = get_masstimeout_command(db);
+        g_mod_commands["lockdown"] = get_lockdown_command(db);
+        g_mod_commands["unlock"] = get_unlock_command(db);
+        g_mod_commands["softban"] = get_softban_command(db);
+        g_mod_commands["raid"] = create_raid_protection_command(db);
         
-        // Add quiet moderation commands (these don't take Database* parameter)
+        // Add quiet moderation commands
         g_mod_commands["antispam"] = quiet_moderation::get_antispam_command();
         g_mod_commands["urlguard"] = quiet_moderation::get_url_guard_command();
         g_mod_commands["filter"] = quiet_moderation::get_text_filter_command();
