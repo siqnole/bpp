@@ -544,6 +544,7 @@ public:
     std::optional<ModmailThread> get_modmail_thread_by_id(uint64_t thread_id);
     bool create_modmail_thread(uint64_t guild_id, uint64_t user_id, uint64_t thread_id);
     bool close_modmail_thread(uint64_t thread_id);
+    std::vector<uint64_t> get_all_modmail_enabled_guilds();
 
     // ========================================
     // PATCH NOTES

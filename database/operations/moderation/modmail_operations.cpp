@@ -336,6 +336,26 @@ bool Database::close_modmail_thread(uint64_t thread_id) {
     return ok;
 }
 
+std::vector<uint64_t> Database::get_all_modmail_enabled_guilds() {
+    std::vector<uint64_t> guilds;
+    auto conn = pool_->acquire();
+    if (!conn) return guilds;
+
+    const char* query = "SELECT guild_id FROM guild_modmail_config WHERE enabled = 1";
+    if (mysql_query(conn->get(), query) == 0) {
+        MYSQL_RES* res = mysql_store_result(conn->get());
+        if (res) {
+            MYSQL_ROW row;
+            while ((row = mysql_fetch_row(res))) {
+                guilds.push_back(std::stoull(row[0]));
+            }
+            mysql_free_result(res);
+        }
+    }
+    pool_->release(conn);
+    return guilds;
+}
+
 // ============================================================================
 // Free-function wrappers
 // ============================================================================
@@ -366,6 +386,10 @@ bool create_modmail_thread(Database* db, uint64_t guild_id, uint64_t user_id, ui
 
 bool close_modmail_thread(Database* db, uint64_t thread_id) {
     return db->close_modmail_thread(thread_id);
+}
+
+std::vector<uint64_t> get_all_modmail_enabled_guilds(Database* db) {
+    return db->get_all_modmail_enabled_guilds();
 }
 
 } // namespace db

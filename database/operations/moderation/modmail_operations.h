@@ -18,5 +18,8 @@ std::optional<ModmailThread> get_modmail_thread_by_id(Database* db, uint64_t thr
 bool create_modmail_thread(Database* db, uint64_t guild_id, uint64_t user_id, uint64_t thread_id);
 bool close_modmail_thread(Database* db, uint64_t thread_id);
 
+// Guild Discovery
+std::vector<uint64_t> get_all_modmail_enabled_guilds(Database* db);
+
 } // namespace db
 } // namespace bronx
