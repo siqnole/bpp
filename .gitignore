@@ -54,3 +54,4 @@ fish_emojis/
 .aider*
 *.bak
 *.md
+build_local/

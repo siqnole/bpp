@@ -640,22 +640,12 @@ void register_event_handlers(
                     dpp::message sent_msg = std::get<dpp::message>(cb.value);
                     
                         std::thread([&bot, event, sent_msg, url_part]() {
-                            auto log_cb = [&bot, sent_msg](const std::string& logs) {
-                                dpp::message update(sent_msg.channel_id, "📥 Processing your link...\n```\n" + logs + "\n```");
-                                update.id = sent_msg.id;
-                                bot.message_edit(update);
-                            };
-                            /*
                             commands::utility::process_download_request(bot, url_part, [&bot, sent_msg](const dpp::message& m) {
                                 dpp::message reply = m;
                                 reply.id = sent_msg.id;
-                                reply.set_channel_id(sent_msg.channel_id);
+                                reply.channel_id = sent_msg.channel_id;
                                 bot.message_edit(reply);
-                            }, log_cb);
-                            */
-                            dpp::message edit_msg(sent_msg.channel_id, "Download functionality is currently being refactored.");
-                            edit_msg.id = sent_msg.id;
-                            bot.message_edit(edit_msg);
+                            });
                         }).detach();
                 });
                 return; // Triggered, don't process as command

@@ -804,21 +804,30 @@ int64_t total_voice_minutes(Database* db, uint64_t guild_id, int days) {
 std::vector<DailyVoiceMinutes> daily_voice_minutes_series(Database* db, uint64_t guild_id, int days) {
     std::vector<DailyVoiceMinutes> out;
     if (!db) return out;
+    std::string gid = std::to_string(guild_id);
+    std::string d = std::to_string(days);
     std::string sql =
-        "SELECT stat_date, SUM(voice_minutes) AS mins "
-        "FROM guild_user_activity_daily "
-        "WHERE guild_id='" + std::to_string(guild_id) + "' "
-        "AND " + date_condition("stat_date", days) + " "
-        "GROUP BY stat_date ORDER BY stat_date";
+        "SELECT d, COALESCE(SUM(dur), 0) / 60 AS mins FROM ("
+        "  SELECT DATE(j.created_at) AS d, "
+        "    TIMESTAMPDIFF(SECOND, j.created_at, MIN(l.created_at)) AS dur "
+        "  FROM guild_voice_events j "
+        "  INNER JOIN guild_voice_events l "
+        "    ON l.guild_id=j.guild_id AND l.user_id=j.user_id "
+        "    AND l.channel_id=j.channel_id AND l.event_type='leave' "
+        "    AND l.created_at > j.created_at "
+        "  WHERE j.guild_id='" + gid + "' AND j.event_type='join' "
+        "  AND DATE(j.created_at) >= DATE_SUB(CURDATE(), INTERVAL " + d + " DAY) "
+        "  GROUP BY j.id, j.created_at"
+        ") paired WHERE dur > 0 AND dur < 86400 GROUP BY d ORDER BY d";
     std::shared_ptr<Connection> conn;
     MYSQL_RES* res = run_query(db->get_pool(), sql, conn);
     if (!res) return out;
     MYSQL_ROW row;
     while ((row = mysql_fetch_row(res))) {
-        DailyVoiceMinutes d;
-        d.date    = row[0] ? row[0] : "";
-        d.minutes = row[1] ? std::stoll(row[1]) : 0;
-        out.push_back(d);
+        DailyVoiceMinutes dm;
+        dm.date = row[0] ? row[0] : "";
+        dm.minutes = row[1] ? std::stoll(row[1]) : 0;
+        out.push_back(dm);
     }
     mysql_free_result(res);
     db->get_pool()->release(conn);

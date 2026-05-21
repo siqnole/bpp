@@ -310,7 +310,7 @@ public:
     // Cache management
     void invalidate_user_cache(uint64_t user_id) {
         cache_->invalidate_blacklist(user_id);
-        cache_->invalidate_whitelist(user_id);
+        cache_->invalidate_whitelist(user_id); // cooldown cache needs to be handled
         cache_->invalidate_user_prefixes(user_id);
         cache_->invalidate_user_balance(user_id);
     }

@@ -13,6 +13,7 @@ services:
     volumes:
       - ./data:/app/data
       - /tmp:/tmp
+    network_mode: host
     # If you want to use the TUI, run with: docker-compose run --rm discord-bot
     # For production background run: docker-compose up -d
     command: ["--no-tui"]

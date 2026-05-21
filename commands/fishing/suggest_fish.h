@@ -85,8 +85,8 @@ inline Command* get_suggestfish_command(Database* db) {
             // Show usage if no args
             if (args.empty()) {
                 std::stringstream ss;
-                ss << "**Suggest a new fish!**\n\n";
-                ss << "**Usage:** `suggestfish <name> <emoji> <weight> <min_value> <max_value> <effect> <effect_chance> <min_gear> <max_gear> <description...>`\n\n";
+                ss << "**suggest a new fish!**\n\n";
+                ss << "**usage:** `suggestfish <name> <emoji> <weight> <min_value> <max_value> <effect> <effect_chance> <min_gear> <max_gear> <description...>`\n\n";
                 ss << "**Parameters:**\n";
                 ss << "• `name` - Fish name (use quotes if multiple words)\n";
                 ss << "• `emoji` - Fish emoji (single emoji)\n";

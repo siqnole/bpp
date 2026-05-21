@@ -115,7 +115,7 @@ std::vector<std::string> get_schema_migrations() {
         "added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
         "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE) ENGINE=InnoDB");
     
-    migrations.push_back("CALL _add_col_if_missing('global_blacklist','reason','VARCHAR(512) DEFAULT NULL')");
+    migrations.push_back("ALTER TABLE global_blacklist ADD COLUMN IF NOT EXISTS reason VARCHAR(512) DEFAULT NULL");
 
     migrations.push_back(
         "CREATE TABLE IF NOT EXISTS global_whitelist ("
@@ -124,7 +124,7 @@ std::vector<std::string> get_schema_migrations() {
         "added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
         "FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE) ENGINE=InnoDB");
     
-    migrations.push_back("CALL _add_col_if_missing('global_whitelist','reason','VARCHAR(512) DEFAULT NULL')");
+    migrations.push_back("ALTER TABLE global_whitelist ADD COLUMN IF NOT EXISTS reason VARCHAR(512) DEFAULT NULL");
 
     migrations.push_back(
         "CREATE TABLE IF NOT EXISTS guild_prefixes ("
@@ -260,16 +260,16 @@ std::vector<std::string> get_schema_migrations() {
         "INDEX idx_world_events_active (active, ends_at),"
         "INDEX idx_world_events_type (event_type)) ENGINE=InnoDB");
 
-    migrations.push_back("CALL _add_col_if_missing('user_inventory','level','INT NOT NULL DEFAULT 1')");
-    migrations.push_back("CALL _add_col_if_missing('user_inventory','metadata','TEXT')");
-    migrations.push_back("CALL _add_col_if_missing('shop_items','required_level','INT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('shop_items','level','INT NOT NULL DEFAULT 1')");
-    migrations.push_back("CALL _add_col_if_missing('shop_items','usable','BOOLEAN NOT NULL DEFAULT FALSE')");
-    migrations.push_back("CALL _add_col_if_missing('shop_items','metadata','TEXT')");
-    migrations.push_back("CALL _add_col_if_missing('guild_settings','server_bio','TEXT NULL')");
-    migrations.push_back("CALL _add_col_if_missing('guild_settings','server_website','VARCHAR(255) NULL')");
-    migrations.push_back("CALL _add_col_if_missing('guild_settings','server_banner_url','VARCHAR(512) NULL')");
-    migrations.push_back("CALL _add_col_if_missing('guild_settings','server_avatar_url','VARCHAR(512) NULL')");
+    migrations.push_back("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1");
+    migrations.push_back("ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS metadata TEXT");
+    migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS required_level INT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1");
+    migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS usable BOOLEAN NOT NULL DEFAULT FALSE");
+    migrations.push_back("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS metadata TEXT");
+    migrations.push_back("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS server_bio TEXT NULL");
+    migrations.push_back("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS server_website VARCHAR(255) NULL");
+    migrations.push_back("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS server_banner_url VARCHAR(512) NULL");
+    migrations.push_back("ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS server_avatar_url VARCHAR(512) NULL");
 
     migrations.push_back(
         "UPDATE user_inventory SET acquired_at = NOW() "
@@ -726,7 +726,7 @@ CREATE TABLE IF NOT EXISTS user_mining_claims (
     yield_max INT NOT NULL DEFAULT 3,
     ore_value INT NOT NULL DEFAULT 10,
     purchased_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NULL DEFAULT NULL,
     last_collect TIMESTAMP NULL DEFAULT NULL,
     INDEX idx_user (user_id),
     INDEX idx_expires (expires_at),
@@ -734,24 +734,24 @@ CREATE TABLE IF NOT EXISTS user_mining_claims (
 ) ENGINE=InnoDB
 )SQL");
 
-    migrations.push_back("CALL _add_col_if_missing('guild_deleted_messages', 'message_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('guild_deleted_messages', 'author_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('guild_deleted_messages', 'author_tag', 'VARCHAR(256) NOT NULL DEFAULT \'\')");
-    migrations.push_back("CALL _add_col_if_missing('guild_deleted_messages', 'author_avatar', 'VARCHAR(1024) NOT NULL DEFAULT \'\')");
-    migrations.push_back("CALL _add_col_if_missing('guild_deleted_messages', 'attachment_urls', 'TEXT')");
+    migrations.push_back("ALTER TABLE guild_deleted_messages ADD COLUMN IF NOT EXISTS message_id BIGINT UNSIGNED NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE guild_deleted_messages ADD COLUMN IF NOT EXISTS author_id BIGINT UNSIGNED NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE guild_deleted_messages ADD COLUMN IF NOT EXISTS author_tag VARCHAR(256) NOT NULL DEFAULT ''");
+    migrations.push_back("ALTER TABLE guild_deleted_messages ADD COLUMN IF NOT EXISTS author_avatar VARCHAR(1024) NOT NULL DEFAULT ''");
+    migrations.push_back("ALTER TABLE guild_deleted_messages ADD COLUMN IF NOT EXISTS attachment_urls TEXT");
 
-    migrations.push_back("CALL _add_col_if_missing('users','fish_caught','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','fish_sold','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','gambling_wins','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','gambling_losses','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','commands_used','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','daily_streak','INT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','work_count','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','ores_mined','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','items_crafted','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','trades_completed','BIGINT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','prestige','INT NOT NULL DEFAULT 0')");
-    migrations.push_back("CALL _add_col_if_missing('users','passive','BOOLEAN NOT NULL DEFAULT FALSE')");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS fish_caught BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS fish_sold BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS gambling_wins BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS gambling_losses BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS commands_used BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_streak INT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS work_count BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS ores_mined BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS items_crafted BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS trades_completed BIGINT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS prestige INT NOT NULL DEFAULT 0");
+    migrations.push_back("ALTER TABLE users ADD COLUMN IF NOT EXISTS passive BOOLEAN NOT NULL DEFAULT FALSE");
 
     migrations.push_back(R"SQL(
 ALTER TABLE guild_deleted_messages 
@@ -760,10 +760,10 @@ MODIFY COLUMN author_avatar VARCHAR(1024) NOT NULL DEFAULT ''
 )SQL");
 
     // Quiet Moderation Expansion
-    migrations.push_back("CALL _add_col_if_missing('guild_infraction_config', 'quiet_global', 'BOOLEAN NOT NULL DEFAULT TRUE')");
-    migrations.push_back("CALL _add_col_if_missing('guild_infraction_config', 'quiet_overrides', 'JSON NOT NULL DEFAULT (\'{}\')')");
-    migrations.push_back("CALL _add_col_if_missing('guild_infraction_config', 'case_counter', 'INT NOT NULL DEFAULT 1')");
-    migrations.push_back("CALL _add_col_if_missing('guild_infraction_config', 'require_reason', 'BOOLEAN NOT NULL DEFAULT FALSE')");
+    migrations.push_back("ALTER TABLE guild_infraction_config ADD COLUMN IF NOT EXISTS quiet_global BOOLEAN NOT NULL DEFAULT TRUE");
+    migrations.push_back("ALTER TABLE guild_infraction_config ADD COLUMN IF NOT EXISTS quiet_overrides JSON NOT NULL DEFAULT ('{}')");
+    migrations.push_back("ALTER TABLE guild_infraction_config ADD COLUMN IF NOT EXISTS case_counter INT NOT NULL DEFAULT 1");
+    migrations.push_back("ALTER TABLE guild_infraction_config ADD COLUMN IF NOT EXISTS require_reason BOOLEAN NOT NULL DEFAULT FALSE");
 
     // ── Interaction Roles & Panels ──────────────────────────────────
     migrations.push_back(R"SQL(

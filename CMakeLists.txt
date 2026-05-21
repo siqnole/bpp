@@ -44,19 +44,18 @@ endif()
 
 # -g for debug symbols (flamegraph), -fno-omit-frame-pointer for proper stack traces
 # -march=x86-64-v2 ensures compatibility with older VPS CPUs (SSE4.2, but not AVX2/FMA)
-set(CMAKE_CXX_FLAGS "-g -fno-omit-frame-pointer -march=x86-64-v2 -mno-avx -mno-avx2 -mno-fma -mno-f16c -mno-bmi2")
-set(CMAKE_C_FLAGS "-g -fno-omit-frame-pointer -march=x86-64-v2 -mno-avx -mno-avx2 -mno-fma -mno-f16c -mno-bmi2")
+set(CMAKE_CXX_FLAGS "-g -fno-omit-frame-pointer -march=x86-64 -mtune=generic")
+set(CMAKE_C_FLAGS "-g -fno-omit-frame-pointer -march=x86-64 -mtune=generic")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 
-# Force GGML to not use instructions above SSE4.2
+# Force GGML to not use instructions above SSE
 set(GGML_AVX OFF CACHE BOOL "Disable AVX" FORCE)
 set(GGML_AVX2 OFF CACHE BOOL "Disable AVX2" FORCE)
 set(GGML_FMA OFF CACHE BOOL "Disable FMA" FORCE)
 set(GGML_F16C OFF CACHE BOOL "Disable F16C" FORCE)
 set(GGML_BMI2 OFF CACHE BOOL "Disable BMI2" FORCE)
-set(GGML_NATIVE OFF CACHE BOOL "Disable native optimization" FORCE)
-set(GGML_SSE42 ON CACHE BOOL "Enable SSE4.2" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "Disable Native Optimizations" FORCE)
 
 # Add command source files (matches commands/*.cpp AND commands/**/*.cpp)
 file(GLOB_RECURSE COMMAND_SOURCES
@@ -139,10 +138,11 @@ pkg_check_modules(AVUTIL REQUIRED libavutil)
 pkg_check_modules(SWRESAMPLE REQUIRED libswresample)
 
 # whisper.cpp (Using local build from third_party/whisper.cpp)
-option(WHISPER_BUILD_EXAMPLES OFF)
+option(WHISPER_BUILD_EXAMPLES ON)
 option(WHISPER_BUILD_TESTS OFF)
 option(WHISPER_BUILD_SERVER OFF)
-add_subdirectory(third_party/whisper.cpp EXCLUDE_FROM_ALL)
+set(WHISPER_BUILD_EXAMPLES ON CACHE BOOL "Build whisper examples" FORCE)
+add_subdirectory(third_party/whisper.cpp)
 
 set(WHISPER_INCLUDE_DIRS 
     "${CMAKE_SOURCE_DIR}/third_party/whisper.cpp/include"

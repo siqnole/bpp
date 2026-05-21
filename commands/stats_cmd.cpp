@@ -782,8 +782,8 @@ void handle_stats_buttons(dpp::cluster& bot, const dpp::button_click_t& event, b
         std::stringstream ss(cid_str); std::string part;
         while (std::getline(ss, part, ':')) parts.push_back(part);
         if (parts.size() < 4) return;
-        std::string topic = parts[1];
-        int days = 7; try { days = std::stoi(parts[0].substr(8)); } catch (...) { days = 7; }
+        std::string topic = parts[0].substr(9);
+        int days = 7; try { days = std::stoi(parts[1]); } catch (...) { days = 7; }
         std::string gtype = parts[2];
         uint64_t expected_user = 0; try { expected_user = std::stoull(parts[3]); } catch (...) { return; }
         if (days != 0 && days != 7 && days != 14 && days != 30) days = 7;
@@ -838,7 +838,7 @@ void handle_stats_select(dpp::cluster& bot, const dpp::select_click_t& event, br
     std::vector<std::string> parts;
     std::stringstream ss(cid_str); std::string part;
     while (std::getline(ss, part, ':')) parts.push_back(part);
-    if (parts.size() < 4) return;
+    if (parts.size() < 3) return;
 
     std::string action = cid_str.substr(6, 1);
     int days = 7; try { days = std::stoi(parts[0].substr(8)); } catch (...) { days = 7; }
@@ -877,6 +877,9 @@ void handle_stats_select(dpp::cluster& bot, const dpp::select_click_t& event, br
 void register_stats_interactions(dpp::cluster& bot, bronx::db::Database* db) {
     bot.on_select_click([&bot, db](const dpp::select_click_t& event) {
         handle_stats_select(bot, event, db);
+    });
+    bot.on_button_click([&bot, db](const dpp::button_click_t& event) {
+        handle_stats_buttons(bot, event, db);
     });
 }
 

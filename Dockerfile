@@ -31,7 +31,9 @@ RUN apt-get update && apt-get install -y \
 # This ensures we have the exact version needed
 RUN wget -qO dpp.tar.gz https://github.com/brainboxdotcc/DPP/archive/refs/tags/v10.1.4.tar.gz && \
     tar -xf dpp.tar.gz && cd DPP-10.1.4 && \
-    cmake -B build -S . -DDPP_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release && \
+    cmake -B build -S . -DDPP_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_FLAGS="-march=x86-64 -mtune=generic" \
+    -DCMAKE_C_FLAGS="-march=x86-64 -mtune=generic" && \
     cmake --build build -j$(nproc) && \
     cmake --install build && \
     cd .. && rm -rf DPP-10.1.4 dpp.tar.gz
@@ -45,7 +47,9 @@ COPY . .
 # Build the bot
 # Use optimized flags from CMakeLists.txt
 RUN rm -rf build && mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_FLAGS="-march=x86-64 -mtune=generic" \
+    -DCMAKE_C_FLAGS="-march=x86-64 -mtune=generic" .. && \
     make -j$(nproc)
 
 # Final stage: Runtime
@@ -67,16 +71,29 @@ RUN apt-get update && apt-get install -y \
     libtesseract5 \
     tesseract-ocr-eng \
     ca-certificates \
+    ffmpeg \
+    python3 \
+    curl \
+    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary from builder
 COPY --from=builder /build/build/discord-bot /usr/local/bin/discord-bot
+
+# Copy whisper binary from builder
+# It's built as 'whisper-cli' in the bin dir
+COPY --from=builder /build/build/bin/whisper-cli /app/whisper
 
 # Copy DPP shared library from builder
 COPY --from=builder /usr/local/lib/libdpp.so /usr/local/lib/libdpp.so
 RUN ldconfig
 
 WORKDIR /app
+
+# Download whisper model
+RUN mkdir -p /app/models && \
+    curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o /app/models/ggml-base.en.bin
 
 # The bot expects a 'data' directory in its CWD
 # We create it here; user should mount their actual data volume to /app/data
